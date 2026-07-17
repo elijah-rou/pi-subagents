@@ -1,7 +1,18 @@
+import type {
+	AcceptanceConfig,
+	AcceptanceContract,
+	AcceptanceEvidenceKind,
+	AcceptanceGate,
+	AcceptanceInput,
+	AcceptanceLegacyInput,
+	AcceptanceReviewGate,
+	AcceptanceVerifyCommand,
+} from "../shared/types.ts";
+
 // This is the established extension-to-extension transport. The structured
 // delegation API intentionally reuses it instead of adding a second event
 // protocol. Unstructured legacy direct payloads are rejected.
-export const SUBAGENT_DELEGATION_REQUEST_EVENT = "prompt-template:subagent:request";
+export const SUBAGENT_DELEGATION_PROTOCOL_VERSION = 1 as const;export const SUBAGENT_DELEGATION_REQUEST_EVENT = "prompt-template:subagent:request";
 export const SUBAGENT_DELEGATION_STARTED_EVENT = "prompt-template:subagent:started";
 export const SUBAGENT_DELEGATION_UPDATE_EVENT = "prompt-template:subagent:update";
 export const SUBAGENT_DELEGATION_RESPONSE_EVENT = "prompt-template:subagent:response";
@@ -26,6 +37,16 @@ export type SubagentDelegationResultRequest =
 	| { kind: "text" }
 	| { kind: "structured"; schema: SubagentDelegationJsonSchemaObject };
 
+// Public aliases intentionally mirror the canonical execution contract while
+// retaining every legacy v1 input. Runtime validation remains authoritative.
+export type SubagentDelegationAcceptanceEvidence = AcceptanceEvidenceKind;
+export type SubagentDelegationAcceptanceCriterion = AcceptanceGate;
+export type SubagentDelegationAcceptanceVerifyCommand = AcceptanceVerifyCommand;
+export type SubagentDelegationAcceptanceReview = AcceptanceReviewGate;
+export type SubagentDelegationAcceptanceConfig = AcceptanceConfig;
+export type SubagentDelegationAcceptanceContract = AcceptanceContract;
+export type SubagentDelegationLegacyAcceptance = AcceptanceLegacyInput;
+export type SubagentDelegationAcceptance = AcceptanceInput;
 export interface SubagentDelegationRequest {
 	requestId: string;
 	ownerRunId: string;

@@ -38,8 +38,7 @@ import {
 	SLASH_SUBAGENT_RESPONSE_EVENT,
 	SLASH_SUBAGENT_STARTED_EVENT,
 	SLASH_SUBAGENT_UPDATE_EVENT,
-	DIRS,
-	type Details,
+	DIRS,	type Details,
 	type JsonSchemaObject,
 	type SingleResult,
 	type SubagentState,
@@ -622,8 +621,7 @@ function launchSlashSubagent(
 }
 
 function slashRunWorkflowScript(key: string, child: Record<string, unknown>): string {
-	return `return runs.run(${JSON.stringify(key)}, ${JSON.stringify(child)})`;
-}
+	return `return runs.run(${JSON.stringify(key)}, ${JSON.stringify(child)})`;}
 
 export function registerSlashCommands(
 	pi: ExtensionAPI,
@@ -680,8 +678,7 @@ export function registerSlashCommands(
 			if (inline.skill !== undefined) child.skill = inline.skill;
 			if (inline.model) child.model = inline.model;
 			if (fork) child.context = "fork";
-			launchSlashSubagent(pi, ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
-		},
+			launchSlashSubagent(pi, ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });		},
 	});
 
 	pi.registerCommand("subagent-cost", {

@@ -143,6 +143,15 @@ const AcceptanceOverride = Type.Unsafe({
 	description: "Optional acceptance policy. Omitted or auto is advisory only; false disables. Canonical objects compose report, verify, review, and onFailure. Legacy levels remain accepted; none is deprecated in favor of false.",
 });
 
+const AgentContractOverride = Type.Object({
+	version: Type.Integer({ enum: [1], description: "Enable compatibility behavior for this run/child." }),
+}, { additionalProperties: false, description: "Compatibility behavior. Omit for the default behavior." });
+
+const ChainGateOverride = Type.String({
+	enum: ["execution", "acceptance"],
+	description: "For chain steps with agentContract, choose whether the chain advances on execution success or acceptance success. Defaults to execution.",
+});
+
 const TurnBudgetOverride = Type.Object({
 	maxTurns: Type.Integer({ minimum: 1 }),
 	graceTurns: Type.Optional(Type.Integer({ minimum: 0 })),

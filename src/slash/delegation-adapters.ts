@@ -6,9 +6,9 @@ import {
 	type SubagentDelegationUpdate,
 	type SubagentDelegationValue,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig, Usage } from "../shared/types.ts";
+import type { AcceptanceInput, AcceptanceLedger, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig, Usage } from "../shared/types.ts";
+import { acceptanceBlocksRun } from "../runs/shared/acceptance.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
-
 export interface PromptTemplateDelegationRequest {
 	requestId: string;
 	agent: string;
@@ -61,6 +61,12 @@ interface DelegationAcceptanceSnapshot {
 	explicit?: boolean;
 }
 
+type PromptTemplateBridgeAcceptance = DelegationAcceptanceSnapshot & {
+	effectiveAcceptance?: {
+		onFailure: "fail" | "warn";
+		deprecationWarnings?: string[];
+	};
+};
 export interface PromptTemplateBridgeResult {
 	isError?: boolean;
 	content?: unknown;
@@ -92,8 +98,7 @@ export interface PromptTemplateBridgeResult {
 			acceptance?: DelegationAcceptanceSnapshot;
 			review?: ReviewProjection;
 			effects?: EffectsProjection;
-			usage?: Usage;
-			progressSummary?: { toolCount?: number; durationMs?: number; tokens?: number };
+			usage?: Usage;			progressSummary?: { toolCount?: number; durationMs?: number; tokens?: number };
 			skillsWarning?: string;
 			outputSaveError?: string;
 			transcriptError?: string;
@@ -153,8 +158,7 @@ export function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegat
 	return {
 		requestId: value.requestId,
 		agent: value.agent,
-		task: value.task,
-		context: value.context,
+		task: value.task,		context: value.context,
 		model: value.model,
 		cwd: value.cwd,
 	};
@@ -333,6 +337,13 @@ export function toSubagentDelegationUpdate(
 	};
 }
 
+function delegationAcceptanceBlocksRun(acceptance: PromptTemplateBridgeAcceptance): boolean {
+	// Current executors return a complete AcceptanceLedger. Keep v1 transport
+	// compatibility with older bridges that only supplied status and explicit.
+	if (!acceptance.effectiveAcceptance) return acceptance.status === "rejected" && acceptance.explicit === true;
+	return acceptanceBlocksRun(acceptance as AcceptanceLedger);
+}
+
 function resolveSubagentDelegationStatus(
 	result: PromptTemplateBridgeResult,
 	aborted: boolean,
@@ -344,7 +355,7 @@ function resolveSubagentDelegationStatus(
 	if (child?.structuredOutputFailed) return "structured_output_failed";
 	if (child?.turnBudgetExceeded) return "turn_budget_exhausted";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
-	if (child?.acceptance?.status === "rejected" && child.acceptance.explicit) return "acceptance_failed";
+	if (child.acceptance && delegationAcceptanceBlocksRun(child.acceptance)) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
 	return "completed";
@@ -389,8 +400,7 @@ export function toSubagentDelegationResponse(
 		}
 	}
 	const usage = child?.usage;
-	const childLaunchContractDigest = (child as { launchContractDigest?: string } | undefined)?.launchContractDigest;
-	return {
+	const childLaunchContractDigest = (child as { launchContractDigest?: string } | undefined)?.launchContractDigest;	return {
 		requestId: request.requestId,
 		ownerRunId: request.ownerRunId,
 		nodeId: request.nodeId,

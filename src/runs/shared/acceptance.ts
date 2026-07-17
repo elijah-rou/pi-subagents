@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
 	AcceptanceConfig,
@@ -25,7 +27,7 @@ import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
 const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified", "reviewed"]);
-const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>([
+const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
 	"changed-files",
 	"tests-added",
 	"commands-run",
@@ -35,7 +37,10 @@ const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>([
 	"diff-summary",
 	"review-findings",
 	"manual-notes",
-]);
+];
+const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>(VALID_EVIDENCE_KINDS);
+const ACCEPTANCE_EVIDENCE_HELP = `Supported evidence kinds: ${VALID_EVIDENCE_KINDS.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`;
+const ACCEPTANCE_OBJECT_EXAMPLE = "Example: { level: \"checked\", evidence: [\"commands-run\", \"changed-files\"] }.";
 const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason", "report", "onFailure"]);
 const LEGACY_ONLY_KEYS = new Set(["level", "criteria", "evidence", "stopRules", "reason"]);
 const CANONICAL_ONLY_KEYS = new Set(["report", "onFailure"]);
@@ -58,6 +63,7 @@ function requiredEvidenceForLevel(level: Exclude<AcceptanceLevel, "auto">): Acce
 		case "checked":
 			return ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"];
 		case "verified":
+		case "reviewed":
 			return ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files"];
 	}
 }
@@ -138,6 +144,17 @@ export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): Ac
 	if (input === undefined) return "auto";
 	if (typeof input === "object" && input !== null) return { ...input };
 	return input;
+}
+
+type GateAcceptanceNormalizationResult =
+	| { ok: true; acceptance?: AcceptanceInput }
+	| { ok: false; error: string };
+
+export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInput | undefined): GateAcceptanceNormalizationResult {
+	if (gate === undefined) return acceptance === undefined ? { ok: true } : { ok: true, acceptance };
+	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
+	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
+	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
 }
 
 export interface AdaptedAcceptance {

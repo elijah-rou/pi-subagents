@@ -91,8 +91,7 @@ describe("public subagent delegation contract", () => {
 			[{ ...request, skill: Array.from({ length: 257 }, () => "x") }, /skill supports at most 256 entries/],
 			[{ ...request, skill: Array.from({ length: 256 }, () => "x".repeat(257)) }, /skill entries exceed 64 KiB in aggregate/],
 			[{ ...request, result: { kind: "structured", schema: { value: "x".repeat(65_536) } } }, /result.schema exceeds 64 KiB/],
-			[{ ...request, timeoutMs: 2_147_483_648 }, /timeoutMs must be <= 2147483647/],
-		] as const;
+			[{ ...request, timeoutMs: 2_147_483_648 }, /timeoutMs must be <= 2147483647/],		] as const;
 		for (const [input, expected] of malformed) {
 			const parsed = parseSubagentDelegationRequest(input);
 			assert.equal(parsed.ok, false);
@@ -124,8 +123,7 @@ describe("public subagent delegation contract", () => {
 		assert.equal(calls, 0);
 	});
 
-	it("runs structured delegation through the concurrent executor and preserves literal text metadata", async () => {
-		const events = new FakeEvents();
+	it("runs structured delegation through the concurrent executor and preserves literal text metadata", async () => {		const events = new FakeEvents();
 		let ordinaryCalls = 0;
 		let observedParams: Record<string, unknown> | undefined;
 		const bridge = registerPromptTemplateDelegationBridge({
@@ -205,8 +203,7 @@ describe("public subagent delegation contract", () => {
 		const cases = [
 			[{ ok: true }, "completed", { kind: "structured", value: { ok: true } }],
 			[undefined, "failed", undefined],
-			[{ value: "x".repeat(1024 * 1024) }, "failed", undefined],
-		] as const;
+			[{ value: "x".repeat(1024 * 1024) }, "failed", undefined],		] as const;
 		for (const [structuredOutput, expectedStatus, expectedResult] of cases) {
 			const events = new FakeEvents();
 			const bridge = registerPromptTemplateDelegationBridge({
@@ -230,8 +227,7 @@ describe("public subagent delegation contract", () => {
 			const response = await responsePromise as SubagentDelegationResponse;
 			assert.equal(response.status, expectedStatus);
 			assert.deepEqual(response.result, expectedResult);
-			if (expectedStatus === "failed") assert.match(response.error ?? "", /structured result/);
-			bridge.dispose();
+			if (expectedStatus === "failed") assert.match(response.error ?? "", /structured result/);			bridge.dispose();
 		}
 	});
 

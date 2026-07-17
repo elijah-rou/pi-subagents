@@ -768,8 +768,7 @@ Inspect
 	it("does not register legacy orchestration commands", async () => {
 		const commands = new Map<string, unknown>();
 		registerSlashCommands!({
-			registerCommand(name: string, command: unknown) { commands.set(name, command); },
-			registerShortcut() {},
+			registerCommand(name: string, command: unknown) { commands.set(name, command); },			registerShortcut() {},
 			events: createEventBus(),
 		} as never, { baseCwd: process.cwd() } as never);
 		assert.equal(commands.has("run"), true);

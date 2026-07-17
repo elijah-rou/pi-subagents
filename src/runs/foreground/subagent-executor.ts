@@ -53,7 +53,7 @@ import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsy
 import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, adaptLegacyAcceptance, mergeAcceptanceContracts, normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -181,6 +181,11 @@ function compactOptional<T extends object>(
 		if (value[key] === undefined) delete value[key];
 	}
 	return value as T;
+}
+function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
+	if (child === undefined) return parent;
+	if (parent === undefined) return child;
+	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
 }
 
 interface TaskParam {
@@ -600,7 +605,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.context ? { context: input.result.context } : {}),
 		status: terminalStatus,
 		...foregroundChildActivityFromProgress(input.result.progress),
-		updatedAt,
+	updatedAt,
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
 		...(input.result.error ? { error: input.result.error } : {}),
 		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
@@ -1471,7 +1476,7 @@ async function resumeAsyncRun(input: {
 			globalConcurrencyLimit: input.deps.config.globalConcurrencyLimit,
 			capabilityCeiling: intersectSubagentCapabilityCeilings("capabilityCeiling" in target ? target.capabilityCeiling : undefined, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
 		}));
-		if (result.isError) return result;
+	if (result.isError) return result;
 		const attachedId = result.details.asyncId ?? runId;
 		const lines = [
 			`Attached async subagent ${target.runId} as the first step of a new chain.`,
@@ -2685,7 +2690,6 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 		capabilityCeiling: data.capabilityCeiling,
 	}));
-
 	if (chainResult.requestedAsync) {
 		if (!isAsyncAvailable()) {
 			return {
@@ -2830,7 +2834,8 @@ interface ForegroundParallelRunInput {
 	toolBudgets: (ResolvedToolBudget | undefined)[];
 	agentContract?: AgentContract;
 	permissions?: ExtensionConfig["permissions"];
-}
+
+	acceptance?: AcceptanceInput;}
 function buildParallelModeError(message: string): AgentToolResult<Details> {
 	return {
 		content: [{ type: "text", text: message }],
@@ -3087,8 +3092,8 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			skills: effectiveSkills === false ? [] : effectiveSkills,
 			structuredOutput: structuredRuntime,
 			agentContract: task.agentContract ?? input.agentContract,
-			acceptance: task.acceptance,
-			acceptanceContext: { mode: "parallel" },
+			acceptance: mergeAcceptanceInputs(input.acceptance, task.acceptance),
+	acceptanceContext: { mode: "parallel" },
 			timeoutMs: input.timeoutMs,
 			deadlineAt: input.deadlineAt,
 			turnBudget: input.turnBudget,
@@ -3337,7 +3342,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				configToolBudget: data.configToolBudget,
 				globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 			}));
-		}
+	}
 	}
 
 	const behaviors = tasks.map((task, index) => {
@@ -3455,7 +3460,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			toolBudgets,
 			agentContract: params.agentContract,
 		}));
-		for (let i = 0; i < results.length; i++) {
+	for (let i = 0; i < results.length; i++) {
 			const run = results[i]!;
 			recordRun(run.agent, taskTexts[i]!, run.exitCode, run.progressSummary?.durationMs ?? 0);
 		}

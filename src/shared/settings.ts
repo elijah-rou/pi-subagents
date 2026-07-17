@@ -146,7 +146,8 @@ export interface ParallelStep {
 	cwd?: string;
 	agentContract?: AgentContract;
 	gateOn?: ChainGateLayer;
-}
+
+	acceptance?: AcceptanceInput;}
 
 /** Union type for chain steps */
 export type ChainStep = SequentialStep | ParallelStep | DynamicParallelStep | CheckpointStep;

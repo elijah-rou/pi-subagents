@@ -636,7 +636,7 @@ export interface ModelAttempt {
 	usage?: Usage;
 }
 
-export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified";
+export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified" | "reviewed";
 
 export type AcceptanceEvidenceKind =
 	| "changed-files"
@@ -775,7 +775,7 @@ export interface AcceptanceVerifyResult {
 }
 
 export interface AcceptanceReviewResult {
-	status: "review-required" | "reviewed" | "blockers";
+	status: "no-blockers" | "blockers" | "needs-parent-decision";
 	findings: Array<{
 		severity: "blocker" | "non-blocking";
 		file?: string;

@@ -29,7 +29,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { adaptLegacyAcceptance, mergeAcceptanceContracts, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import {
 	type AcceptanceInput,
 	type AgentContract,
@@ -63,6 +63,12 @@ import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
+
+function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
+	if (child === undefined) return parent;
+	if (parent === undefined) return child;
+	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
+}
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
@@ -253,7 +259,8 @@ export interface AsyncRunnerStepBuildParams {
 	toolBudget?: ResolvedToolBudget;
 	configToolBudget?: ResolvedToolBudget;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-}
+
+	acceptance?: AcceptanceInput;}
 
 export type AsyncRunnerStepBuildResult =
 	| {
@@ -778,7 +785,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, a.maxSubagentDepth),
 			waitToolEnabled: params.waitToolEnabled,
 			effectiveAcceptance: resolveEffectiveAcceptance({
-				explicit: s.acceptance,
+				explicit: mergeAcceptanceInputs(params.acceptance, s.acceptance),
 				agentName: s.agent,
 				acceptanceRole: a.acceptanceRole,
 				task,
@@ -787,7 +794,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				dynamic: false,
 				agentContract,
 			}),
-			acceptanceInput: s.acceptance,
+			acceptanceInput: mergeAcceptanceInputs(params.acceptance, s.acceptance),
 			acceptanceRole: a.acceptanceRole,
 			...(s.gateOn ? { gateOn: s.gateOn } : {}),
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
@@ -835,8 +842,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 							}
 						}
 						const staticStep = nextFlatStep();
-						return buildSeqStep({ ...t, agentContract: t.agentContract ?? s.agentContract, gateOn: t.gateOn ?? s.gateOn }, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex });
-					}),
+						return buildSeqStep(
+							{ ...t, agentContract: t.agentContract ?? s.agentContract, gateOn: t.gateOn ?? s.gateOn, acceptance: mergeAcceptanceInputs(s.acceptance, t.acceptance) },
+							staticStep.sessionFile,
+							behaviorCwd,
+							progressPrecreated,
+							parallelBehaviors[taskIndex],
+							staticStep.index,
+							{ stepIndex, taskIndex },
+						);
+	}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
 					worktree: s.worktree,
@@ -997,6 +1012,8 @@ export function executeAsyncChain(
 		toolBudget: params.toolBudget,
 		configToolBudget: params.configToolBudget,
 		capabilityCeiling,
+
+		acceptance: params.acceptance,
 	});
 	if ("error" in built) {
 		try {
@@ -1392,7 +1409,7 @@ export function executeAsyncSingle(
 		...(outputPath ? { outputPath } : {}),
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
-		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
+	...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
 		...(initialTurnBudget ? { initialTurnBudget } : {}),

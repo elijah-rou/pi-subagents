@@ -27,7 +27,12 @@ export function buildExecutionProjection(result: Pick<SingleResult, "exitCode" |
 export function buildReviewProjection(result: Pick<SingleResult, "acceptance">): ReviewProjection {
 	const review = result.acceptance?.reviewResult;
 	if (!review) return { status: "not-requested" };
-	return { status: review.status, findings: review.findings };
+	const status = review.status === "no-blockers"
+		? "reviewed"
+		: review.status === "needs-parent-decision"
+			? "review-required"
+			: "blockers";
+	return { status, findings: review.findings };
 }
 
 export function attachContractProjections<T extends SingleResult>(result: T): T {
