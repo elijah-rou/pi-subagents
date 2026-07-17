@@ -505,6 +505,8 @@ interface RunPiStreamingResult {
 	observedMutationAttempt?: boolean;
 	structuredOutputToolInvoked?: boolean;
 	structuredOutputMessageStartIndex?: number;
+
+	forcedDrainAfterFinalSuccess?: boolean;
 	watchdog?: ChildWatchdogStateSnapshot;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	processInstanceId: string;
@@ -933,6 +935,8 @@ function runPiStreaming(
 				observedMutationAttempt,
 				structuredOutputToolInvoked,
 				structuredOutputMessageStartIndex,
+
+				forcedDrainAfterFinalSuccess,
 				watchdog: childWatchdogState,
 				processInstanceId,
 				processCloseObservedAt,
@@ -1454,6 +1458,7 @@ async function runSingleStep(
 		const runtimeAcknowledgedExtensions = readRuntimeAcknowledgedExtensions(runtimeAcknowledgedExtensionsPath);
 		cleanupTempDir(tempDir);
 
+
 		let structuredOutput: unknown;
 		let structuredError: string | undefined;
 		let validatedStructuredOutput = false;
@@ -1485,6 +1490,7 @@ async function runSingleStep(
 			&& !structuredError
 			&& !run.finalOutput.trim()
 			&& !validatedStructuredOutput
+			&& !run.forcedDrainAfterFinalSuccess
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? "Subagent produced no output (possible model cold-start or empty response)."
 			: undefined;

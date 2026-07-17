@@ -461,6 +461,8 @@ async function runSingleAttempt(
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
 
+	let forcedDrainAfterFinalSuccess = false;
+
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
@@ -1081,7 +1083,7 @@ async function runSingleAttempt(
 			const stderr = stderrTail.text();
 			const rawStdout = rawStdoutTail.text();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
-			const forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			if (signal) result.processSignal = signal;
 			if (!closeError && isUnexplainedProcessSignal({
 				processSignal: signal,
@@ -1218,7 +1220,7 @@ async function runSingleAttempt(
 			? messages.slice(structuredOutputMessageStartIndex ?? messages.length)
 			: messages;
 		const errInfo = detectSubagentError(errorMessages);
-		const missingOutput = !finalText?.trim() && !validatedStructuredOutput;
+		const missingOutput = !finalText?.trim() && !validatedStructuredOutput && !forcedDrainAfterFinalSuccess;
 		if (missingOutput && (!errInfo.hasError || hasEmptyTerminalAssistantResponse(messages))) {
 			result.exitCode = 1;
 			result.error = "Subagent produced no output (possible model cold-start or empty response).";
@@ -1229,6 +1231,7 @@ async function runSingleAttempt(
 				: `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
 		}
 	}
+
 
 	progress.status = result.exitCode === 0 ? "completed" : "failed";
 	progress.durationMs = Date.now() - startTime;
