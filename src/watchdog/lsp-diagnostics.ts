@@ -259,7 +259,9 @@ class JsonRpcLspClient {
 	readonly diagnostics = new Map<string, LspDiagnostic[]>();
 	private readonly child: ChildProcessWithoutNullStreams;
 	private stderr = "";
+	private closing = false;
 	private exited = false;
+	private terminalError: Error | undefined;
 	private readonly exitWaiters: Array<() => void> = [];
 
 	constructor(child: ChildProcessWithoutNullStreams) {
@@ -268,15 +270,13 @@ class JsonRpcLspClient {
 		child.stderr.on("data", (chunk: Buffer) => {
 			this.stderr = `${this.stderr}${chunk.toString("utf-8")}`.slice(-MAX_STDERR_LENGTH);
 		});
-		child.on("error", (error) => {
-			this.exited = true;
-			this.rejectPending(error);
-			this.resolveExitWaiters();
+		child.stdin.on("error", (error) => this.failTransport(error));
+		child.stdin.on("close", () => {
+			if (!this.closing && !this.exited) this.failTransport(new Error("language server stdin closed"));
 		});
+		child.on("error", (error) => this.handleExit(error));
 		child.on("exit", (code, signal) => {
-			this.exited = true;
-			this.rejectPending(new Error(`language server exited${code === null ? "" : ` with code ${code}`}${signal ? ` signal ${signal}` : ""}`));
-			this.resolveExitWaiters();
+			this.handleExit(new Error(`language server exited${code === null ? "" : ` with code ${code}`}${signal ? ` signal ${signal}` : ""}`));
 		});
 	}
 
@@ -284,9 +284,15 @@ class JsonRpcLspClient {
 		const id = this.nextId++;
 		const promise = new Promise<unknown>((resolve, reject) => {
 			this.pending.set(id, { resolve, reject });
-			this.send({ jsonrpc: "2.0", id, method, params });
+			try {
+				this.send({ jsonrpc: "2.0", id, method, params });
+			} catch (error) {
+				this.pending.delete(id);
+				reject(error);
+			}
 		});
-		return withTimeout(promise, timeoutMs, `${method} timed out`, signal);
+		return withTimeout(promise, timeoutMs, `${method} timed out`, signal)
+			.finally(() => this.pending.delete(id));
 	}
 
 	notify(method: string, params: unknown): void {
@@ -295,17 +301,23 @@ class JsonRpcLspClient {
 
 	async shutdown(): Promise<void> {
 		if (this.exited) return;
-		try {
-			await this.request("shutdown", null, SHUTDOWN_TIMEOUT_MS);
-			this.notify("exit", null);
-		} catch {
-			this.child.kill("SIGTERM");
+		if (!this.closing) {
+			try {
+				await this.request("shutdown", null, SHUTDOWN_TIMEOUT_MS);
+				this.notify("exit", null);
+				this.closing = true;
+			} catch {
+				this.closing = true;
+				this.child.kill("SIGTERM");
+			}
 		}
 		await this.waitForExit(SHUTDOWN_TIMEOUT_MS);
 	}
 
 	kill(): void {
-		if (!this.exited) this.child.kill("SIGTERM");
+		if (this.exited || this.closing) return;
+		this.closing = true;
+		this.child.kill("SIGTERM");
 	}
 
 	stderrTail(): string {
@@ -313,9 +325,16 @@ class JsonRpcLspClient {
 	}
 
 	private send(payload: JsonRpcMessage): void {
-		if (this.exited) throw new Error("language server already exited");
+		if (this.exited || this.closing || this.child.stdin.destroyed || !this.child.stdin.writable || this.child.stdin.writableEnded) {
+			throw this.terminalError ?? new Error("language server stdin is closed");
+		}
 		const body = JSON.stringify(payload);
-		this.child.stdin.write(`Content-Length: ${Buffer.byteLength(body, "utf-8")}\r\n\r\n${body}`);
+		this.child.stdin.write(
+			`Content-Length: ${Buffer.byteLength(body, "utf-8")}\r\n\r\n${body}`,
+			(error) => {
+				if (error) this.failTransport(error);
+			},
+		);
 	}
 
 	private handleStdout(chunk: Buffer): void {
@@ -365,9 +384,28 @@ class JsonRpcLspClient {
 	}
 
 	private failProtocol(error: Error): void {
-		if (this.exited) return;
+		if (this.exited || this.closing) return;
+		this.closing = true;
+		this.terminalError = error;
 		this.rejectPending(error);
 		this.child.kill("SIGTERM");
+	}
+
+	private failTransport(error: Error): void {
+		if (this.exited || this.closing) return;
+		this.closing = true;
+		this.terminalError = error;
+		this.rejectPending(error);
+		this.child.kill("SIGTERM");
+	}
+
+	private handleExit(error: Error): void {
+		if (this.exited) return;
+		this.closing = true;
+		this.exited = true;
+		this.terminalError ??= error;
+		this.rejectPending(this.terminalError);
+		this.resolveExitWaiters();
 	}
 
 	private waitForExit(timeoutMs: number): Promise<void> {

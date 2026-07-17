@@ -90,15 +90,22 @@ describe("watchdog LSP diagnostics", () => {
 		assert.equal(info, undefined);
 	});
 
-	it("returns a failed result for malformed language-server JSON", async () => {
+	it("returns the protocol failure without writing shutdown after malformed language-server JSON", async () => {
 		const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-watchdog-lsp-"));
 		try {
 			const binDir = path.join(temp, "node_modules", ".bin");
+			const shutdownMarker = path.join(temp, "shutdown-received");
 			fs.mkdirSync(path.join(temp, "src"), { recursive: true });
 			fs.mkdirSync(binDir, { recursive: true });
 			fs.writeFileSync(path.join(temp, "src", "file.ts"), "export const value = 1;\n", "utf-8");
 			const scriptPath = path.join(binDir, "tls-malformed.js");
-			fs.writeFileSync(scriptPath, "process.stdout.write('Content-Length: 8\\r\\n\\r\\nnot-json'); setTimeout(() => process.exit(0), 50);\n", "utf-8");
+			fs.writeFileSync(scriptPath, [
+				`const fs = require("node:fs");`,
+				`process.stdin.on("data", (chunk) => { if (chunk.includes('"method":"shutdown"')) fs.writeFileSync(${JSON.stringify(shutdownMarker)}, "received"); });`,
+				`process.on("SIGTERM", () => setTimeout(() => process.exit(0), 50));`,
+				`process.stdout.write('Content-Length: 8\\r\\n\\r\\nnot-json');`,
+				`setTimeout(() => process.exit(0), 200);`,
+			].join("\n"), "utf-8");
 			if (process.platform === "win32") {
 				fs.writeFileSync(path.join(binDir, "typescript-language-server.cmd"), `@echo off\r\n"${process.execPath}" "%~dp0\\tls-malformed.js" %*\r\n`, "utf-8");
 			} else {
@@ -115,6 +122,7 @@ describe("watchdog LSP diagnostics", () => {
 
 			assert.equal(diagnostics.status, "failed");
 			assert.match(diagnostics.message ?? "", /Invalid LSP JSON-RPC response/);
+			assert.equal(fs.existsSync(shutdownMarker), false);
 		} finally {
 			try {
 				fs.rmSync(temp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
