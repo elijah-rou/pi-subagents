@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
 	AcceptanceConfig,
+	AcceptanceContract,
 	AcceptanceEvidenceKind,
 	AcceptanceInput,
 	AgentContract,
@@ -25,15 +24,8 @@ import type {
 import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
-const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
-	none: 0,
-	attested: 1,
-	checked: 2,
-	verified: 3,
-};
-
-const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified"]);
-const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
+const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified", "reviewed"]);
+const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>([
 	"changed-files",
 	"tests-added",
 	"commands-run",
@@ -43,19 +35,15 @@ const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
 	"diff-summary",
 	"review-findings",
 	"manual-notes",
-];
-const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>(VALID_EVIDENCE_KINDS);
-const ACCEPTANCE_EVIDENCE_HELP = `Supported evidence kinds: ${VALID_EVIDENCE_KINDS.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`;
-const ACCEPTANCE_OBJECT_EXAMPLE = "Example: { level: \"checked\", evidence: [\"commands-run\", \"changed-files\"] }.";
-const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
+]);
+const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason", "report", "onFailure"]);
+const LEGACY_ONLY_KEYS = new Set(["level", "criteria", "evidence", "stopRules", "reason"]);
+const CANONICAL_ONLY_KEYS = new Set(["report", "onFailure"]);
+const ACCEPTANCE_REPORT_KEYS = new Set(["criteria", "evidence"]);
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
 const EXPLICIT_REVIEWED_UNAVAILABLE = "is an achieved status, not a requestable acceptance level. For a read-only reviewer call, omit acceptance. To require independent review of a writer result, use acceptance.review.required and orchestrate the reviewer separately.";
-
-function normalizeLevel(level: AcceptanceLevel | undefined): Exclude<AcceptanceLevel, "auto"> | "auto" {
-	return level ?? "auto";
-}
 
 function unique<T>(items: T[]): T[] {
 	return [...new Set(items)];
@@ -146,26 +134,99 @@ function inferLevel(input: {
 	};
 }
 
-export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceConfig {
-	if (input === undefined || input === "auto") return { level: "auto" };
-	if (input === false) return { level: "none", reason: "disabled by deprecated false shorthand" };
-	if (typeof input === "string") return { level: input };
-	return { ...input };
+export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceInput {
+	if (input === undefined) return "auto";
+	if (typeof input === "object" && input !== null) return { ...input };
+	return input;
 }
 
-type GateAcceptanceNormalizationResult =
-	| { ok: true; acceptance?: AcceptanceInput }
-	| { ok: false; error: string };
-
-export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInput | undefined): GateAcceptanceNormalizationResult {
-	if (gate === undefined) return acceptance === undefined ? { ok: true } : { ok: true, acceptance };
-	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
-	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
-	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
+export interface AdaptedAcceptance {
+	contract: AcceptanceContract | false;
+	stopRules: string[];
+	reason?: string;
+	deprecationWarnings: string[];
 }
 
-function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
-	return explicit.level === "none" && typeof explicit.reason === "string" && explicit.reason.trim().length > 0;
+function isCanonicalObject(value: Record<string, unknown>): boolean {
+	return Object.keys(value).some((key) => CANONICAL_ONLY_KEYS.has(key));
+}
+
+export function mergeAcceptanceContracts(
+	parent: AcceptanceContract | false | undefined,
+	child: AcceptanceContract | false | undefined,
+): AcceptanceContract | false | undefined {
+	if (child === false) return false;
+	if (child === undefined) return parent;
+	if (parent === false || parent === undefined) return { ...child };
+	const merged: AcceptanceContract = { ...parent };
+	if (Object.prototype.hasOwnProperty.call(child, "report")) merged.report = child.report;
+	if (Object.prototype.hasOwnProperty.call(child, "verify")) merged.verify = child.verify;
+	if (Object.prototype.hasOwnProperty.call(child, "review")) merged.review = child.review;
+	if (Object.prototype.hasOwnProperty.call(child, "onFailure")) merged.onFailure = child.onFailure;
+	return merged;
+}
+
+export function adaptLegacyAcceptance(input: AcceptanceInput | undefined): AdaptedAcceptance {
+	if (input === undefined || input === "auto") return { contract: false, stopRules: [], deprecationWarnings: [] };
+	if (input === false) return { contract: false, stopRules: [], deprecationWarnings: [] };
+	if (input === "none") {
+		return { contract: false, stopRules: [], deprecationWarnings: ['Acceptance level "none" is deprecated; use acceptance: false.'] };
+	}
+	if (typeof input === "string") return adaptLegacyAcceptance({ level: input });
+
+	const value = input as AcceptanceConfig & AcceptanceContract;
+	if (isCanonicalObject(value as Record<string, unknown>)) {
+		return {
+			contract: {
+				...(Object.prototype.hasOwnProperty.call(value, "report") ? { report: value.report } : {}),
+				...(Object.prototype.hasOwnProperty.call(value, "verify") ? { verify: value.verify } : {}),
+				...(Object.prototype.hasOwnProperty.call(value, "review") ? { review: value.review } : {}),
+				...(Object.prototype.hasOwnProperty.call(value, "onFailure") ? { onFailure: value.onFailure } : {}),
+			},
+			stopRules: [],
+			deprecationWarnings: [],
+		};
+	}
+
+	const level = value.level;
+	if (level === undefined) {
+		const report = value.criteria !== undefined || value.evidence !== undefined
+			? { criteria: value.criteria, evidence: value.evidence }
+			: undefined;
+		return {
+			contract: {
+				...(report ? { report } : {}),
+				...(value.verify !== undefined ? { verify: value.verify } : {}),
+				...(value.review !== undefined ? { review: value.review } : {}),
+				onFailure: "fail",
+			},
+			stopRules: value.stopRules ?? [],
+			reason: value.reason,
+			deprecationWarnings: [],
+		};
+	}
+	if (level === "auto") return { contract: false, stopRules: value.stopRules ?? [], reason: value.reason, deprecationWarnings: [] };
+	if (level === "none") {
+		return {
+			contract: false,
+			stopRules: value.stopRules ?? [],
+			reason: value.reason,
+			deprecationWarnings: ['Acceptance level "none" is deprecated; use acceptance: false.'],
+		};
+	}
+
+	const evidence = unique([...(requiredEvidenceForLevel(level)), ...(value.evidence ?? [])]);
+	return {
+		contract: {
+			report: { criteria: value.criteria, evidence },
+			verify: value.verify ?? [],
+			review: level === "reviewed" ? (value.review === false ? false : value.review ?? { required: true }) : value.review,
+			onFailure: "fail",
+		},
+		stopRules: value.stopRules ?? [],
+		reason: value.reason,
+		deprecationWarnings: [],
+	};
 }
 
 function unsupportedEvidenceKindMessage(pathLabel: string, item: unknown): string {
@@ -178,10 +239,8 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	if (input === undefined) return errors;
 	if (input === false) return errors;
 	if (typeof input === "string") {
-		if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
-		else if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
-		else if (input === "none") errors.push(`${pathLabel} level "none" requires a reason; use { level: "none", reason: "..." }.`);
-		else if (input === "verified") errors.push(`${pathLabel} level "verified" requires object form with at least one runtime verify command. Use level "checked" or provide a non-empty acceptance.verify array.`);
+		if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
+		else if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -192,14 +251,30 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	for (const key of Object.keys(value)) {
 		if (!ACCEPTANCE_CONFIG_KEYS.has(key)) errors.push(`${pathLabel}.${key} is not supported.`);
 	}
-	if (value.level === "reviewed") {
-		errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
-	} else if (value.level !== undefined && (typeof value.level !== "string" || !VALID_LEVELS.has(value.level as AcceptanceLevel))) {
-		errors.push(`${pathLabel}.level must be one of auto, none, attested, checked, verified.`);
+	const hasCanonicalField = Object.keys(value).some((key) => CANONICAL_ONLY_KEYS.has(key));
+	const hasLegacyField = Object.keys(value).some((key) => LEGACY_ONLY_KEYS.has(key));
+	if (hasCanonicalField && hasLegacyField) errors.push(`${pathLabel} cannot mix legacy and canonical acceptance fields.`);
+	if (value.report !== undefined && value.report !== false) {
+		if (!value.report || typeof value.report !== "object" || Array.isArray(value.report)) {
+			errors.push(`${pathLabel}.report must be false or an object.`);
+		} else {
+			const report = value.report as Record<string, unknown>;
+			for (const key of Object.keys(report)) {
+				if (!ACCEPTANCE_REPORT_KEYS.has(key)) errors.push(`${pathLabel}.report.${key} is not supported.`);
+			}
+			errors.push(...validateAcceptanceInput(
+				{ criteria: report.criteria, evidence: report.evidence },
+				`${pathLabel}.report`,
+			));
+		}
 	}
-	if (value.level === "none" && (typeof value.reason !== "string" || !value.reason.trim())) {
-		errors.push(`${pathLabel}.reason is required when level is none.`);
+	if (value.onFailure !== undefined && value.onFailure !== "fail" && value.onFailure !== "warn") {
+		errors.push(`${pathLabel}.onFailure must be fail or warn.`);
 	}
+	if (value.level !== undefined && (typeof value.level !== "string" || !VALID_LEVELS.has(value.level as AcceptanceLevel))) {
+		errors.push(`${pathLabel}.level must be one of auto, none, attested, checked, verified, reviewed.`);
+	}
+	if (value.level === "reviewed") errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 	if (value.reason !== undefined && typeof value.reason !== "string") errors.push(`${pathLabel}.reason must be a string.`);
 	if (value.criteria !== undefined && !Array.isArray(value.criteria)) errors.push(`${pathLabel}.criteria must be an array.`);
 	if (Array.isArray(value.criteria)) {
@@ -291,6 +366,7 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 			if (review.agent !== undefined && typeof review.agent !== "string") errors.push(`${pathLabel}.review.agent must be a string.`);
 			if (review.focus !== undefined && typeof review.focus !== "string") errors.push(`${pathLabel}.review.focus must be a string.`);
 			if (review.required !== undefined && typeof review.required !== "boolean") errors.push(`${pathLabel}.review.required must be a boolean.`);
+			if (review.required === true) errors.push(`${pathLabel}.review ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
 		}
 	}
 	if (value.stopRules !== undefined && !Array.isArray(value.stopRules)) errors.push(`${pathLabel}.stopRules must be an array.`);
@@ -330,7 +406,7 @@ export function validateExecutionAcceptance(input: {
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {
 	return (criteria ?? []).map((criterion, index): ResolvedAcceptanceGate => {
 		if (typeof criterion === "string") {
-			return { id: `criterion-${index + 1}`, must: criterion, evidence, severity: "required" };
+			return { id: `criterion-${index + 1}`, must: criterion, evidence, severity: "required" as const };
 		}
 		return {
 			id: criterion.id?.trim() || `criterion-${index + 1}`,
@@ -339,6 +415,26 @@ function normalizeCriteria(criteria: Array<string | { id?: string; must?: string
 			severity: criterion.severity ?? "required",
 		};
 	}).filter((criterion) => criterion.must.trim());
+}
+
+export function inferAcceptanceRecommendations(input: {
+	agentName: string;
+	acceptanceRole?: AcceptanceRole;
+	task?: string;
+	mode?: SubagentRunMode;
+	async?: boolean;
+	dynamic?: boolean;
+	dynamicGroup?: boolean;
+}): { recommendations: string[]; inferredReason: string[] } {
+	const inferred = inferLevel(input);
+	return {
+		recommendations: [
+			`Suggested legacy level: ${inferred.level}.`,
+			...inferred.criteria.map((criterion) => `Suggested criterion: ${criterion}`),
+			...(inferred.evidence.length > 0 ? [`Suggested evidence: ${inferred.evidence.join(", ")}.`] : []),
+		],
+		inferredReason: inferred.reasons,
+	};
 }
 
 export function resolveEffectiveAcceptance(input: {
@@ -352,51 +448,37 @@ export function resolveEffectiveAcceptance(input: {
 	dynamicGroup?: boolean;
 	agentContract?: AgentContract;
 }): ResolvedAcceptanceConfig {
-	const explicit = normalizeAcceptanceInput(input.explicit);
-	const explicitLevel = normalizeLevel(explicit.level);
-	if (isAgentContractV1(input.agentContract)) {
-		const level = explicitAcceptanceCanDisable(explicit) || explicitLevel === "auto"
-			? "none"
-			: explicitLevel;
-		const evidence = unique(explicit.evidence ?? []);
-		const criteria = normalizeCriteria(
-			explicit.criteria as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined,
-			evidence,
-		);
-		return {
-			level,
-			explicit: input.explicit !== undefined,
-			inferredReason: [],
-			criteria,
-			evidence,
-			verify: explicit.verify ?? [],
-			review: explicit.review,
-			stopRules: explicit.stopRules ?? [],
-			reason: explicit.reason,
-		};
-	}
-	const inferred = inferLevel(input);
-	const level = explicitAcceptanceCanDisable(explicit)
-		? "none"
-		: explicitLevel === "auto"
-			? inferred.level
-			: (LEVEL_RANK[explicitLevel] >= LEVEL_RANK[inferred.level] ? explicitLevel : inferred.level);
-	const evidence = unique([...(level === inferred.level ? inferred.evidence : requiredEvidenceForLevel(level)), ...(explicit.evidence ?? [])]);
-	const criteria = normalizeCriteria(
-		(explicit.criteria?.length ? explicit.criteria : inferred.criteria) as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }>,
-		evidence,
-	);
-	const review = explicit.review !== undefined ? explicit.review : inferred.review;
+	const adapted = adaptLegacyAcceptance(input.explicit);
+	const advisory = inferAcceptanceRecommendations(input);
+	const contract = adapted.contract;
+	const report = contract === false ? false : contract.report ?? false;
+	const reportCriteria = report === false ? undefined : report.criteria;
+	const evidence = report === false ? [] : report.evidence ?? [];
+	const criteria = normalizeCriteria(reportCriteria, evidence);
+	const verify = contract === false ? [] : contract.verify ?? [];
+	const review = contract === false ? false : contract.review ?? false;
+	const level: ResolvedAcceptanceConfig["level"] = review !== false
+		? "reviewed"
+		: verify.length > 0
+			? "verified"
+			: report !== false
+				? (criteria.length > 0 || evidence.length > 0 ? "checked" : "attested")
+				: "none";
+	const explicit = input.explicit !== undefined && input.explicit !== "auto";
 	return {
 		level,
-		explicit: input.explicit !== undefined,
-		inferredReason: inferred.reasons,
+		explicit,
+		report,
+		onFailure: contract === false ? "warn" : contract.onFailure ?? "fail",
+		recommendations: input.explicit === undefined || input.explicit === "auto" ? advisory.recommendations : [],
+		deprecationWarnings: adapted.deprecationWarnings,
+		inferredReason: advisory.inferredReason,
 		criteria,
 		evidence,
-		verify: explicit.verify ?? [],
+		verify,
 		review,
-		stopRules: explicit.stopRules ?? [],
-		reason: explicit.reason,
+		stopRules: adapted.stopRules,
+		reason: adapted.reason,
 	};
 }
 
@@ -406,18 +488,17 @@ function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): bo
 
 export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean } = {}): string {
 	if (acceptance.level === "none") return "";
-	if (options.reportOptional && !acceptanceRequiresChildReport(acceptance)) return "";
-	const lines = [
-		"",
-		"## Acceptance Contract",
-		`Acceptance level: ${acceptance.level}`,
-		"Completion is not accepted from prose alone. End with a structured acceptance report.",
-		"",
-		"Criteria:",
-		...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`) : ["- Return the requested result."]),
-		"",
-		`Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
-	];
+	const lines = ["", "## Acceptance Contract", `Acceptance level: ${acceptance.level}`];
+	if (acceptance.report !== false) {
+		lines.push(
+			"Completion is not accepted from prose alone. End with a structured acceptance report.",
+			"",
+			"Criteria:",
+			...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`) : ["- Return the requested result."]),
+			"",
+			`Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
+		);
+	}
 	if (acceptance.verify.length > 0) {
 		lines.push("", "Runtime verification commands configured by parent:");
 		for (const command of acceptance.verify) lines.push(`- ${command.id}: ${command.command}`);
@@ -429,7 +510,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 	if (acceptance.stopRules.length > 0) {
 		lines.push("", "Stop rules:", ...acceptance.stopRules.map((rule) => `- ${rule}`));
 	}
-	lines.push(
+	if (acceptance.report !== false) lines.push(
 		"",
 		"Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
@@ -588,7 +669,7 @@ function normalizeAcceptanceReportValue(value: unknown, pathLabel = ""): { value
 			errors.push(`${pathFor(reportPath, key)}: unsupported acceptance report field`);
 			continue;
 		}
-		if (Object.hasOwn(normalized, canonical)) {
+		if (Object.prototype.hasOwnProperty.call(normalized, canonical)) {
 			errors.push(`${pathFor(reportPath, key)}: duplicates normalized field '${canonical}'`);
 			continue;
 		}
@@ -1002,7 +1083,7 @@ export function aggregateAcceptanceReport(input: {
 	notes?: string;
 }): AcceptanceReport {
 	const childReports = input.results.map((result) => result.acceptance?.childReport).filter((report): report is AcceptanceReport => Boolean(report));
-	const blockers = input.results.filter((result) => result.exitCode !== 0 || result.acceptance?.status === "rejected");
+	const blockers = input.results.filter((result) => result.exitCode !== 0 || (result.acceptance ? acceptanceBlocksRun(result.acceptance) : false));
 	const successfulChildren = input.results.length > 0 && blockers.length === 0;
 	return {
 		criteriaSatisfied: [
@@ -1010,7 +1091,7 @@ export function aggregateAcceptanceReport(input: {
 			{ id: "criterion-2", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? "Collected child acceptance evidence for aggregate review." : "Dynamic fanout produced no aggregate review evidence." },
 			...input.results.map((result, index): { id?: string; status: "satisfied" | "not-satisfied" | "not-applicable"; evidence: string } => ({
 				id: `child-${index + 1}`,
-				status: result.exitCode === 0 && result.acceptance?.status !== "rejected" ? "satisfied" : "not-satisfied",
+				status: result.exitCode === 0 && !(result.acceptance && acceptanceBlocksRun(result.acceptance)) ? "satisfied" as const : "not-satisfied" as const,
 				evidence: `${result.agent}: acceptance ${result.acceptance?.status ?? "unreported"}${result.error ? ` (${result.error})` : ""}`,
 			})),
 		],
@@ -1240,101 +1321,58 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	const parsed = input.report
-		? (() => {
-			const validation = validateAcceptanceReport(input.report);
-			return validation.report
-				? { report: validation.report }
-				: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
-		})()
-		: parseAcceptanceReportSources(input.output, input.fileOutput);
-	const needsReport = acceptanceRequiresChildReport(acceptance);
-	if (parsed.report) {
-		ledger.childReport = parsed.report;
-		ledger.status = "attested";
-		ledger.evidenceStatus = "attested";
-	} else if (!input.reportOptional || needsReport || parsed.error !== ACCEPTANCE_REPORT_NOT_FOUND) {
-		ledger.childReportParseError = parsed.error;
-		ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
-		if (!input.reportOptional) {
-			ledger.status = "rejected";
-			ledger.evidenceStatus = "rejected";
-			return ledger;
-		}
-	} else {
-		ledger.childReportParseError = parsed.error;
-	}
-
-	if (parsed.report && LEVEL_RANK[acceptance.level] >= LEVEL_RANK.checked) {
-		ledger.runtimeChecks = [
-			...ledger.runtimeChecks,
-			...checkCriteriaSatisfied(acceptance.criteria, parsed.report),
-			...runStructuralChecks(acceptance, parsed.report, input.cwd),
-		];
-		if (!ledger.runtimeChecks.some((check) => check.status === "failed")) {
-			ledger.status = "checked";
-			ledger.evidenceStatus = "checked";
+	let reportPassed = acceptance.report === false;
+	if (acceptance.report !== false) {
+		const parsed = input.report
+			? (() => {
+				const validation = validateAcceptanceReport(input.report);
+				return validation.report
+					? { report: validation.report }
+					: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
+			})()
+			: parseAcceptanceReportSources(input.output, input.fileOutput);
+		if (parsed.report) {
+			ledger.childReport = parsed.report;
+			ledger.runtimeChecks.push(
+				...checkCriteriaSatisfied(acceptance.criteria, parsed.report),
+				...runStructuralChecks(acceptance, parsed.report, input.cwd),
+			);
+			reportPassed = !ledger.runtimeChecks.some((check) => check.status === "failed");
+		} else {
+			ledger.childReportParseError = parsed.error;
+			ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
 		}
 	}
 
-	if (LEVEL_RANK[acceptance.level] >= LEVEL_RANK.verified && (acceptance.level === "verified" || acceptance.verify.length > 0)) {
-		if (acceptance.level === "verified" && acceptance.verify.length === 0) {
-			ledger.runtimeChecks.push({ id: "verification-config", status: "failed", message: "verified acceptance requires runtime verify commands." });
-			ledger.status = "rejected";
-			ledger.evidenceStatus = "rejected";
-			return ledger;
-		}
-		ledger.verifyRuns = [];
-		for (const command of acceptance.verify) {
-			ledger.verifyRuns.push(await runMemoizedVerifyCommand(command, input.cwd, {
-				signal: input.signal,
-				abortMessage: input.abortMessage,
-				artifactsDir: input.artifactsDir,
-				runId: input.runId,
-			}));
-			if (input.signal?.aborted) break;
-		}
-		if (ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out")) {
-			ledger.status = "rejected";
-			ledger.evidenceStatus = "rejected";
-			return ledger;
-		}
-		if (!ledger.runtimeChecks.some((check) => check.status === "failed")) {
-			ledger.status = "verified";
-			ledger.evidenceStatus = "verified";
-		}
+	for (const command of acceptance.verify) {
+		ledger.verifyRuns.push(await runVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage }));
+		if (input.signal?.aborted) break;
 	}
+	const verifyPassed = !ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out");
 
-	if (ledger.runtimeChecks.some((check) => check.status === "failed")) {
-		ledger.status = "rejected";
-		ledger.evidenceStatus = "rejected";
-		return ledger;
-	}
-	if (ledger.status === "claimed") {
-		ledger.status = acceptance.level === "verified" ? "verified" : acceptance.level;
-		ledger.evidenceStatus = ledger.status;
-	}
-
-	if (acceptance.review) {
-		if (input.reviewResult?.status === "reviewed") {
+	let reviewPassed = true;
+	if (acceptance.review !== false) {
+		if (input.reviewResult) {
 			ledger.reviewResult = input.reviewResult;
-			ledger.status = "reviewed";
-		} else if (input.reviewResult?.status === "blockers") {
-			ledger.reviewResult = input.reviewResult;
-			ledger.status = "rejected";
-		} else if (acceptance.review.required !== false) {
-			ledger.reviewResult = input.reviewResult ?? {
-				status: "review-required",
+			reviewPassed = input.reviewResult.status === "no-blockers";
+		} else {
+			const required = acceptance.review.required !== false;
+			ledger.reviewResult = {
+				status: "needs-parent-decision",
 				findings: [{
-					severity: "non-blocking",
-					issue: "Independent review has not been supplied.",
+					severity: required ? "blocker" : "non-blocking",
+					issue: "Reviewed acceptance requires an independent reviewer result.",
 					rationale: "The run cannot be marked reviewed from child evidence alone.",
 				}],
 			};
-			ledger.status = "review-required";
+			reviewPassed = !required;
 		}
 	}
 
+	if (!reportPassed || !verifyPassed || !reviewPassed) ledger.status = "rejected";
+	else if (acceptance.review !== false && ledger.reviewResult?.status === "no-blockers") ledger.status = "reviewed";
+	else if (acceptance.verify.length > 0) ledger.status = "verified";
+	else if (acceptance.report !== false) ledger.status = acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
 	return ledger;
 }
 
@@ -1352,6 +1390,12 @@ export function buildSkippedAcceptanceLedger(acceptance: ResolvedAcceptanceConfi
 			: [{ id: input.id, status: "failed", message: input.message }],
 		verifyRuns: [],
 	};
+}
+
+export function acceptanceBlocksRun(ledger: AcceptanceLedger): boolean {
+	return ledger.status === "rejected"
+		&& ledger.explicit
+		&& ledger.effectiveAcceptance.onFailure === "fail";
 }
 
 export function acceptanceFailureMessage(ledger: AcceptanceLedger): string | undefined {

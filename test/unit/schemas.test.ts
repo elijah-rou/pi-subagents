@@ -367,8 +367,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		// Mission, inspector, and inline workflow fields intentionally expanded the public tool surface.
-		assert.ok(serialized.length < 17_000, `expected compact schema under 17k chars, got ${serialized.length}`);
+		assert.ok(serialized.length < 30_000, `expected compact schema under 30k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);
@@ -472,18 +471,11 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(acceptanceSchema.type, undefined);
 		assert.equal(hasAnyOfType(acceptanceSchema, "string"), true);
 		assert.equal(hasAnyOfType(acceptanceSchema, "boolean"), true);
-		const acceptanceStringBranches = anyOfBranches(acceptanceSchema).filter((branch) => branch.type === "string");
-		const acceptanceLevelBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("auto"));
-		assert.deepEqual(acceptanceLevelBranch?.enum, ["auto", "attested", "checked"], "verified requires object form with runtime commands");
-		const reviewedRecoveryBranch = acceptanceStringBranches.find((branch) => Array.isArray(branch.enum) && branch.enum.includes("reviewed"));
-		assert.deepEqual(reviewedRecoveryBranch?.enum, ["reviewed"]);
-		assert.equal(reviewedRecoveryBranch?.deprecated, true);
-		assert.match(String(acceptanceSchema.description ?? ""), /reviewer\/read-only calls, omit acceptance/i);
-		assert.match(String(acceptanceSchema.description ?? ""), /acceptance\.review\.required/);
-		const acceptanceObjectBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "object");
-		assert.ok(acceptanceObjectBranch, "acceptance should support object config");
-		assert.equal(acceptanceObjectBranch.additionalProperties, true);
-		assert.equal(JSON.stringify(acceptanceObjectBranch).includes('"anyOf"'), false);
+		const acceptanceStringBranch = anyOfBranches(acceptanceSchema).find((branch) => branch.type === "string");
+		assert.deepEqual(acceptanceStringBranch?.enum, ["auto", "none", "attested", "checked", "verified", "reviewed"]);
+		const acceptanceObjectBranches = anyOfBranches(acceptanceSchema).filter((branch) => branch.type === "object");
+		assert.equal(acceptanceObjectBranches.length, 2, "acceptance should support strict canonical and legacy objects");
+		assert.ok(acceptanceObjectBranches.every((branch) => branch.additionalProperties === false));
 
 		const step = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.step;
 		assert.equal(step?.type, "object");
@@ -506,13 +498,26 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ action: "steer", id: "run-1", message: "focus on tests" },
 			{ action: "steer", id: "run-1", index: 0, message: "focus on tests" },
 			{ action: "not-a-real-action" },
+			{ tasks: [{ agent: "worker", task: "Fix" }], maxRuntimeMs: 1000 },
+			{ chain: [{ agent: "worker", task: "Fix" }], timeoutMs: 1000, maxRuntimeMs: 1000 },
+			{ agent: "worker", task: "Fix", acceptance: "checked" },
+			{ agent: "worker", task: "Fix", acceptance: "none" },
+			{ agent: "worker", task: "Fix", acceptance: "reviewed" },
+			{ agent: "worker", task: "Fix", acceptance: { report: { evidence: ["commands-run"] }, onFailure: "warn" } },
+			{ agent: "worker", task: "Fix", acceptance: { verify: [{ id: "unit", command: "npm test" }] } },
+			{ agent: "worker", task: "Fix", acceptance: { level: "none", reason: "parent will verify manually" } },
+			{ agent: "worker", task: "Fix", acceptance: { level: "checked", review: false } },
+			{ tasks: [{ agent: "worker", task: "Fix", acceptance: false }] },
+			{ chain: [{ agent: "worker", acceptance: { level: "checked" } }] },
+			{ chain: [{ parallel: [{ agent: "worker", acceptance: { level: "verified", verify: [{ id: "unit", command: "npm test" }] } }] }] },
+			{ chain: [{ expand: { from: { output: "targets", path: "/items" }, maxItems: 4 }, parallel: { agent: "worker", acceptance: { level: "checked", review: false } }, collect: { as: "reviews" } }] },
 			{ config: { name: "reviewer", description: "Review things" } },
 			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
 		];
 		const invalidValues = [
 			{ skill: 123 },
-			{ agent: "worker", task: "Fix", acceptance: "none" },
-			{ agent: "worker", task: "Fix", acceptance: "verified" },
+			{ agent: "worker", task: "Fix", acceptance: { report: {}, criteria: ["ambiguous"] } },
+			{ agent: "worker", task: "Fix", acceptance: { report: { surprise: true } } },
 			{ skill: [123] },
 			{ output: 123 },
 			{ timeoutMs: 0 },

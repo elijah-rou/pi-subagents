@@ -681,8 +681,20 @@ export interface AcceptanceConfig {
 	reason?: string;
 }
 
-/** Bare "none" and "verified" are not accepted; verified policies require object form with runtime commands. */
-export type AcceptanceInput = Exclude<AcceptanceLevel, "none" | "verified"> | false | AcceptanceConfig;
+export interface AcceptanceReportContract {
+	criteria?: Array<string | AcceptanceGate>;
+	evidence?: AcceptanceEvidenceKind[];
+}
+
+export interface AcceptanceContract {
+	report?: AcceptanceReportContract | false;
+	verify?: AcceptanceVerifyCommand[];
+	review?: AcceptanceReviewGate | false;
+	onFailure?: "fail" | "warn";
+}
+
+export type AcceptanceLegacyInput = AcceptanceLevel | AcceptanceConfig;
+export type AcceptanceInput = false | AcceptanceLegacyInput | AcceptanceContract;
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;
@@ -692,13 +704,18 @@ export interface ResolvedAcceptanceGate extends AcceptanceGate {
 }
 
 export interface ResolvedAcceptanceConfig {
+	/** Compatibility display level derived from the enabled dimensions. */
 	level: Exclude<AcceptanceLevel, "auto">;
 	explicit: boolean;
+	report: AcceptanceReportContract | false;
+	onFailure: "fail" | "warn";
+	recommendations: string[];
+	deprecationWarnings: string[];
 	inferredReason: string[];
 	criteria: ResolvedAcceptanceGate[];
 	evidence: AcceptanceEvidenceKind[];
 	verify: AcceptanceVerifyCommand[];
-	review?: AcceptanceReviewGate | false;
+	review: AcceptanceReviewGate | false;
 	stopRules: string[];
 	reason?: string;
 }
