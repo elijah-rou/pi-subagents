@@ -1597,6 +1597,24 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "none");
 	});
 
+	it("preserves inherited parent plus child none provenance in async chains", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "legacy-none" });
+		const id = `async-parent-child-none-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "worker", task: "Run without gate", acceptance: { level: "none", reason: "manual acceptance" } }],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-parent-child-none" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: { verify: [{ id: "parent", command: "node -e \"process.exit(0)\"" }] },
+		});
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.results[0]?.acceptance?.status, "not-required");
+		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.reason, "manual acceptance");
+		assert.match(payload.results[0]?.acceptance?.effectiveAcceptance?.deprecationWarnings?.join("\n") ?? "", /deprecated/);
+	});
+
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Async top-level report" });
 		const executor = createSubagentExecutor!({

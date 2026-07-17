@@ -53,7 +53,7 @@ import { buildAsyncRunnerSteps, executeAsyncChain, executeAsyncSingle, formatAsy
 import type { ScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { acceptanceBlocksRun, adaptLegacyAcceptance, mergeAcceptanceContracts, normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, mergeAcceptanceInputs, normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
@@ -182,12 +182,6 @@ function compactOptional<T extends object>(
 	}
 	return value as T;
 }
-function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
-	if (child === undefined) return parent;
-	if (parent === undefined) return child;
-	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
-}
-
 interface TaskParam {
 	agent: string;
 	task: string;

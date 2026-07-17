@@ -29,7 +29,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { adaptLegacyAcceptance, mergeAcceptanceContracts, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { mergeAcceptanceInputs, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import {
 	type AcceptanceInput,
 	type AgentContract,
@@ -63,12 +63,6 @@ import { SUBAGENT_PROCESS_TERMINAL_EVENT } from "../../shared/types.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { resolvePermissionRules, type PermissionConfig } from "../shared/permissions.ts";
-
-function mergeAcceptanceInputs(parent: AcceptanceInput | undefined, child: AcceptanceInput | undefined): AcceptanceInput | undefined {
-	if (child === undefined) return parent;
-	if (parent === undefined) return child;
-	return mergeAcceptanceContracts(adaptLegacyAcceptance(parent).contract, adaptLegacyAcceptance(child).contract);
-}
 
 const require = createRequire(import.meta.url);
 const piPackageRoot = resolvePiPackageRoot();
