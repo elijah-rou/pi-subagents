@@ -483,6 +483,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal((levelOptionalLegacy.properties as Record<string, unknown>).report, undefined);
 		assert.equal((levelOptionalLegacy.properties as Record<string, unknown>).onFailure, undefined);
 		assert.ok(acceptanceObjectBranches.every((branch) => branch.additionalProperties === false));
+		assert.equal(JSON.stringify(acceptanceSchema).includes("merged-acceptance"), false);
 
 		const step = (SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined)?.step;
 		assert.equal(step?.type, "object");
@@ -530,6 +531,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ agent: "worker", task: "Fix", acceptance: { level: "auto", verify: [] } },
 			{ agent: "worker", task: "Fix", acceptance: { level: "none", review: false } },
 			{ agent: "worker", task: "Fix", acceptance: { report: { surprise: true } } },
+			{ agent: "worker", task: "Fix", acceptance: { kind: "merged-acceptance", adapted: { contract: {}, stopRules: [], deprecationWarnings: [] } } },
 			{ skill: [123] },
 			{ output: 123 },
 			{ timeoutMs: 0 },
