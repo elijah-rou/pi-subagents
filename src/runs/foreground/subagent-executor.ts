@@ -121,6 +121,8 @@ import {
 	type Details,
 	type ExtensionConfig,
 	type ForegroundRunControl,
+
+	type ForegroundResumeChild,
 	type IntercomEventBus,
 	type JsonSchemaObject,
 	type MaxOutputConfig,
@@ -653,7 +655,24 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function recoveredForegroundAcceptance(child: ForegroundResumeChild): AcceptanceInput | undefined {
+	const ledger = child.acceptance;
+	if (!ledger?.explicit) return undefined;
+	const acceptance = ledger.effectiveAcceptance;
+	if (acceptance.level === "none") {
+		return acceptance.deprecationWarnings.length > 0
+			? { level: "none", ...(acceptance.reason ? { reason: acceptance.reason } : {}) }
+			: false;
+	}
+	return {
+		report: acceptance.report,
+		verify: acceptance.verify,
+		review: acceptance.review,
+		onFailure: acceptance.onFailure,
+	};
+}
+
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; acceptance?: AcceptanceInput } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const sessionRuns = [...state.foregroundRuns.values()].filter((run) => run.sessionId === state.currentSessionId);
@@ -672,6 +691,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (path.extname(child.sessionFile) !== ".jsonl") throw new Error(`Foreground run '${run.runId}' child ${index} session file must be a .jsonl file: ${child.sessionFile}`);
 	const sessionFile = path.resolve(child.sessionFile);
 	if (!fs.existsSync(sessionFile)) throw new Error(`Foreground run '${run.runId}' child ${index} session file does not exist: ${child.sessionFile}`);
+	const acceptance = recoveredForegroundAcceptance(child);
 	return {
 		runId: run.runId,
 		mode: run.mode,
@@ -684,6 +704,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 		...(child.thinking ? { thinking: child.thinking } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 	};
 }
 
@@ -1490,6 +1511,8 @@ async function resumeAsyncRun(input: {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' has no persisted session file to resume.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const runId = randomUUID().slice(0, 8);
+	const recoveredAcceptance = recoveryDescriptor?.acceptance ?? ("acceptance" in target ? target.acceptance : undefined);
+	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance);
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
 	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir);
@@ -1542,7 +1565,7 @@ async function resumeAsyncRun(input: {
 		...(recoveryDescriptor?.agentContract ? { agentContract: recoveryDescriptor.agentContract } : {}),
 		...(recoveryDescriptor?.structuredOutputSchema ? { structuredOutputSchema: recoveryDescriptor.structuredOutputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
-		...(recoveryDescriptor?.acceptance !== undefined && input.params.acceptance === undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.turnBudget !== undefined ? { turnBudget: input.params.turnBudget } : {}),

@@ -26,6 +26,7 @@ interface ExecutorResult {
 		runId?: string;
 		results?: Array<{ agent?: string; finalOutput?: string; sessionFile?: string; acceptance?: { status?: string }; artifactPaths?: { metadataPath?: string } }>;
 		asyncId?: string;
+		asyncDir?: string;
 	};
 }
 
@@ -992,7 +993,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		const original = await executor.execute(
 			"foreground-resume-original",
-			{ tasks: [{ agent: "a", task: "task-a" }, { agent: "b", task: "task-b" }] },
+			{
+				tasks: [{ agent: "a", task: "task-a" }, { agent: "b", task: "task-b" }],
+				acceptance: { verify: [{ id: "parent", command: "node -e \"process.exit(0)\"" }], onFailure: "warn" },
+			},
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1013,7 +1017,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		const revived = await executor.execute(
 			"foreground-resume",
-			{ action: "resume", id: runId, index: 1, message: "Follow up with b" },
+			{ action: "resume", id: runId, index: 1, message: "Follow up with b", acceptance: { review: false } },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1031,6 +1035,14 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(reviveArgs[reviveArgs.indexOf("--model") + 1], original.details?.results?.[1]?.model);
 		const revivedId = revived.details?.asyncId;
 		assert.ok(revivedId, "expected revived async id");
+		assert.ok(revived.details?.asyncDir);
+		const descriptor = JSON.parse(fs.readFileSync(path.join(revived.details.asyncDir, "recovery-descriptor.json"), "utf-8")) as { acceptance?: unknown };
+		assert.deepEqual(descriptor.acceptance, {
+			report: false,
+			verify: [{ id: "parent", command: "node -e \"process.exit(0)\"" }],
+			review: false,
+			onFailure: "warn",
+		});
 		const resultPath = path.join(RESULTS_DIR, `${revivedId}.json`);
 		const deadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath)) {
