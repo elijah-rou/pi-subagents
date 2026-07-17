@@ -11,6 +11,7 @@ import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifact
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
+	type AcceptanceInput,
 	type ActivityState,
 	type ArtifactConfig,
 	type ExternalCliRunnerStatus,
@@ -229,6 +230,7 @@ interface StepResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+	acceptanceInput?: AcceptanceInput;
 	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 	writerProcesses?: Array<{ processInstanceId: string; kind: "pi-writer"; attempt: number; closeObservedAt: number; exitCode: number | null; signal: string | null }>;
 	writerAttemptCount?: number;
@@ -1843,7 +1845,7 @@ function markParallelGroupSetupFailure(input: {
 		statusStep.endedAt = input.failedAt;
 		statusStep.durationMs = 0;
 		statusStep.exitCode = 1;
-		input.results.push(omitUndefinedProperties({ agent: task.agent, context: task.context, output: input.setupError, success: false, exitCode: 1, sessionFile: task.sessionFile }));
+		input.results.push(omitUndefinedProperties({ agent: task.agent, context: task.context, output: input.setupError, success: false, exitCode: 1, sessionFile: task.sessionFile, acceptanceInput: task.acceptanceInput }));
 	}
 	input.statusPayload.currentStep = input.groupStartFlatIndex;
 	input.statusPayload.lastUpdate = input.failedAt;
@@ -3228,7 +3230,7 @@ async function runSubagent(
 				statusPayload.lastUpdate = now;
 				markDynamicGraphGroup(stepIndex, "failed", message);
 				writeStatusPayload();
-				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1 }));
+				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, acceptanceInput: step.acceptanceInput }));
 				break;
 			}
 
@@ -3297,7 +3299,7 @@ async function runSubagent(
 					markDynamicGraphGroup(stepIndex, groupStopped ? "stopped" : "failed", errorMessage, effectiveGroupAcceptance);
 					statusPayload.lastUpdate = Date.now();
 					writeStatusPayload();
-					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance }));
+					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance, acceptanceInput: step.acceptanceInput }));
 					break;
 				}
 				flatIndex++;
@@ -3557,7 +3559,7 @@ async function runSubagent(
 			}, globalSemaphore);
 
 			flatIndex += dynamicSteps.length;
-			for (const pr of parallelResults) {
+			for (const [resultIndex, pr] of parallelResults.entries()) {
 				results.push(omitUndefinedProperties({
 					agent: pr.agent,
 					context: pr.context,
@@ -3596,6 +3598,7 @@ async function runSubagent(
 					structuredOutputPath: pr.structuredOutputPath,
 					structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 					acceptance: pr.acceptance,
+					acceptanceInput: dynamicSteps[resultIndex]!.acceptanceInput,
 					watchdog: pr.watchdog,
 					capabilityCeiling: pr.capabilityCeiling,
 					capabilityAudit: pr.capabilityAudit,
@@ -3659,13 +3662,14 @@ async function runSubagent(
 							stopped: groupStopped ? true : undefined,
 							structuredOutput: collection,
 							acceptance: effectiveGroupAcceptance,
+							acceptanceInput: step.acceptanceInput,
 						}));
 						statusPayload.error = groupError;
 						setOptionalProperty(statusPayload, "stopped", groupStopped ? true : statusPayload.stopped);
 					}
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
-					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection }));
+					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection, acceptanceInput: step.acceptanceInput }));
 					statusPayload.error = message;
 					markDynamicGraphGroup(stepIndex, "failed", message);
 				}
@@ -3982,7 +3986,7 @@ async function runSubagent(
 				statusPayload.lastUpdate = Date.now();
 				writeStatusPayload();
 
-				for (const pr of parallelResults) {
+				for (const [resultIndex, pr] of parallelResults.entries()) {
 					results.push(omitUndefinedProperties({
 						agent: pr.agent,
 						context: pr.context,
@@ -4020,6 +4024,7 @@ async function runSubagent(
 						structuredOutputPath: pr.structuredOutputPath,
 						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 						acceptance: pr.acceptance,
+						acceptanceInput: group.parallel[resultIndex]!.acceptanceInput,
 						watchdog: pr.watchdog,
 					}));
 				}
@@ -4201,6 +4206,7 @@ async function runSubagent(
 				structuredOutputPath: singleResult.structuredOutputPath,
 				structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
 				acceptance: singleResult.acceptance,
+				acceptanceInput: seqStep.acceptanceInput,
 				watchdog: singleResult.watchdog,
 				capabilityCeiling: singleResult.capabilityCeiling,
 				capabilityAudit: singleResult.capabilityAudit,
@@ -4516,7 +4522,7 @@ async function runSubagent(
 				structuredOutputPath: r.structuredOutputPath,
 				structuredOutputSchemaPath: r.structuredOutputSchemaPath,
 				acceptance: r.acceptance,
-				acceptanceInput: statusPayload.steps[index]?.acceptanceInput,
+				acceptanceInput: r.acceptanceInput,
 				watchdog: r.watchdog,
 				capabilityCeiling: r.capabilityCeiling,
 				capabilityAudit: r.capabilityAudit,
