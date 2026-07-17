@@ -1030,9 +1030,9 @@ ${step.message}` : ""}` }],
 					stepIndex,
 				};
 				dynamicGroupStatuses[stepIndex] = { status: "completed" };
-				if (step.acceptance !== undefined) {
+				if (step.acceptance !== undefined || params.acceptance !== undefined) {
 					const effectiveGroupAcceptance = resolveEffectiveAcceptance({
-						explicit: step.acceptance,
+						explicit: mergeAcceptanceInputs(params.acceptance, step.acceptance),
 						agentName: step.parallel.agent,
 						acceptanceRole: agents.find((agent) => agent.name === step.parallel.agent)?.acceptanceRole,
 						task: (step.parallel.task ?? originalTask ?? "").replace(/\{task\}/g, originalTask ?? ""),
@@ -1228,7 +1228,7 @@ ${step.message}` : ""}` }],
 			};
 			dynamicGroupStatuses[stepIndex] = { status: "completed" };
 			const effectiveGroupAcceptance = resolveEffectiveAcceptance({
-				explicit: step.acceptance,
+				explicit: mergeAcceptanceInputs(params.acceptance, step.acceptance),
 				agentName: step.parallel.agent,
 				acceptanceRole: agents.find((agent) => agent.name === step.parallel.agent)?.acceptanceRole,
 				task: materialized.parallel
