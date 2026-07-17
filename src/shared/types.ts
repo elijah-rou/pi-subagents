@@ -938,6 +938,9 @@ export interface SingleResult {
 	execution?: ExecutionProjection;
 	review?: ReviewProjection;
 	effects?: EffectsProjection;
+
+	/** Raw effective input retained for lossless foreground revival. */
+	acceptanceInput?: AcceptanceInput;
 	transcriptPath?: string;
 	transcriptError?: string;
 	children?: NestedRunSummary[];
@@ -1517,6 +1520,8 @@ export interface ForegroundResumeChild {
 	effects?: EffectsProjection;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	capabilityAudit?: SubagentCapabilityAudit;
+
+	acceptanceInput?: AcceptanceInput;
 	updatedAt?: number;
 }
 

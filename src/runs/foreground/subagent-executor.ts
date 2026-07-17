@@ -543,6 +543,8 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				...(result.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: result.runtimeAcknowledgedExtensions } : {}),
 				...(result.capabilityCeiling ? { capabilityCeiling: result.capabilityCeiling } : {}),
 				...(result.capabilityAudit ? { capabilityAudit: result.capabilityAudit } : {}),
+
+				...(result.acceptanceInput !== undefined ? { acceptanceInput: result.acceptanceInput } : {}),
 			};
 			const recovered = previous?.children[index];
 			return child.status === "detached" && recovered && recovered.status !== "detached" ? recovered : child;
@@ -622,6 +624,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: input.result.runtimeAcknowledgedExtensions } : {}),
 		...(input.result.capabilityCeiling ? { capabilityCeiling: input.result.capabilityCeiling } : {}),
 		...(input.result.capabilityAudit ? { capabilityAudit: input.result.capabilityAudit } : {}),
+		...(input.result.acceptanceInput !== undefined ? { acceptanceInput: input.result.acceptanceInput } : {}),
 	});
 	trimRememberedForegroundRuns(state);
 	const output = getSingleResultOutput(input.result).trim();
@@ -656,6 +659,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 }
 
 function recoveredForegroundAcceptance(child: ForegroundResumeChild): AcceptanceInput | undefined {
+	if (child.acceptanceInput !== undefined) return child.acceptanceInput;
 	const ledger = child.acceptance;
 	if (!ledger?.explicit) return undefined;
 	const acceptance = ledger.effectiveAcceptance;
