@@ -132,6 +132,7 @@ import {
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
 	type SingleResult,
+	type SteeringRecoveryDescriptor,
 	type ToolBudgetConfig,
 	type TurnBudgetConfig,
 	type UsageBudgetConfig,
@@ -727,6 +728,8 @@ type NestedResumeSourceTarget = {
 	thinking?: AgentConfig["thinking"];
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
+	acceptance?: AcceptanceInput;
+	recoveryDescriptor?: SteeringRecoveryDescriptor;
 };
 type ResumeSourceTarget = AsyncResumeSourceTarget | ForegroundResumeSourceTarget | NestedResumeSourceTarget;
 
@@ -1164,6 +1167,13 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 	if (!agent) throw new Error(`Could not determine child agent for nested run '${run.id}'.`);
 	const state = run.state === "complete" || run.state === "failed" || run.state === "paused" ? run.state : "failed";
 	const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
+	const persistedTarget = asyncDir
+		? resolveAsyncResumeTarget(
+			{ id: run.id, dir: asyncDir, index: 0 },
+			{ asyncDirRoot: asyncDir, resultsDir: path.join(DIRS.results, "nested", match.match.rootRunId) },
+		)
+		: undefined;
+	if (persistedTarget && persistedTarget.runId !== run.id) throw new Error(`Nested run '${run.id}' resolved mismatched persisted metadata for '${persistedTarget.runId}'.`);
 	return compactOptional<NestedResumeSourceTarget>({
 		kind: "revive",
 		source: "nested",
@@ -1171,9 +1181,13 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 		state,
 		agent,
 		index: 0,
-		cwd: asyncDir ? path.dirname(asyncDir) : undefined,
+		cwd: persistedTarget?.cwd ?? (asyncDir ? path.dirname(asyncDir) : undefined),
 		sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
 		...(run.capabilityCeiling ? { capabilityCeiling: run.capabilityCeiling } : {}),
+		...(persistedTarget?.model ? { model: persistedTarget.model } : {}),
+		...(persistedTarget?.thinking ? { thinking: persistedTarget.thinking as AgentConfig["thinking"] } : {}),
+		...(persistedTarget?.kind === "revive" && persistedTarget.acceptance !== undefined ? { acceptance: persistedTarget.acceptance } : {}),
+		...(persistedTarget?.recoveryDescriptor ? { recoveryDescriptor: persistedTarget.recoveryDescriptor } : {}),
 	});
 }
 
