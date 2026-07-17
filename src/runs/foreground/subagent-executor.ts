@@ -1515,7 +1515,9 @@ async function resumeAsyncRun(input: {
 		return { content: [{ type: "text", text: `Async child '${target.runId}' has no persisted session file to resume.` }], isError: true, details: { mode: "management", results: [] } };
 	}
 	const runId = randomUUID().slice(0, 8);
-	const recoveredAcceptance = recoveryDescriptor?.acceptance ?? ("acceptance" in target ? target.acceptance : undefined);
+	const recoveredAcceptance = recoveryDescriptor && "acceptance" in recoveryDescriptor
+		? recoveryDescriptor.acceptance
+		: "acceptance" in target ? target.acceptance : undefined;
 	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance);
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });

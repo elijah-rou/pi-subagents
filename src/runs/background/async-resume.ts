@@ -41,6 +41,8 @@ export type AsyncResumeTarget = {
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	launchContractDigest?: string;
+
+	acceptance?: AcceptanceInput;
 };
 
 interface AsyncResultFile {
@@ -57,7 +59,7 @@ interface AsyncResultFile {
 	thinking?: string;
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	results?: Array<{ agent?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling }>;
+	results?: Array<{ agent?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; acceptanceInput?: AcceptanceInput }>;
 }
 
 export interface AsyncRunLocation {
@@ -101,7 +103,9 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const capabilityCeiling = child.capabilityCeiling === undefined ? undefined : parseSubagentCapabilityCeiling(child.capabilityCeiling, `async result file '${resultPath}' results[${index}].capabilityCeiling`);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
-			return { agent, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) };
+			const acceptanceErrors = validateAcceptanceInput(child.acceptanceInput, `results[${index}].acceptanceInput`);
+			if (acceptanceErrors.length > 0) throw new Error(`Invalid async result file '${resultPath}': ${acceptanceErrors.join(" ")}`);
+			return { agent, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}), ...(child.acceptanceInput !== undefined ? { acceptanceInput: child.acceptanceInput as AcceptanceInput } : {}) };
 		});
 	}
 	const success = data.success;
@@ -258,6 +262,9 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 			if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].thinking must be a string.`);
 			if (stepRecord.launchContractDigest !== undefined && typeof stepRecord.launchContractDigest !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].launchContractDigest must be a string.`);
 			if (stepRecord.capabilityCeiling !== undefined) stepRecord.capabilityCeiling = parseSubagentCapabilityCeiling(stepRecord.capabilityCeiling, `async status '${source}' steps[${index}].capabilityCeiling`);
+
+			const acceptanceErrors = validateAcceptanceInput(stepRecord.acceptanceInput, `steps[${index}].acceptanceInput`);
+			if (acceptanceErrors.length > 0) throw new Error(`Invalid async status '${source}': ${acceptanceErrors.join(" ")}`);
 		});
 	}
 }
@@ -480,6 +487,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const stepModel = statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
 	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
+	const acceptance = statusSteps[index]?.acceptanceInput ?? resultSteps[index]?.acceptanceInput;
 
 	return {
 		kind: "revive",
@@ -494,6 +502,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(stepThinking ? { thinking: stepThinking } : {}),
 		launchContractDigest: statusSteps[index]?.launchContractDigest ?? resultSteps[index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	};
 }

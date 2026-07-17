@@ -1407,6 +1407,9 @@ export interface AsyncStatus {
 		execution?: ExecutionProjection;
 		review?: ReviewProjection;
 		effects?: EffectsProjection;
+
+		/** Raw effective input retained for lossless async revival. */
+		acceptanceInput?: AcceptanceInput;
 		watchdog?: ChildWatchdogProgress;
 		processTerminal?: ProcessTerminalV1;
 		capabilityCeiling?: ResolvedSubagentCapabilityCeiling;

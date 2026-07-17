@@ -816,7 +816,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
 		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
 		const criteria = [
-			{ id: "aggregate-ready", must: "Every child completed" },
+			{ id: "child-1", must: "Every child completed" },
 			{ id: "evidence-collected", must: "Child evidence was collected" },
 			{ id: "scope-preserved", must: "The aggregate stayed scoped" },
 		];
@@ -831,7 +831,7 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			},
 		], [makeAgent("scout"), makeAgent("reviewer")]));
 
-		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
+		assert.ok(!result.isError, `chain should succeed without synthetic criteria collisions: ${JSON.stringify(result.content)}`);
 		assert.equal(result.details.workflowGraph?.nodes[1]?.acceptanceStatus, "checked");
 	});
 

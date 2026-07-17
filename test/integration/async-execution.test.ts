@@ -1613,6 +1613,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0]?.acceptance?.status, "not-required");
 		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.reason, "manual acceptance");
 		assert.match(payload.results[0]?.acceptance?.effectiveAcceptance?.deprecationWarnings?.join("\n") ?? "", /deprecated/);
+		assert.deepEqual(payload.results[0]?.acceptanceInput, { level: "none", reason: "manual acceptance" });
 	});
 
 	it("top-level async parallel conversion preserves output, reads, and progress", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
@@ -2256,7 +2257,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 					parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: false },
 					collect: { as: "reviews" },
 					acceptance: { report: { criteria: [
-						{ id: "aggregate-ready", must: "Every child completed" },
+						{ id: "child-1", must: "Every child completed" },
 						{ id: "evidence-collected", must: "Child evidence was collected" },
 						{ id: "scope-preserved", must: "The aggregate stayed scoped" },
 					] } },
