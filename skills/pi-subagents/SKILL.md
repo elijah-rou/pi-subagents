@@ -694,9 +694,9 @@ That is only a starting point. Omit `package` for the traditional unqualified ru
 - `acceptance`
 - `acceptanceRole`
 
-`acceptance` is a single-agent launch default. Omitted or `auto` child inputs inherit a parent contract; canonical child objects replace only fields present, including explicit `false` and empty-array clears. Legacy levels other than `auto`/`none` replace the full inherited contract. Use `false` to disable; legacy `none` also disables but records deprecation and reason provenance. A legacy `verified` level requires at least one runtime verify command. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default.
+`acceptance` is a single-agent launch default. Prefer canonical objects with independent `report`, `verify`, `review`, and `onFailure` dimensions. Omitted or `auto` child inputs inherit a parent contract; canonical child objects replace only fields present, including explicit `false` and empty-array clears. Legacy levels are compatibility inputs, not the normal recommendation, and levels other than `auto`/`none` replace the full inherited contract. Use `false` to disable; legacy `none` also disables but records deprecation and reason provenance. Legacy `verified` requires at least one runtime verify command, while explicit legacy `reviewed` fails preflight because review is not automatically spawned or self-certified. Management create/update accepts the same policy object, and `acceptance: ""` clears the frontmatter default.
 
-`acceptanceRole` is `read-only` or `writer` and controls automatic acceptance inference only. Explicit task mutation or no-edit intent wins; otherwise the role replaces agent-name guessing. Omission preserves the current name heuristics. The field does not grant or revoke tools. Management accepts `false` or an empty string to clear it.
+`acceptanceRole` is `read-only` or `writer` and affects advisory acceptance recommendations only; it never creates a blocking contract. Explicit task mutation or no-edit intent wins; otherwise the role replaces agent-name guessing. Omission preserves the current name heuristics. The field does not grant or revoke tools. Management accepts `false` or an empty string to clear it.
 
 `tools` is a strict child allowlist, not an extension loader. For a named extension tool, keep its registered name in `tools` and load its provider through normal Pi discovery, `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. For example, pair `tools: read, fixture_search` with `subagentOnlyExtensions: ./tools/fixture-search.ts` when the provider should exist only in that agent's child sessions. The child now fails with the unavailable names and provider-loading guidance instead of silently continuing when a requested tool is absent; internal `structured_output` is allowed automatically when an output schema requires it.
 
@@ -847,7 +847,9 @@ clarify → validation contract → planner → async worker → parallel async 
 
 The validation contract defines acceptance before code is written: expected behavior, acceptance checks, commands or user flows to exercise, and evidence the worker should return. Keep it lightweight for small tasks, but make it explicit enough that reviewers and validators are checking the intended outcome rather than the worker’s own assumptions.
 
-Use the structured `acceptance` field when the run should carry an explicit acceptance contract. If omitted or `auto`, it inherits any parent contract; only final resolution without one records advisory role/mode/risk recommendations. Use `level: "checked"` for ordinary writer evidence gates and `level: "verified"` only with at least one runtime `verify` command. Legacy levels replace the full inherited contract; canonical objects merge only fields present, so omitted fields inherit and explicit `false` or empty arrays clear them. Do not explicitly request `level: "reviewed"`. Canonical review currently supports only `{ required: false }`; omitted/true fails preflight, and the runtime never auto-spawns or self-certifies a reviewer. To disable gates, use `false`; legacy bare/object `none` also disables while preserving a deprecation warning and optional reason. Verification captures at most 12,000 bytes per output stream while running and terminates the command process tree on timeout or abort. Child-reported command success is evidence, not runtime verification.
+Use the structured `acceptance` field when the run should carry an explicit acceptance contract. Prefer canonical objects that compose `report`, `verify`, `review`, and `onFailure`; canonical child objects merge only fields present, so omitted fields inherit and explicit `false` or empty arrays clear them. If acceptance is omitted or `auto`, it inherits any parent contract; final resolution without one records only advisory role/mode/risk recommendations. `acceptanceRole` changes those recommendations but never creates a blocking contract. Treat legacy levels as compatibility inputs rather than the normal API: they replace the full inherited contract, legacy `verified` requires at least one runtime `verify` command, and explicit legacy `reviewed` fails preflight. Canonical review currently supports only `false` or `{ required: false }`; omitted/true requirements fail because the runtime never auto-spawns or self-certifies a reviewer. To disable gates, use `false`; legacy bare/object `none` also disables while preserving a deprecation warning and optional reason. Runtime `verify` commands are authoritative and bounded: output is capped at 12,000 bytes per stream, and timeout or abort terminates the command process tree. Child-reported command success remains report evidence, not runtime verification.
+
+Select report evidence from the task's actual acceptance criteria. Request `tests-added` only when adding or updating tests is part of those criteria, never as a universal requirement.
 
 The first `worker` implements the approved plan. The parent continues with independent inspection or validation prep while it runs, not parallel edits to the same worktree. When the async worker completes, treat its handoff as the transition into review, not as final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Parallel reviewers inspect the resulting diff from fresh context. Validators check behavior with the best available evidence: commands, tests, browser/CLI interaction, screenshots, logs, or manual reproduction notes. The final `worker` applies synthesized review fixes in forked context, then the parent looks over the final diff before completing. The parent may launch these steps as an initial async chain when the workflow is already clear, or as follow-up subagent runs after each async completion. Initial chains should pass `async: true` so the main chat is unblocked; avoid `clarify: true` unless the user asked for foreground clarification. Do not stop after parallel review unless the user explicitly asked for review-only output or the review surfaced a decision that needs approval first.
 
@@ -876,8 +878,17 @@ subagent({
   agent: "worker",
   task: "Implement the approved feature.\n\nClarified requirements:\n- ...\n\nPlan: see ~/Documents/docs/...-plan.md\n\nValidation contract:\n- ...\n\nReturn a handoff with changed files, what was implemented, what was left undone, commands run with exit codes, validation evidence, surprises/new risks, and decisions needing parent approval.",
   acceptance: {
-    level: "checked",
-    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"]
+    report: {
+      criteria: ["Implement the approved feature without widening scope"],
+      evidence: ["changed-files", "commands-run", "residual-risks", "no-staged-files"]
+    },
+    verify: [{
+      id: "focused-tests",
+      command: "node --experimental-strip-types --test test/unit/acceptance.test.ts",
+      timeoutMs: 120000
+    }],
+    review: false,
+    onFailure: "fail"
   },
   async: true
 })
@@ -933,7 +944,7 @@ subagent({
 /run-chain review-chain -- review this branch
 ```
 
-Use saved `.chain.md` or `.chain.json` workflows when the user wants a repeatable multi-agent flow without rewriting the chain each time. Prefer `.chain.json` for dynamic fanout or inline `outputSchema` objects; `.chain.md` remains the simple sequential/static authoring format.
+Use saved `.chain.md` or `.chain.json` workflows when the user wants a repeatable multi-agent flow without rewriting the chain each time. Root composable acceptance objects are supported in `.chain.json`; `.chain.md` does not support nested acceptance objects. Prefer `.chain.json` for dynamic fanout, inline `outputSchema` objects, or composable acceptance; `.chain.md` remains the simple sequential/static authoring format.
 
 ## Error Handling
 
