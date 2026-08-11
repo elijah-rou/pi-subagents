@@ -799,7 +799,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 		}
 	});
 
-	it("persists checked child evidence and pending aggregate review for dynamic fanout", async () => {		mockPi.onCall({
+	it("persists checked child and aggregate evidence for dynamic fanout", async () => {
+		mockPi.onCall({
 			output: "targets",
 			structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] },
 		});
@@ -826,9 +827,10 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const dynamicNode = result.details.workflowGraph?.nodes[1];
-		assert.equal(dynamicNode?.acceptanceStatus, "review-required");
-		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["checked", "checked"]);
-		assert.deepEqual(result.details.results.filter((child) => child.agent === "reviewer").map((child) => child.acceptance?.evidenceStatus), ["checked", "checked"]);	});
+		assert.equal(dynamicNode?.acceptanceStatus, "checked");
+		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["verified", "verified"]);
+		assert.deepEqual(result.details.results.filter((child) => child.agent === "reviewer").map((child) => child.acceptance?.evidenceStatus), ["checked", "checked"]);
+	});
 
 	it("uses every custom required criterion ID for foreground dynamic aggregate acceptance", async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
@@ -919,7 +921,8 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 
 		assert.ok(!result.isError, `chain should succeed: ${JSON.stringify(result.content)}`);
 		const explorerResults = result.details.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["checked", "checked"]);		const dynamicNode = result.details.workflowGraph?.nodes[1];
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance.level), ["none", "none"]);
+		const dynamicNode = result.details.workflowGraph?.nodes[1];
 		assert.equal(dynamicNode?.acceptanceStatus, "not-required");
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["not-required", "not-required"]);
 	});

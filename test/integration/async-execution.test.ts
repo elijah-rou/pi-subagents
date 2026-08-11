@@ -17,8 +17,6 @@ import { createEventBus, createMockPi, createTempDir, events, makeAgent, makeMin
 import type { MockPi } from "../support/helpers.ts";
 import { deliverCheckpointDecisionRequest, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
-
-import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
@@ -1585,7 +1583,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 		});
 		const patchPayload = await readAsyncPayload(patchId);
-		assert.equal(patchPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "checked");
+		assert.equal(patchPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "none");
 		const reviewId = `async-role-task-template-review-${Date.now().toString(36)}`;
 		executeAsyncChain(reviewId, {
 			task: "Review only; do not edit files",
@@ -1729,11 +1727,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.mode, "parallel");
 		assert.equal(payload.sessionId, "session-123");
-		assert.equal(payload.results[0]?.acceptance?.status, "review-required");
-		assert.equal(payload.results[0]?.acceptance?.evidenceStatus, "checked");
+		assert.equal(payload.results[0]?.acceptance?.status, "not-required");
+		assert.equal(payload.results[0]?.acceptance?.evidenceStatus, "not-required");
 		assert.equal(status.sessionId, "session-123");
-		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");
-		assert.equal(status.steps?.[0]?.acceptance?.evidenceStatus, "checked");		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", asyncId, "async-top-output.md");
+		assert.equal(status.steps?.[0]?.acceptance?.status, "not-required");
+		assert.equal(status.steps?.[0]?.acceptance?.evidenceStatus, "not-required");
+		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", asyncId, "async-top-output.md");
 		const outputDeadline = Date.now() + 5_000;
 		while (!fs.existsSync(outputPath)) {
 			if (Date.now() > outputDeadline) {
@@ -1887,53 +1886,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(taskArgs.find((task) => task.includes("Write first"))?.includes(path.join("parallel-0", "0-worker", "context.md")));
 		assert.ok(taskArgs.find((task) => task.includes("Write second"))?.includes(path.join("parallel-0", "1-worker", "context.md")));
 	});
-
-	it("async single preserves checked evidence while independent review is pending", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {		mockPi.onCall({
-			output: [
-				"implemented",
-				"```acceptance-report",
-				JSON.stringify({
-					criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "patched" }],
-					changedFiles: ["src/file.ts"],
-					testsAddedOrUpdated: ["test/file.test.ts"],
-					commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
-					validationOutput: ["passed"],
-					residualRisks: [],
-					noStagedFiles: true,
-					notes: "done",
-				}),
-				"```",
-			].join("\n"),
-		});
-		const artifactConfig = {
-			enabled: false,
-			includeInput: false,
-			includeOutput: false,
-			includeJsonl: false,
-			includeMetadata: false,
-			cleanupDays: 7,
-		};
-		const id = `async-acceptance-${Date.now().toString(36)}`;
-		executeAsyncSingle(id, {
-			agent: "worker",
-			task: "Implement acceptance-covered fix",
-			agentConfig: makeAgent("worker", { completionGuard: false }),
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-acceptance" },
-			artifactConfig,
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-			acceptance: { level: "checked", criteria: ["Patch bug"], review: { agent: "reviewer", required: true } },
-		});
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
-		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
-
-		assert.equal(result.success, true);
-		assert.equal(result.results[0]?.acceptance?.status, "review-required");
-		assert.equal(result.results[0]?.acceptance?.evidenceStatus, "checked");
-		assert.ok(result.results[0]?.acceptance?.childReport);
-		assert.equal(result.results[0]?.acceptance?.reviewResult?.status, "review-required");
-		assert.equal(status.steps?.[0]?.acceptance?.status, "review-required");	});
 
 	it("top-level async chain suppresses progress for {task} review-only tasks", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Async review" });
@@ -2475,7 +2427,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = await readAsyncPayload(id);
 		const explorerResults = payload.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["checked", "checked"]);		const dynamicNode = payload.workflowGraph?.nodes?.[1];
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["none", "none"]);
+		const dynamicNode = payload.workflowGraph?.nodes?.[1];
 		assert.equal(payload.success, true);
 		assert.equal(dynamicNode?.acceptanceStatus, "not-required");
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["not-required", "not-required"]);

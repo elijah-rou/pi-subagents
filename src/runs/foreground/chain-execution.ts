@@ -1054,8 +1054,8 @@ ${step.message}` : ""}` }],
 					const dynamicGroupStatus = dynamicGroupStatuses[stepIndex];
 					if (!dynamicGroupStatus) throw new Error(`Missing dynamic group status at step ${stepIndex}`);
 					dynamicGroupStatus.acceptance = groupAcceptance;
-					const groupAcceptanceFailure = acceptanceBlocksRun(groupAcceptance) ? acceptanceFailureMessage(groupAcceptance) : undefined;
-	if (groupAcceptanceFailure) {
+					const groupAcceptanceFailure = acceptanceBlocksRun(groupAcceptance) && (!isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance") ? acceptanceFailureMessage(groupAcceptance) : undefined;
+					if (groupAcceptanceFailure) {
 						dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 						return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex }));
 					}
@@ -1252,8 +1252,8 @@ ${step.message}` : ""}` }],
 			const dynamicGroupStatus = dynamicGroupStatuses[stepIndex];
 			if (!dynamicGroupStatus) throw new Error(`Missing dynamic group status at step ${stepIndex}`);
 			dynamicGroupStatus.acceptance = groupAcceptance;
-			const groupAcceptanceFailure = acceptanceBlocksRun(groupAcceptance) ? acceptanceFailureMessage(groupAcceptance) : undefined;
-	if (groupAcceptanceFailure) {
+			const groupAcceptanceFailure = acceptanceBlocksRun(groupAcceptance) && (!isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance") ? acceptanceFailureMessage(groupAcceptance) : undefined;
+			if (groupAcceptanceFailure) {
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
 				return buildChainExecutionErrorResult(groupAcceptanceFailure, makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: globalTaskIndex - dynamicParallelStep.parallel.length }));
 			}

@@ -88,7 +88,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, isPersistedMergedAcceptanceInput, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -1379,7 +1379,9 @@ async function runSyncCompletion(
 			...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
 		}, options.context);
 	}
-	const acceptanceErrors = validateAcceptanceInput(options.acceptance);
+	const acceptanceErrors = isPersistedMergedAcceptanceInput(options.acceptance)
+		? validatePersistedAcceptanceInput(options.acceptance)
+		: validateAcceptanceInput(options.acceptance);
 	if (acceptanceErrors.length > 0) {
 		return withRunContext({
 			index: options.index ?? 0,
@@ -1722,7 +1724,8 @@ async function runSyncCompletion(
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
 	stripAcceptanceReportsFromMessages(result.messages);
 
-	if (acceptanceFailure && acceptanceBlocksRun(result.acceptance) && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut) {		result.exitCode = 1;
+	if (acceptanceFailure && acceptanceBlocksRun(result.acceptance) && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut && !isAgentContractV1(options.agentContract)) {
+		result.exitCode = 1;
 		result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
 		if (result.progress) {
 			result.progress.status = "failed";

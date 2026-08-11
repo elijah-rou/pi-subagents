@@ -13,6 +13,7 @@ import {
 	formatAcceptancePrompt,
 	mergeAcceptanceContracts,
 	mergeAcceptanceInputs,
+	normalizeGateAcceptance,
 	parseAcceptanceReport,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
@@ -291,15 +292,15 @@ describe("acceptance gates", () => {
 
 	it("agent contract v1 disables inferred acceptance without changing current defaults", () => {
 		const current = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true });
-		assert.equal(current.level, "checked");
-		assert.equal(current.review && current.review !== false ? current.review.required : undefined, true);
+		assert.equal(current.level, "none");
+		assert.equal(current.review, false);
 		assert.deepEqual(current.inferredReason, ["async write-capable or risky run"]);
 
 		for (const explicit of [undefined, "auto" as const, false] as const) {
 			const resolved = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true, explicit, agentContract: { version: 1 } });
 			assert.equal(resolved.level, "none");
 			assert.deepEqual(resolved.inferredReason, []);
-			assert.equal(resolved.explicit, explicit !== undefined);
+			assert.equal(resolved.explicit, explicit === false);
 		}
 	});
 
@@ -919,11 +920,11 @@ describe("acceptance gates", () => {
 				acceptance,
 				output: report(),
 				cwd,
-				reviewResult: { status: "reviewed", findings: [] },
+				reviewResult: { status: "no-blockers", findings: [] },
 			});
 			assert.equal(reviewed.status, "reviewed");
 			assert.equal(reviewed.evidenceStatus, "checked");
-			assert.equal(reviewed.reviewResult?.status, "reviewed");
+			assert.equal(reviewed.reviewResult?.status, "no-blockers");
 
 			const blockers = await evaluateAcceptance({
 				acceptance,
@@ -939,9 +940,9 @@ describe("acceptance gates", () => {
 			assert.equal(blockers.reviewResult?.status, "blockers");
 
 			const pending = await evaluateAcceptance({ acceptance, output: report(), cwd });
-			assert.equal(pending.status, "review-required");
+			assert.equal(pending.status, "rejected");
 			assert.equal(pending.evidenceStatus, "checked");
-			assert.equal(pending.reviewResult?.status, "review-required");
+			assert.equal(pending.reviewResult?.status, "needs-parent-decision");
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

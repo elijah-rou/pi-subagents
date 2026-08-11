@@ -263,6 +263,17 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 	}
 }
 
+function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): EffectiveAcceptanceInput | undefined {
+	if (value && typeof value === "object" && !Array.isArray(value) && ("explicit" in value || "inferredReason" in value)) {
+		const { explicit, inferredReason: _inferredReason, ...publicAcceptance } = value as Record<string, unknown>;
+		if (explicit === false) return undefined;
+		value = publicAcceptance;
+	}
+	const errors = validatePersistedAcceptanceInput(value, "recoveryDescriptor.acceptance");
+	if (errors.length) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${errors.join(" ")}`);
+	return value as EffectiveAcceptanceInput;
+}
+
 export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): SteeringRecoveryDescriptor | undefined {
 	if (!asyncDir) return undefined;
 	const descriptorPath = path.join(asyncDir, "recovery-descriptor.json");
@@ -356,9 +367,9 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (!Array.isArray(control.notifyChannels) || control.notifyChannels.some((item) => item !== "event" && item !== "async" && item !== "intercom")) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': controlConfig.notifyChannels is invalid.`);
 	}
 	if (parsed.acceptance !== undefined) {
-
-		const errors = validatePersistedAcceptanceInput(parsed.acceptance, "recoveryDescriptor.acceptance");
-		if (errors.length) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${errors.join(" ")}`);
+		const acceptance = normalizeRecoveryAcceptance(parsed.acceptance, descriptorPath);
+		if (acceptance === undefined) delete parsed.acceptance;
+		else parsed.acceptance = acceptance;
 	}
 	return parsed as unknown as SteeringRecoveryDescriptor;
 }

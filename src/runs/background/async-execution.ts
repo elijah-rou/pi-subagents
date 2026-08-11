@@ -29,7 +29,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { mergeAcceptanceInputs, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { isPersistedMergedAcceptanceInput, mergeAcceptanceInputs, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import {
 	type AcceptanceInput,
 	type AgentContract,
@@ -1233,7 +1233,9 @@ export function executeAsyncSingle(
 		nestedRoute,
 	} = params;
 	const task = params.task ?? "";
-	const acceptanceErrors = validateAcceptanceInput(params.acceptance);
+	const acceptanceErrors = isPersistedMergedAcceptanceInput(params.acceptance)
+		? validatePersistedAcceptanceInput(params.acceptance)
+		: validateAcceptanceInput(params.acceptance);
 	if (acceptanceErrors.length > 0) return formatAsyncStartError("single", acceptanceErrors.join(" "));
 	const externalRunner = agentConfig.runner?.type === "external-cli";
 	const permissionRules = resolvePermissionRules(ctx.permissions, agentConfig.permissions);

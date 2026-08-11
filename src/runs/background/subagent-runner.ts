@@ -1682,7 +1682,7 @@ async function runSingleStep(
 		: undefined;
 	const acceptanceFailure = effectiveAcceptance ? acceptanceFailureMessage(effectiveAcceptance) : undefined;
 
-	const acceptanceCanFailRun = Boolean(effectiveAcceptance && acceptanceBlocksRun(effectiveAcceptance) && acceptanceFailure && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && !turnBudgetExceeded);
+	const acceptanceCanFailRun = Boolean(effectiveAcceptance && acceptanceBlocksRun(effectiveAcceptance) && acceptanceFailure && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && !turnBudgetExceeded && !isAgentContractV1(step.agentContract));
 	const effectiveFinalExitCode = timedOutAfterAcceptance || stoppedAfterAcceptance || turnBudgetExceeded ? 1 : acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
 	const effectiveFinalError = stoppedAfterAcceptance
 		? ctx.stopMessage ?? "Subagent stopped by user."

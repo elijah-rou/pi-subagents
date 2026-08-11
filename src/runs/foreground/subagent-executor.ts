@@ -3496,8 +3496,9 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			usageBudget: data.usageBudget,
 			toolBudgets,
 			agentContract: params.agentContract,
+			acceptance: params.acceptance,
 		}));
-	for (let i = 0; i < results.length; i++) {
+		for (let i = 0; i < results.length; i++) {
 			const run = results[i]!;
 			recordRun(run.agent, taskTexts[i]!, run.exitCode, run.progressSummary?.durationMs ?? 0);
 		}

@@ -586,8 +586,14 @@ export function resolveEffectiveAcceptance(input: {
 	dynamicGroup?: boolean;
 	agentContract?: AgentContract;
 }): ResolvedAcceptanceConfig {
-	const adapted = adaptLegacyAcceptance(input.explicit);
-	const advisory = inferAcceptanceRecommendations(input);
+	const agentContractV1 = isAgentContractV1(input.agentContract);
+	const explicitObjectForContract = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit) && !isMergedAcceptanceInput(input.explicit)
+		? input.explicit as Record<string, unknown>
+		: undefined;
+	const inheritedByContract = input.explicit === undefined || input.explicit === "auto" || explicitObjectForContract?.level === "auto";
+	const effectiveInput = agentContractV1 && inheritedByContract ? false : input.explicit;
+	const adapted = adaptLegacyAcceptance(effectiveInput);
+	const advisory = agentContractV1 ? { recommendations: [], inferredReason: [] } : inferAcceptanceRecommendations(input);
 	const contract = adapted.contract;
 	const report = contract === false ? false : contract.report ?? false;
 	const reportCriteria = report === false ? undefined : report.criteria;
@@ -602,11 +608,8 @@ export function resolveEffectiveAcceptance(input: {
 			: report !== false
 				? (criteria.length > 0 || evidence.length > 0 ? "checked" : "attested")
 				: "none";
-	const explicitObject = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit) && !isMergedAcceptanceInput(input.explicit)
-		? input.explicit as Record<string, unknown>
-		: undefined;
-	const explicitObjectAuto = explicitObject?.level === "auto"
-		&& Object.keys(explicitObject).every((key) => key === "level");
+	const explicitObjectAuto = explicitObjectForContract?.level === "auto"
+		&& Object.keys(explicitObjectForContract).every((key) => key === "level");
 	const explicit = input.explicit !== undefined && input.explicit !== "auto" && !explicitObjectAuto;
 	return {
 		level,
@@ -630,7 +633,7 @@ function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): bo
 }
 
 export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean } = {}): string {
-	if (acceptance.level === "none") return "";
+	if (acceptance.level === "none" || options.reportOptional === true) return "";
 	const lines = ["", "## Acceptance Contract", `Acceptance level: ${acceptance.level}`];
 	if (acceptance.report !== false) {
 		lines.push(
@@ -1549,7 +1552,7 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	let reportPassed = acceptance.report === false;
+	let reportPassed = acceptance.report === false || input.reportOptional === true;
 	if (acceptance.report !== false) {
 		const parsed = input.report
 			? (() => {
@@ -1566,14 +1569,24 @@ export async function evaluateAcceptance(input: {
 				...runStructuralChecks(acceptance, parsed.report, input.cwd),
 			);
 			reportPassed = !ledger.runtimeChecks.some((check) => check.status === "failed");
-		} else {
+		} else if (input.reportOptional !== true) {
 			ledger.childReportParseError = parsed.error;
 			ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
+		} else {
+			ledger.childReportParseError = parsed.error;
 		}
 	}
 
+	if (acceptance.report === false) {
+		ledger.evidenceStatus = "not-required";
+	} else if (!reportPassed) {
+		ledger.evidenceStatus = "rejected";
+	} else {
+		ledger.evidenceStatus = acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
+	}
+
 	for (const command of acceptance.verify) {
-		ledger.verifyRuns.push(await runVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage }));
+		ledger.verifyRuns.push(await runMemoizedVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage, artifactsDir: input.artifactsDir, runId: input.runId }));
 		if (input.signal?.aborted) break;
 	}
 	const verifyPassed = !ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out");
