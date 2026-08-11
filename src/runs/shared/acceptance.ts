@@ -1412,7 +1412,7 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	const result = await runVerifyCommand(command, defaultCwd, options);
 	const evidenced: AcceptanceVerifyResult = { ...result, artifactPath, cacheKey, memoized: false, envKeys, envHash, workspaceState };
 	try {
-		fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+		fs.mkdirSync(path.dirname(artifactPath), { recursive: true, mode: 0o700 });
 		fs.writeFileSync(artifactPath, JSON.stringify({
 			version: 1,
 			cacheKey,
@@ -1424,7 +1424,7 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 			allowFailure: command.allowFailure === true,
 			workspaceState,
 			result: evidenced,
-		}, null, 2), "utf-8");
+		}, null, 2), { encoding: "utf-8", mode: 0o600 });
 	} catch (error) {
 		evidenced.artifactError = error instanceof Error ? error.message : String(error);
 		delete evidenced.artifactPath;

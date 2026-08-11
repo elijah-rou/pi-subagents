@@ -290,7 +290,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "fallbackModels", "thinking", "tools", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
-		"artifactsDir", "maxOutput", "controlConfig", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
+		"artifactsDir", "maxOutput", "controlConfig", "absoluteDeadlineAt", "checkpointAfterMs", "checkpointAt", "checkpointDelivered", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
 		"launchResolvedExtensions",
 	]);
 	for (const field of Object.keys(parsed)) {
@@ -329,6 +329,11 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if ((memory.scope !== "project" && memory.scope !== "user") || typeof memory.path !== "string" || !memory.path.trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory is invalid.`);
 	}
 	if (parsed.absoluteDeadlineAt !== undefined && (!Number.isFinite(parsed.absoluteDeadlineAt) || (parsed.absoluteDeadlineAt as number) <= 0)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': absoluteDeadlineAt must be a positive timestamp.`);
+	for (const field of ["checkpointAfterMs", "checkpointAt"] as const) {
+		if (parsed[field] !== undefined && (!Number.isSafeInteger(parsed[field]) || (parsed[field] as number) <= 0)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a positive safe integer.`);
+	}
+	if (parsed.checkpointDelivered !== undefined && typeof parsed.checkpointDelivered !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': checkpointDelivered must be a boolean.`);
+	if ((parsed.checkpointAfterMs === undefined) !== (parsed.checkpointAt === undefined)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': checkpointAfterMs and checkpointAt must be provided together.`);
 	if (parsed.initialTurnBudget !== undefined) {
 		const result = resolveTurnBudgetConfig(parsed.initialTurnBudget, "recoveryDescriptor.initialTurnBudget");
 		if (result.error) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${result.error}`);

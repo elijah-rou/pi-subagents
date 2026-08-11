@@ -51,7 +51,7 @@ describe("external CLI runner", () => {
 		fs.mkdirSync(path.join(dir, "external-2.stdout.log"));
 		await assert.rejects(
 			runExternalCli({ command: process.execPath, args: ["-e", "process.stdout.write('output')"], cwd: dir, prompt: "x", asyncDir: dir, stepIndex: 2 }),
-			/EISDIR|illegal operation on a directory/i,
+			/EISDIR|illegal operation on a directory|regular file/i,
 		);
 	});
 

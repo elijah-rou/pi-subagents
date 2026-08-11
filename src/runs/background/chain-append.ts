@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson as writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl } from "../../shared/artifacts.ts";
 import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";

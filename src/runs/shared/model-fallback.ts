@@ -321,9 +321,19 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
  * include namespaced forms like `mcp.server/write`.
  */
 const TOOL_FAILURE_PREFIX = /^[\w.:@/-]+ failed (?:(?:\(exit \d+\):)|(?:with exit code \d+))(?:\s|$)/i;
+const TOOL_CONTRACT_FAILURE_PATTERNS = [
+	/requested definitely unavailable child tools:/i,
+	/requested unavailable child tools:/i,
+	/Failed to read child tool availability diagnostic:/i,
+];
+
+export function isToolContractFailure(error: string | undefined): boolean {
+	return Boolean(error && TOOL_CONTRACT_FAILURE_PATTERNS.some((pattern) => pattern.test(error)));
+}
 
 export function isRetryableModelFailure(error: string | undefined): boolean {
 	if (!error) return false;
+	if (isToolContractFailure(error)) return false;
 	if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
 	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }

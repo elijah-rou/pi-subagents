@@ -23,7 +23,7 @@ describe("external CLI async lifecycle", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-lifecycle-"));
 		tempDirs.push(dir);
 		const asyncDir = path.join(dir, "async");
-		fs.mkdirSync(asyncDir);
+		fs.mkdirSync(asyncDir, { mode: 0o700 });
 		const resultPath = path.join(dir, "result.json");
 		const configPath = path.join(dir, "config.json");
 		fs.writeFileSync(configPath, JSON.stringify({
@@ -58,5 +58,14 @@ describe("external CLI async lifecycle", () => {
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(result.success, true);
 		assert.equal(result.results[0].runner.type, "external-cli");
+		for (const filePath of [
+			resultPath,
+			path.join(asyncDir, "status.json"),
+			path.join(asyncDir, "events.jsonl"),
+			path.join(asyncDir, "output-0.log"),
+			status.steps[0].externalProcess.stdoutPath,
+			status.steps[0].externalProcess.stderrPath,
+		]) assert.equal(fs.statSync(filePath).mode & 0o777, 0o600, filePath);
+
 	});
 });

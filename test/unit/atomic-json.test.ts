@@ -89,6 +89,15 @@ describe("writeAtomicJson", () => {
 		assert.equal(fakeFs.files.get(targetPath), JSON.stringify({ state: "running" }, null, 2));
 	});
 
+	it("preserves the generic writer's baseline encoding-only write semantics", () => {
+		const fakeFs = new FakeFs();
+		const writeAtomicJson = createWriter(fakeFs, []);
+
+		writeAtomicJson(path.join("/tmp", "project-pane.json"), { pane: "durable" });
+
+		assert.deepEqual([...fakeFs.writeOptions.values()], ["utf-8"]);
+	});
+
 	it("writes the temporary descriptor with the requested private mode", () => {
 		const fakeFs = new FakeFs();
 		const writeAtomicJson = createAtomicJsonWriter({

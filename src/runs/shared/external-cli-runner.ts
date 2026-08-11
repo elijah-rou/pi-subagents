@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { finished } from "node:stream/promises";
 import { trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
+import { ensurePrivateDirectory, openPrivateFile } from "../../shared/external-state.ts";
 import type { ExternalProcessStatus } from "../../shared/types.ts";
 
 const HARD_KILL_DELAY_MS = 2_000;
@@ -40,9 +41,9 @@ export function runExternalCli(input: {
 		const startedAt = Date.now();
 		const stdoutPath = path.join(input.asyncDir, `external-${input.stepIndex}.stdout.log`);
 		const stderrPath = path.join(input.asyncDir, `external-${input.stepIndex}.stderr.log`);
-		fs.mkdirSync(input.asyncDir, { recursive: true });
-		const stdoutStream = fs.createWriteStream(stdoutPath, { flags: "w" });
-		const stderrStream = fs.createWriteStream(stderrPath, { flags: "w" });
+		ensurePrivateDirectory(input.asyncDir);
+		const stdoutStream = fs.createWriteStream(stdoutPath, { fd: openPrivateFile(stdoutPath, fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_WRONLY), autoClose: true });
+		const stderrStream = fs.createWriteStream(stderrPath, { fd: openPrivateFile(stderrPath, fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_WRONLY), autoClose: true });
 		const streamsFinished = Promise.allSettled([finished(stdoutStream), finished(stderrStream)]);
 		let stdoutTail = Buffer.alloc(0);
 		let stderrTail = Buffer.alloc(0);

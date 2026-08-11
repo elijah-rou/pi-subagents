@@ -2,144 +2,32 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
+import { appendPrivateFile, ensurePrivateDirectory, prepareProjectStateWriteDir, resolveProjectStateLocation, selectProjectStateReadDir, writePrivateFile } from "./external-state.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
 
-const PROJECT_ARTIFACT_PATHS = [
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_input.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker.jsonl`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_transcript.jsonl`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/run_worker_meta.json`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/progress/run/progress.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/outputs/output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/artifacts/outputs/run/output.md`,
-	`${PROJECT_ARTIFACT_ROOT}/chain-runs/run.json`,
-];
-
-function globMatchesPath(pattern: string, filePath: string): boolean {
-	let expression = "^";
-	for (let index = 0; index < pattern.length; index += 1) {
-		const character = pattern[index];
-		if (character === undefined) break;
-		if (character === "*" && pattern[index + 1] === "*") {
-			index += 1;
-			if (pattern[index + 1] === "/") {
-				index += 1;
-				expression += "(?:.*/)?";
-			} else {
-				expression += ".*";
-			}
-		} else if (character === "*") {
-			expression += "[^/]*";
-		} else if (character === "?") {
-			expression += "[^/]";
-		} else if (character === "[") {
-			const end = pattern.indexOf("]", index + 1);
-			if (end === -1) expression += "\\[";
-			else {
-				expression += pattern.slice(index, end + 1);
-				index = end;
-			}
-		} else {
-			expression += character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
-		}
-	}
-	try {
-		return new RegExp(`${expression}$`).test(filePath);
-	} catch {
-		return false;
-	}
-}
-
-function normalizePattern(pattern: string): string {
-	return pattern.replace(/^\.\//, "").replace(/^\//, "").replace(/\/+$/, "");
-}
-
-function patternMatchesArtifactPath(pattern: string, artifactPath: string): boolean {
-	const normalized = normalizePattern(pattern);
-	return normalized === PROJECT_ARTIFACT_ROOT
-		|| normalized === "*"
-		|| artifactPath.startsWith(`${normalized}/`)
-		|| globMatchesPath(normalized, artifactPath);
-}
-
-function patternMatchesProjectArtifacts(pattern: string): boolean {
-	return PROJECT_ARTIFACT_PATHS.some((artifactPath) => patternMatchesArtifactPath(pattern, artifactPath));
-}
-
-function ignoreFileExcludesProjectArtifacts(filePath: string): boolean {
-	if (!fs.existsSync(filePath)) return false;
-	try {
-		const excluded = new Set<string>();
-		for (const rawLine of fs.readFileSync(filePath, "utf-8").split(/\r?\n/)) {
-			const line = rawLine.trim();
-			if (!line || line.startsWith("#")) continue;
-			const negated = line.startsWith("!");
-			const pattern = negated ? line.slice(1) : line;
-			for (const artifactPath of PROJECT_ARTIFACT_PATHS) {
-				if (!patternMatchesArtifactPath(pattern, artifactPath)) continue;
-				if (negated) excluded.delete(artifactPath);
-				else excluded.add(artifactPath);
-			}
-		}
-		return excluded.size === PROJECT_ARTIFACT_PATHS.length;
-	} catch {
-		return false;
-	}
-}
-
-function filesIncludeProjectArtifacts(files: unknown): boolean | undefined {
-	if (!Array.isArray(files)) return undefined;
-	const included = new Set<string>();
-	for (const entry of files) {
-		if (typeof entry !== "string") continue;
-		const negated = entry.startsWith("!");
-		const pattern = negated ? entry.slice(1) : entry;
-		for (const artifactPath of PROJECT_ARTIFACT_PATHS) {
-			if (!patternMatchesArtifactPath(pattern, artifactPath)) continue;
-			if (negated) included.delete(artifactPath);
-			else included.add(artifactPath);
-		}
-	}
-	return included.size > 0;
-}
-
-/** Returns a package-publishing warning when project artifacts can enter npm packages. */
+/** Package-local artifact warnings are obsolete because generated project artifacts live under XDG data roots. */
 export function getProjectArtifactPackagingWarning(cwd: string): string | undefined {
-	const packagePath = path.join(cwd, "package.json");
-	if (!fs.existsSync(packagePath)) return undefined;
-
-	let packageJson: Record<string, unknown>;
-	try {
-		const parsed: unknown = JSON.parse(fs.readFileSync(packagePath, "utf-8"));
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-		packageJson = parsed as Record<string, unknown>;
-	} catch {
-		return undefined;
-	}
-
-	const filesIncludeArtifacts = filesIncludeProjectArtifacts(packageJson.files);
-	if (filesIncludeArtifacts === false) return undefined;
-
-	const npmIgnorePath = path.join(cwd, ".npmignore");
-	const ignorePath = fs.existsSync(npmIgnorePath) ? npmIgnorePath : path.join(cwd, ".gitignore");
-	if (filesIncludeArtifacts === undefined && ignoreFileExcludesProjectArtifacts(ignorePath)) return undefined;
-
-	return "Project-scoped subagent artifacts can be included when this package is published. Add '.pi-subagents/' to .npmignore, restrict package.json files, or set artifactDir to 'session' or 'temp'.";
+	void cwd;
+	return undefined;
 }
 
 export function getProjectSubagentsDir(cwd: string): string {
 	return path.join(cwd, PROJECT_ARTIFACT_ROOT);
 }
 
-export function getProjectArtifactsDir(cwd: string): string {
-	return path.join(getProjectSubagentsDir(cwd), "artifacts");
+export function getProjectArtifactsDir(cwd: string, prepareForWrite = false): string {
+	const location = resolveProjectStateLocation(cwd, "artifacts", `${PROJECT_ARTIFACT_ROOT}/artifacts`);
+	return prepareForWrite ? prepareProjectStateWriteDir(location) : selectProjectStateReadDir(location);
+}
+
+/** Prospective external destination for preflight; does not create directories or select legacy read fallback. */
+export function getProspectiveProjectArtifactsDir(cwd: string): string {
+	return resolveProjectStateLocation(cwd, "artifacts", `${PROJECT_ARTIFACT_ROOT}/artifacts`).primaryDir;
 }
 
 export function getProjectChainRunsDir(cwd: string): string {
-	return path.join(getProjectSubagentsDir(cwd), "chain-runs");
+	return prepareProjectStateWriteDir(resolveProjectStateLocation(cwd, "chain-runs", `${PROJECT_ARTIFACT_ROOT}/chain-runs`));
 }
 
 export function getChainRunsDir(
@@ -161,6 +49,7 @@ export function getArtifactsDir(
 	sessionFile: string | null,
 	projectCwd?: string,
 	dirPreference: ArtifactDirPreference = "project",
+	prepareForWrite = false,
 ): string {
 	switch (dirPreference) {
 		case "session":
@@ -172,7 +61,7 @@ export function getArtifactsDir(
 		case "temp":
 			return TEMP_ARTIFACTS_DIR;
 		case "project":
-			if (projectCwd) return getProjectArtifactsDir(projectCwd);
+			if (projectCwd) return getProjectArtifactsDir(projectCwd, prepareForWrite);
 			if (sessionFile) {
 				const sessionDir = path.dirname(sessionFile);
 				return path.join(sessionDir, "subagent-artifacts");
@@ -197,12 +86,12 @@ export function getArtifactPaths(artifactsDir: string, runId: string, agent: str
 }
 
 export function ensureArtifactsDir(dir: string): void {
-	fs.mkdirSync(dir, { recursive: true });
+	ensurePrivateDirectory(dir);
 }
 
 export function writeArtifact(filePath: string, content: string): void {
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.writeFileSync(filePath, content, "utf-8");
+	ensureArtifactsDir(path.dirname(filePath));
+	writePrivateFile(filePath, content);
 }
 
 export function formatOutputArtifactContent(input: {
@@ -219,12 +108,12 @@ export function formatOutputArtifactContent(input: {
 }
 
 export function writeMetadata(filePath: string, metadata: object): void {
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
+	ensureArtifactsDir(path.dirname(filePath));
+	writePrivateFile(filePath, JSON.stringify(metadata, null, 2));
 }
 
 export function appendJsonl(filePath: string, line: string): void {
-	fs.appendFileSync(filePath, `${line}\n`);
+	appendPrivateFile(filePath, `${line}\n`);
 }
 
 export function cleanupOldArtifacts(dir: string, maxAgeDays: number): void {
@@ -255,7 +144,7 @@ export function cleanupOldArtifacts(dir: string, maxAgeDays: number): void {
 		}
 	}
 
-	fs.writeFileSync(markerPath, String(now));
+	writePrivateFile(markerPath, String(now));
 }
 
 export function cleanupAllArtifactDirs(maxAgeDays: number): void {

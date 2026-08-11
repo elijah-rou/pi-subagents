@@ -262,17 +262,17 @@ Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is inte
 { "artifactDir": "session" }
 ```
 
-Controls where subagent artifact files (inputs, outputs, transcripts, metadata) are stored:
+Controls where subagent artifact files (inputs, outputs, transcripts, prompts, metadata, and JSONL) are stored:
 
-- `"project"` (default): writes to `<cwd>/.pi-subagents/artifacts/`.
-- `"session"`: stores artifacts under pi's session directory (`~/.pi/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean.
-- `"temp"`: uses the OS temp directory.
+- `"project"` (default): writes to `$XDG_DATA_HOME/pi-subagents/projects/<project-hash>/artifacts/` (defaulting to `~/.local/share`), outside Git worktrees.
+- `"session"`: stores artifacts under pi's existing private session directory (`~/.pi/agent/sessions/<session>/subagent-artifacts/`).
+- `"temp"`: uses the private pi-subagents runtime directory under an absolute `XDG_RUNTIME_DIR`, or the XDG state fallback.
 
-This preference also controls the default chain scratch directory. `"project"` uses `<cwd>/.pi-subagents/chain-runs/`, while `"session"` and `"temp"` use the user-scoped temp chain directory.
+The project hash uses the canonical project realpath. Moving or renaming a project creates a different artifact namespace. Project chain scratch files use the corresponding external `chain-runs` namespace; session and temp scratch files use the private runtime directory. Application directories use mode `0700` and generated files use `0600`. Relative XDG homes are ignored. Unsafe symlinked, wrong-owner, broadly accessible runtime roots and generated destinations inside Git worktrees are rejected.
 
-The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary chain directories are cleaned up separately after 24 hours.
+Legacy `.pi-subagents/artifacts` files remain a read-only inspection fallback and are never copied or deleted automatically. New writes always use the external root. If both locations contain the same project namespace, inspection reports an explicit conflict. Before activating this upgrade, allow every active async run using the old runtime root to finish or stop it explicitly. Existing pre-upgrade transient runs are not migrated or deleted, and the upgraded runtime does not discover runs under legacy runtime roots.
 
-When a project-scoped launch runs from an npm package directory, pi-subagents warns if package settings can include `.pi-subagents/` in the published package. Add `.pi-subagents/` to `.npmignore` (or `.gitignore` when no `.npmignore` exists), use a `files` allowlist that does not include `.pi-subagents/`, or select `"session"` or `"temp"`.
+An explicit absolute `output` or `sessionDir` is an intentional user-managed opt-out and is outside this storage guarantee. Missions, schedules, refinements, project-pane bindings, and managed worktree registry/base behavior retain their existing storage semantics.
 
 ## `completionBatch`
 

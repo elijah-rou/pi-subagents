@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { discoverAgents, resolveAgentName, type AgentConfig } from "./agents.ts";
-import { getProjectSubagentsDir } from "../shared/artifacts.ts";
+import { getProjectArtifactsDir, getProjectSubagentsDir } from "../shared/artifacts.ts";
 import type { Details, JsonSchemaObject, SingleResult, SubagentState } from "../shared/types.ts";
 
 const REFINEMENT_FORMAT_VERSION = 1;
@@ -387,7 +387,9 @@ export function collectBoundedRefinementEvidence(cwd: string, agentName: string,
 		}
 	}
 
-	const artifactsDir = path.join(getProjectSubagentsDir(cwd), "artifacts");
+	// Refinement overlays remain project-local durable state, but their evidence follows
+	// the generated artifact read resolver (external primary, legacy fallback).
+	const artifactsDir = getProjectArtifactsDir(cwd);
 	if (fs.existsSync(artifactsDir)) {
 		const files = fs.readdirSync(artifactsDir)
 			.filter((file) => file.endsWith("_meta.json"))

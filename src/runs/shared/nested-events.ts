@@ -27,7 +27,7 @@ import {
 	SUBAGENT_PARENT_ROOT_RUN_ID_ENV,
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "./pi-args.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson as writeAtomicJson } from "../../shared/atomic-json.ts";
 import { sanitizeProcessTerminal } from "../background/process-terminal.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
 

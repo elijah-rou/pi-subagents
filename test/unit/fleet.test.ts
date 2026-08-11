@@ -381,14 +381,17 @@ describe("native subagent fleet", () => {
 		try {
 			const asyncDir = path.join(root, "async-custom-cwd");
 			const customCwd = path.join(root, "custom-cwd");
+			fs.mkdirSync(customCwd);
 			const artifactsRoot = getProjectArtifactsDir(customCwd);
 			fs.mkdirSync(asyncDir, { recursive: true });
-			fs.mkdirSync(artifactsRoot, { recursive: true });
+			fs.mkdirSync(artifactsRoot, { recursive: true, mode: 0o700 });
+			fs.chmodSync(artifactsRoot, 0o700);
 			const transcriptPath = path.join(artifactsRoot, "async-custom-cwd_worker_transcript.jsonl");
 			fs.writeFileSync(transcriptPath, `${JSON.stringify({ recordType: "message", role: "assistant", text: "Custom cwd async result" })}\n`, "utf-8");
 			fs.writeFileSync(path.join(asyncDir, "status.json"), "{in-flight status", "utf-8");
 			const state = stateForTest();
 			state.baseCwd = path.join(root, "parent-cwd");
+			fs.mkdirSync(state.baseCwd);
 			state.asyncJobs.set("async-custom-cwd", {
 				asyncId: "async-custom-cwd",
 				asyncDir,
@@ -470,7 +473,9 @@ describe("native subagent fleet", () => {
 		try {
 			const state = stateForTest();
 			state.baseCwd = path.join(root, "parent-cwd");
+			fs.mkdirSync(state.baseCwd);
 			const effectiveCwd = path.join(root, "effective-cwd");
+			fs.mkdirSync(effectiveCwd);
 			const now = Date.now();
 			state.foregroundControls.set("foreground-live", {
 				runId: "foreground-live",
@@ -487,7 +492,8 @@ describe("native subagent fleet", () => {
 				]),
 			});
 			const artifactsRoot = getProjectArtifactsDir(effectiveCwd);
-			fs.mkdirSync(artifactsRoot, { recursive: true });
+			fs.mkdirSync(artifactsRoot, { recursive: true, mode: 0o700 });
+			fs.chmodSync(artifactsRoot, 0o700);
 			const transcriptPath = getArtifactPaths(artifactsRoot, "foreground-live", "worker", 0).transcriptPath;
 			fs.writeFileSync(transcriptPath, `${JSON.stringify({ recordType: "message", role: "assistant", model: "test-model", text: "**Worker live result**" })}\n`, "utf-8");
 			const component = new SubagentFleetComponent(

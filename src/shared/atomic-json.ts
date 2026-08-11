@@ -49,6 +49,10 @@ export function createAtomicJsonWriter(options: AtomicJsonWriterOptions = {}): (
 			`.${path.basename(filePath)}.${pid}.${now()}.${random().toString(36).slice(2)}.tmp`,
 		);
 		try {
+			if (mode !== undefined && fsImpl === fs && fs.existsSync(filePath)) {
+				const finalStat = fs.lstatSync(filePath);
+				if (finalStat.isSymbolicLink() || !finalStat.isFile()) throw new Error(`Atomic JSON destination '${filePath}' must be a regular file, not a symlink or special file.`);
+			}
 			fsImpl.writeFileSync(tempPath, JSON.stringify(payload, null, 2), mode === undefined ? "utf-8" : { encoding: "utf-8", mode });
 			renameWithRetry(fsImpl, tempPath, filePath, renameRetryDelaysMs, wait);
 		} finally {

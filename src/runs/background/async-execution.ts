@@ -5,16 +5,17 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { createPrivateDirectoryExclusive, openPrivateFile, writePrivateFile } from "../../shared/external-state.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import { appendAgentRefinementOverlay } from "../../agents/agent-refinements.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
-import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, prepareManagedSingleOutput, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { formatDefinitelyMissingChildTools } from "../shared/tool-availability.ts";
 import { buildChainInstructions, isCheckpointStep, isDynamicParallelStep, isParallelStep, resolveChainPath, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, type ChainStep, type ResolvedStepBehavior, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
 import type { RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
@@ -162,6 +163,8 @@ interface AsyncChainParams {
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
@@ -211,6 +214,8 @@ interface AsyncSingleParams {
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	absoluteDeadlineAt?: number;
 	turnBudget?: { maxTurns: number; graceTurns?: number };
 	toolBudget?: ResolvedToolBudget | ToolBudgetConfig;
@@ -428,11 +433,11 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 		return { error: `cwd does not exist: ${cwd}` };
 	}
 
-	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
+	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true, mode: 0o700 });
 	const cfgPath = getAsyncConfigPath(suffix);
 	const runnerProcessInstanceId = randomUUID();
 	const launchConfig = { ...cfg, runnerProcessInstanceId };
-	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
+	writePrivateFile(cfgPath, JSON.stringify(launchConfig));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
 	const launchForStartup = launchConfig as typeof launchConfig & { asyncDir?: unknown; revivalLease?: unknown };
@@ -451,9 +456,9 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	let stderrFd: number | undefined;
 	try {
 		if (logPaths) {
-			fs.mkdirSync(path.dirname(logPaths.stdoutPath), { recursive: true });
-			stdoutFd = fs.openSync(logPaths.stdoutPath, "a");
-			stderrFd = fs.openSync(logPaths.stderrPath, "a");
+			fs.mkdirSync(path.dirname(logPaths.stdoutPath), { recursive: true, mode: 0o700 });
+			stdoutFd = openPrivateFile(logPaths.stdoutPath, fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY);
+			stderrFd = openPrivateFile(logPaths.stderrPath, fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY);
 		}
 		const proc = spawn(nodeCommand, [jitiCliPath, runner, cfgPath], {
 			cwd,
@@ -704,6 +709,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		if (behavior.progress) progressInstructionCreated = true;
 		const progressInstructions = buildChainInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
 		const outputPath = resolveSingleOutputPath(behavior.output, ctx.cwd, instructionCwd, outputBaseDir);
+		if (!namespaceOutputPath) prepareManagedSingleOutput(behavior.output, outputPath);
 		if (!namespaceOutputPath) systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, a);
 		const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async step (${s.agent})`);
 		if (validationError) throw new AsyncStartValidationError(validationError);
@@ -737,6 +743,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 			agentName: a.name,
 		});
+		if (toolPlan.availability.definiteMissing.length > 0) {
+			throw new AsyncStartValidationError(formatDefinitelyMissingChildTools(a.name, toolPlan.availability.definiteMissing));
+		}
 		const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 		const permissionRules = resolvePermissionRules(ctx.permissions, a.permissions);
 		if (externalRunner && permissionRules) {
@@ -773,6 +782,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			inheritSkills: a.inheritSkills,
 			skills: resolvedSkills.map((r) => r.name),
 			outputPath,
+			managedOutput: typeof behavior.output === "string" && !path.isAbsolute(behavior.output),
 			...(namespaceOutputPath ? { namespaceOutputPath: true } : {}),
 			outputMode: behavior.outputMode,
 			sessionFile,
@@ -972,7 +982,7 @@ export function executeAsyncChain(
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
 		: path.join(DIRS.async, id);
 	try {
-		fs.mkdirSync(asyncDir, { recursive: true });
+		createPrivateDirectoryExclusive(asyncDir);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
@@ -995,9 +1005,9 @@ export function executeAsyncChain(
 		sessionFilesByFlatIndex,
 		thinkingOverridesByFlatIndex,
 		contextForAgent: params.contextForAgent,
-		progressDir: params.progressDir ?? (artifactsDir ? path.join(artifactsDir, "progress", id) : resultMode === "parallel" ? path.join(asyncDir, "progress") : undefined),
+		progressDir: params.progressDir ?? (artifactConfig.enabled && artifactsDir ? path.join(artifactsDir, "progress", id) : path.join(asyncDir, "progress")),
 		agentContract: params.agentContract,
-		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
+		outputBaseDir: artifactConfig.enabled && artifactsDir ? path.join(artifactsDir, "outputs", id) : path.join(asyncDir, "outputs"),
 		dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 		maxSubagentDepth,
 		waitToolEnabled: params.waitToolEnabled,
@@ -1018,7 +1028,9 @@ export function executeAsyncChain(
 		return formatAsyncStartError(resultMode, built.error);
 	}
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
-	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
+	const durationStartedAt = Date.now();
+	const deadlineAt = params.timeoutMs !== undefined ? durationStartedAt + params.timeoutMs : undefined;
+	const checkpointAt = params.checkpointAt ?? (params.checkpointAfterMs !== undefined ? durationStartedAt + params.checkpointAfterMs : undefined);
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	let childTargetIndex = 0;
@@ -1068,6 +1080,8 @@ export function executeAsyncChain(
 				resultMode,
 				dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 				timeoutMs: params.timeoutMs,
+				checkpointAfterMs: params.checkpointAfterMs,
+				checkpointAt,
 				deadlineAt,
 				globalConcurrencyLimit: params.globalConcurrencyLimit,
 				workflowGraph,
@@ -1155,6 +1169,7 @@ export function executeAsyncChain(
 						chainStepCount: eventChain.length,
 						parallelGroups,
 						...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
+						...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt } : {}),
 						...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 						startedAt: now,
 						lastUpdate: now,
@@ -1184,6 +1199,7 @@ export function executeAsyncChain(
 			cwd: runnerCwd,
 			asyncDir,
 			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
+			...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -1201,7 +1217,7 @@ export function executeAsyncChain(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`, ctx.interactive === true) }],
-		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}), ...(params.workflowKey ? { workflowKey: params.workflowKey } : {}), ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
+		details: { mode: resultMode, runId: id, results: [], asyncId: id, asyncDir, workflowGraph, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}), ...(params.workflowKey ? { workflowKey: params.workflowKey } : {}), ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}), ...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) },
 	};
 }
 
@@ -1285,7 +1301,7 @@ export function executeAsyncSingle(
 		? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
 		: path.join(DIRS.async, id);
 	try {
-		fs.mkdirSync(asyncDir, { recursive: true });
+		createPrivateDirectoryExclusive(asyncDir);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return {
@@ -1297,6 +1313,7 @@ export function executeAsyncSingle(
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, runnerCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
+	prepareManagedSingleOutput(effectiveOutput, outputPath);
 	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, agentConfig);
 	const outputMode = params.outputMode ?? "inline";
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
@@ -1320,7 +1337,9 @@ export function executeAsyncSingle(
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
-	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	const durationStartedAt = Date.now();
+	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? durationStartedAt + params.timeoutMs : undefined);
+	const checkpointAt = params.checkpointAt ?? (params.checkpointAfterMs !== undefined ? durationStartedAt + params.checkpointAfterMs : undefined);
 	const timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
 		? deadlineAt - Date.now()
 		: params.timeoutMs;
@@ -1349,6 +1368,14 @@ export function executeAsyncSingle(
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
 		agentName: agentConfig.name,
 	});
+	if (toolPlan.availability.definiteMissing.length > 0) {
+		try {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+		} catch {
+			// Best-effort cleanup after launch validation and before runner spawn.
+		}
+		return formatAsyncStartError("single", formatDefinitelyMissingChildTools(agentConfig.name, toolPlan.availability.definiteMissing));
+	}
 	const launchResolvedExtensions = externalRunner ? undefined : projectLaunchResolvedChildExtensions(toolPlan);
 	const launchContractDigest = launchBindingDigest({
 		definitionDigest: agentDefinitionDigest(agentConfig),
@@ -1408,6 +1435,7 @@ export function executeAsyncSingle(
 	...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
+		...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt, checkpointDelivered: false } : {}),
 		...(initialTurnBudget ? { initialTurnBudget } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
@@ -1454,6 +1482,7 @@ export function executeAsyncSingle(
 						inheritSkills: agentConfig.inheritSkills,
 						skills: resolvedSkills.map((r) => r.name),
 						outputPath,
+						managedOutput: typeof effectiveOutput === "string" && !path.isAbsolute(effectiveOutput),
 						outputMode,
 						...(!externalRunner && sessionFile ? { sessionFile } : {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
@@ -1487,6 +1516,8 @@ export function executeAsyncSingle(
 				worktreeBaseDir,
 				controlConfig,
 				timeoutMs,
+				checkpointAfterMs: params.checkpointAfterMs,
+				checkpointAt,
 				deadlineAt,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
@@ -1547,6 +1578,7 @@ export function executeAsyncSingle(
 						agents: [agent],
 						chainStepCount: 1,
 						...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
+						...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt } : {}),
 						...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 						startedAt: now,
 						lastUpdate: now,
@@ -1573,6 +1605,7 @@ export function executeAsyncSingle(
 			...(params.parentWorkflowRunId ? { parentWorkflowRunId: params.parentWorkflowRunId } : {}),
 			...(params.workflowKey ? { workflowKey: params.workflowKey } : {}),
 			...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}),
+			...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}),
 			...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -1582,6 +1615,6 @@ export function executeAsyncSingle(
 
 	return {
 		content: [{ type: "text", text: formatAsyncStartedMessage(`Async: ${agent} [${id}]`, ctx.interactive === true) }],
-		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) } as Details,
+		details: { mode: "single", runId: id, results: [], asyncId: id, asyncDir, launchContractDigest, launchResolvedExtensions, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(params.context ? { context: params.context } : {}), ...(timeoutMs !== undefined ? { timeoutMs, deadlineAt } : {}), ...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt } : {}), ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}), ...(params.toolBudget ? { toolBudget: resolvedToolBudget.budget ?? params.toolBudget } : {}), ...(initialUsageBudget ? { usageBudget: initialUsageBudget } : {}) } as Details,
 	};
 }

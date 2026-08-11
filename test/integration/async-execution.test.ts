@@ -26,6 +26,7 @@ import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceil
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
+import { getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 
 interface LaunchResolvedExtensions {
 	version?: number;
@@ -471,6 +472,38 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("reports jiti availability as boolean", () => {
 		const result = isAsyncAvailable();
 		assert.equal(typeof result, "boolean");
+	});
+
+	it("rejects definitely missing tools before spawning every async runner path", () => {
+		const agent = makeAgent("worker", { completionGuard: false, tools: ["read", "definitely_missing_tool"], extensions: [] });
+		const common = {
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			acceptance: false,
+		};
+		const singleId = `missing-single-${Date.now().toString(36)}`;
+		const chainId = `missing-chain-${Date.now().toString(36)}`;
+		const single = executeAsyncSingle(singleId, {
+			...common,
+			agent: "worker",
+			task: "Do not launch",
+			agentConfig: agent,
+		});
+		const chain = executeAsyncChain(chainId, {
+			...common,
+			chain: [{ agent: "worker", task: "Do not launch" }],
+			agents: [agent],
+		});
+
+		assert.equal(single.isError, true);
+		assert.match(single.content[0]?.text ?? "", /definitely unavailable child tools/);
+		assert.equal(chain.isError, true);
+		assert.match(chain.content[0]?.text ?? "", /definitely unavailable child tools/);
+		assert.equal(fs.existsSync(path.join(ASYNC_DIR, singleId)), false);
+		assert.equal(fs.existsSync(path.join(ASYNC_DIR, chainId)), false);
+		assert.equal(mockPi.callCount(), 0, "no child or runner reached the mock Pi process");
 	});
 
 	it("background parses split UTF-8 JSON and a final unterminated protocol line", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
@@ -1091,6 +1124,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			shareEnabled: false,
 			maxSubagentDepth: 2,
 			timeoutMs: 1_500,
+			checkpointAfterMs: 300,
 		});
 
 		await waitForMockPiCall(mockPi, 1, 10_000);
@@ -1101,16 +1135,31 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.success, false);
 		assert.equal(payload.exitCode, 1);
 		assert.equal(payload.timeoutMs, 1_500);
+		assert.equal(typeof payload.deadlineAt, "number");
+		assert.equal(payload.checkpointAfterMs, 300);
+		assert.equal(typeof payload.checkpointAt, "number");
+		assert.equal(payload.checkpointDelivered, true);
+		assert.equal(payload.wrapUpRequested, true);
 		assert.equal(payload.timedOut, true);
 		assert.match(payload.summary ?? "", /Subagent timed out after 1500ms\./);
 		assert.equal(status.state, "failed");
 		assert.equal(status.timeoutMs, 1_500);
+		assert.equal(status.deadlineAt, payload.deadlineAt);
+		assert.equal(status.checkpointAfterMs, 300);
+		assert.equal(status.checkpointAt, payload.checkpointAt);
+		assert.equal(status.checkpointDelivered, true);
+		assert.equal(status.wrapUpRequested, true);
 		assert.equal(status.timedOut, true);
 		assert.match(status.error ?? "", /Subagent timed out after 1500ms\./);
 		assert.deepEqual(status.steps?.map((step) => step.status), ["failed", "failed"]);
 		assert.deepEqual(status.steps?.map((step) => step.timedOut), [true, true]);
 		assert.deepEqual(status.steps?.map((step) => step.error), ["Subagent timed out after 1500ms.", "Subagent timed out after 1500ms."]);
 		assert.deepEqual(payload.results.map((result) => result.timedOut), [true, true]);
+		assert.deepEqual(payload.results.map((result) => result.timeoutMs), [1_500, 1_500]);
+		assert.deepEqual(payload.results.map((result) => result.deadlineAt), [payload.deadlineAt, payload.deadlineAt]);
+		assert.deepEqual(payload.results.map((result) => result.checkpointAfterMs), [300, 300]);
+		assert.deepEqual(payload.results.map((result) => result.checkpointAt), [payload.checkpointAt, payload.checkpointAt]);
+		assert.deepEqual(payload.results.map((result) => result.checkpointDelivered), [true, true]);
 		assert.equal(mockPi.callCount(), 2);
 	});
 
@@ -1732,7 +1781,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(status.sessionId, "session-123");
 		assert.equal(status.steps?.[0]?.acceptance?.status, "not-required");
 		assert.equal(status.steps?.[0]?.acceptance?.evidenceStatus, "not-required");
-		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", asyncId, "async-top-output.md");
+		const outputPath = path.join(getProjectArtifactsDir(tempDir, true), "outputs", asyncId, "async-top-output.md");
 		const outputDeadline = Date.now() + 5_000;
 		while (!fs.existsSync(outputPath)) {
 			if (Date.now() > outputDeadline) {
@@ -1745,7 +1794,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(callFile, "expected a recorded mock pi call");
 		const args = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")).args as string[];
 		const taskArg = args.at(-1) ?? "";
-		const progressPath = path.join(tempDir, ".pi-subagents", "artifacts", "progress", asyncId, "progress.md");
+		const progressPath = path.join(getProjectArtifactsDir(tempDir, true), "progress", asyncId, "progress.md");
 		assert.ok(taskArg.includes(`[Read from: ${path.join(tempDir, "input.md")}]`));
 		assert.ok(taskArg.includes(`Update progress at: ${progressPath}`));
 		assert.ok(taskArg.includes(`Write your findings to exactly this path: ${outputPath}`));
@@ -1776,7 +1825,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.output?.split("\n\nOutput saved to:")[0], "first async report");
 			assert.equal(payload.results[1]?.output?.split("\n\nOutput saved to:")[0], "second async report");
-			const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", launch.details?.asyncId as string);
+			const outputDir = path.join(getProjectArtifactsDir(tempDir, true), "outputs", launch.details?.asyncId as string);
 			const authoritativePaths = [
 				path.join(outputDir, "parallel-0", "0-worker", "context.md"),
 				path.join(outputDir, "parallel-0", "1-worker", "context.md"),
@@ -1845,7 +1894,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = await readAsyncPayload(launch.details?.asyncId as string);
 		assert.equal(payload.success, true);
-		const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", launch.details?.asyncId as string);
+		const outputDir = path.join(getProjectArtifactsDir(tempDir, true), "outputs", launch.details?.asyncId as string);
 		assert.equal(fs.readFileSync(path.join(outputDir, "first.md"), "utf-8"), "first explicit report");
 		assert.equal(fs.readFileSync(path.join(outputDir, "second.md"), "utf-8"), "second explicit report");
 		assert.ok(payload.results[0]?.artifactPaths?.outputPath?.endsWith("_worker_0_output.md"));
@@ -2573,6 +2622,73 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.workflowGraph?.nodes?.[1]?.error ?? "", /Collected output validation failed/);
 	});
 
+	it("keeps artifacts-disabled async workflow output and progress in the private run directory", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : process.platform === "win32" ? "worktree path separators unreliable on Windows CI" : undefined }, async () => {
+		const repoDir = createRepo("pi-subagent-async-private-transient-");
+		try {
+			mockPi.onCall({ matchArgIncludes: "Scout repository", output: "Scout findings" });
+			mockPi.onCall({ matchArgIncludes: "Research repository", output: "Research report" });
+			const agents = [
+				makeAgent("scout", { defaultProgress: true }),
+				makeAgent("researcher", { output: "context.md", defaultProgress: true }),
+			];
+			const executor = createSubagentExecutor!({
+				pi: { events: createEventBus(), getSessionName: () => undefined },
+				state: { baseCwd: repoDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+				config: {},
+				asyncByDefault: false,
+				tempArtifactsDir: repoDir,
+				getSubagentSessionRoot: () => repoDir,
+				expandTilde: (p: string) => p,
+				discoverAgents: () => ({ agents }),
+			});
+
+			const result = await executor.execute(
+				"async-private-transient-fields",
+				{
+					chain: [{
+						parallel: [
+							{ agent: "scout", task: "Scout repository" },
+							{ agent: "researcher", task: "Research repository" },
+						],
+						concurrency: 2,
+						worktree: true,
+					}],
+					async: true,
+					artifacts: false,
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(repoDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			const asyncId = result.details?.asyncId;
+			const asyncDir = result.details?.asyncDir;
+			assert.ok(asyncId, "expected asyncId");
+			assert.ok(asyncDir, "expected private asyncDir");
+			assert.equal(path.relative(repoDir, asyncDir).startsWith(".."), true, "asyncDir must be outside the Git worktree");
+
+			const progressPath = path.join(asyncDir, "progress", "progress.md");
+			const outputPath = path.join(asyncDir, "outputs", "parallel-0", "1-researcher", "context.md");
+			const scoutTask = (await waitForMockPiCall(mockPi, 0)).args.at(-1) ?? "";
+			const researcherTask = (await waitForMockPiCall(mockPi, 1)).args.at(-1) ?? "";
+			assert.match(scoutTask, new RegExp(`Update progress at: ${escapeRegExp(progressPath)}`));
+			assert.match(researcherTask, new RegExp(`Update progress at: ${escapeRegExp(progressPath)}`));
+			assert.match(researcherTask, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(outputPath)}`));
+			assert.equal(fs.existsSync(path.join(repoDir, "progress.md")), false);
+			assert.equal(fs.existsSync(path.join(repoDir, "context.md")), false);
+
+			const payload = await readAsyncPayload(asyncId);
+			assert.equal(payload.success, true);
+			assert.equal(fs.readFileSync(outputPath, "utf-8"), "Research report");
+			assert.equal(payload.parallelHandoff?.cleanupState, "complete");
+			assert.equal(fs.existsSync(path.join(os.tmpdir(), `pi-worktree-${asyncId}-s0-0`)), false);
+			assert.equal(fs.existsSync(path.join(os.tmpdir(), `pi-worktree-${asyncId}-s0-1`)), false);
+		} finally {
+			removeTempDir(repoDir);
+		}
+	});
+
 	it("top-level async worktree parallel resolves reads against the worktree and output under project artifacts", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : process.platform === "win32" ? "worktree path separators unreliable on Windows CI" : undefined }, async () => {
 		const repoDir = createRepo("pi-subagent-async-worktree-");
 		try {
@@ -2608,7 +2724,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			const args = await waitForMockPiArgs(mockPi, 0);
 			const taskArg = args.at(-1) ?? "";
 			assert.ok(taskArg.includes(`[Read from: ${path.join(worktreeCwd, "input.md")}]`));
-			assert.ok(taskArg.includes(`Write your findings to exactly this path: ${path.join(repoDir, ".pi-subagents", "artifacts", "outputs", asyncId, "report.md")}`));
+			assert.ok(taskArg.includes(`Write your findings to exactly this path: ${path.join(getProjectArtifactsDir(repoDir, true), "outputs", asyncId, "report.md")}`));
 			const resultPath = await waitForAsyncResultFile(asyncId, 90_000);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			const status = await waitForAsyncState(asyncId, (candidate) => candidate.state === "complete");

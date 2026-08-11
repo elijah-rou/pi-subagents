@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -58,7 +59,8 @@ describe("shared temp paths", () => {
 		assert.equal(path.dirname(ASYNC_DIR), TEMP_ROOT_DIR);
 		assert.equal(path.dirname(CHAIN_RUNS_DIR), TEMP_ROOT_DIR);
 		assert.equal(path.dirname(TEMP_ARTIFACTS_DIR), TEMP_ROOT_DIR);
-		assert.match(path.basename(TEMP_ROOT_DIR), /^pi-subagents-/);
+		assert.match(path.basename(TEMP_ROOT_DIR), /^runtime-/);
+		assert.equal(fs.statSync(TEMP_ROOT_DIR).mode & 0o777, 0o700);
 		assert.equal(path.basename(RESULTS_DIR), "async-subagent-results");
 		assert.equal(path.basename(ASYNC_DIR), "async-subagent-runs");
 		assert.equal(path.basename(CHAIN_RUNS_DIR), "chain-runs");

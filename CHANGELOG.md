@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+- Store new generated artifacts and transient runtime output under private XDG roots outside Git worktrees. Legacy project-local artifacts remain read-only inspection fallback; missions, schedules, refinements, project-pane bindings, and managed worktrees keep their existing storage behavior. Explicit absolute output paths remain user-managed opt-outs.
+- Give the builtin researcher a 480000ms soft checkpoint and a 900000ms hard per-agent ceiling that explicit `timeoutMs`/`maxRuntimeMs` values cannot bypass.
+
 ## [0.45.2] - 2026-08-10
 
 ### Fixed

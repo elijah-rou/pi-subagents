@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson as writeAtomicJson } from "../../shared/atomic-json.ts";
 import { DIRS, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
@@ -77,7 +77,7 @@ function isNotFoundError(error: unknown): boolean {
 function appendJsonlBestEffort(filePath: string, payload: object): void {
 	try {
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
-		fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf-8");
+		fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, { encoding: "utf-8", mode: 0o600 });
 	} catch {
 		// Repair status/result writes are the important path. A broken or full
 		// diagnostic event log must not make stale-run reconciliation fail.

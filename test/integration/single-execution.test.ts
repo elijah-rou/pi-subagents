@@ -50,6 +50,7 @@ import {
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
+import { getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -3385,7 +3386,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const taskArg = readCallArgs().at(-1) ?? "";
 		assert.equal(result.isError, undefined);
-		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(path.join(tempDir, ".pi-subagents", "artifacts", "outputs"))}.*context\\.md`));
+		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(path.join(getProjectArtifactsDir(tempDir, true), "outputs"))}.*context\\.md`));
 		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
 	});
 
@@ -4141,6 +4142,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.error, "Subagent timed out after 150ms.");
 		assert.match(result.finalOutput ?? "", /Subagent timed out after 150ms\./);
 		assert.equal(result.progress.status, "failed");
+	});
+
+	it("delivers a foreground soft checkpoint and retains terminal duration metadata", async () => {
+		mockPi.onCall({ delay: 250, output: "wrapped checkpoint output" });
+		const agents = makeAgentConfigs(["worker"]);
+		const startedAt = Date.now();
+		const durationArtifactsDir = path.join(tempDir, "duration-artifacts");
+		const result = await runSync(tempDir, agents, "worker", "Wrap up after checkpoint.", {
+			runId: "foreground-duration-checkpoint",
+			artifactsDir: durationArtifactsDir,
+			artifactConfig: { enabled: true, includeMetadata: true },
+			timeoutMs: 2_000,
+			checkpointAfterMs: 50,
+			checkpointAt: startedAt + 50,
+			deadlineAt: startedAt + 2_000,
+		});
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.timeoutMs, 2_000);
+		assert.equal(result.deadlineAt, startedAt + 2_000);
+		assert.equal(result.checkpointAfterMs, 50);
+		assert.equal(result.checkpointAt, startedAt + 50);
+		assert.equal(result.checkpointDelivered, true);
+		assert.equal(result.wrapUpRequested, true);
+		assert.ok(result.artifactPaths?.metadataPath);
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as Record<string, unknown>;
+		assert.equal(metadata.timeoutMs, 2_000);
+		assert.equal(metadata.deadlineAt, startedAt + 2_000);
+		assert.equal(metadata.timedOut, false);
+		assert.equal(metadata.checkpointAfterMs, 50);
+		assert.equal(metadata.checkpointAt, startedAt + 50);
+		assert.equal(metadata.checkpointDelivered, true);
+		assert.equal(metadata.wrapUpRequested, true);
 	});
 
 	it("allows a foreground run to finish on the final turn-budget grace turn", async () => {

@@ -34,6 +34,9 @@ import {
 	CHILD_TOOL_DIAGNOSTIC_PATH_ENV,
 	MCP_DIRECT_CHILD_TOOLS_ENV,
 	REQUIRED_CHILD_TOOLS_ENV,
+	classifyRequiredChildTools,
+	formatDefinitelyMissingChildTools,
+	type ChildToolAvailability,
 } from "./tool-availability.ts";
 import {
 	CHILD_WATCHDOG_CONFIG_ENV,
@@ -230,6 +233,7 @@ export interface PiLaunchToolPlan {
 	internalTools: string[];
 	effectiveToolAllowlist: string[];
 	requiredChildTools: string[];
+	availability: ChildToolAvailability;
 	fanoutAuthorized: boolean;
 	runtimeExtensions: string[];
 	configuredExtensions: string[];
@@ -434,6 +438,16 @@ export function resolvePiLaunchToolPlan(
 					...(input.subagentOnlyExtensions ?? []),
 				]),
 			];
+	const providerToolNames = configuredExtensions.length > 0
+		? requiredChildTools.filter((name) => !effectiveMcpTools.includes(name))
+		: [];
+	const availability = classifyRequiredChildTools({
+		required: requiredChildTools,
+		internal: [...internalTools, ...(fanoutAuthorized ? ["subagent"] : [])],
+		mcp: effectiveMcpTools,
+		providerToolNames,
+		ambientExtensionsEnabled: !disableAmbientExtensions,
+	});
 	const requestedToolNames =
 		input.tools !== undefined
 			? [
@@ -493,6 +507,7 @@ export function resolvePiLaunchToolPlan(
 		internalTools,
 		effectiveToolAllowlist,
 		requiredChildTools,
+		availability,
 		fanoutAuthorized,
 		runtimeExtensions,
 		configuredExtensions,
@@ -546,6 +561,9 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		),
 		agentName: input.childAgentName,
 	});
+	if (toolPlan.availability.definiteMissing.length > 0) {
+		throw new Error(formatDefinitelyMissingChildTools(input.childAgentName, toolPlan.availability.definiteMissing));
+	}
 	if (toolPlan.explicitToolAllowlist) {
 		args.push(
 			toolPlan.effectiveToolAllowlist.length > 0 ? "--tools" : "--no-tools",

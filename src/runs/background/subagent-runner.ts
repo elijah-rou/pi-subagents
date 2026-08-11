@@ -4,12 +4,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson as writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir, watchAsyncControlInbox, type SteerAck, type SteerCapability, type SteerRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
-import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, prepareManagedSingleOutput, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type AcceptanceInput,
 	type ActivityState,
@@ -72,7 +72,9 @@ import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledge
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
-import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
+import { readChildToolDiagnosticError, watchChildToolDiagnostic } from "../shared/tool-availability.ts";
+import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
+import { ensurePrivateDirectory, openPrivateFile, writePrivateFile } from "../../shared/external-state.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, isRetryableModelFailure } from "../shared/model-fallback.ts";
@@ -167,6 +169,8 @@ interface SubagentRunConfig {
 	nestedRoute?: NestedRouteInfo;
 	nestedSelf?: { parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }> };
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
@@ -534,12 +538,13 @@ function runPiStreaming(
 	stopMessage?: string,
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void,
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
+	toolDiagnosticPath?: string,
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
 		const processInstanceId = randomUUID();
 		onWriterProcess?.({ state: "spawning" });
-		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
+		const outputStream = fs.createWriteStream(outputFile, { fd: openPrivateFile(outputFile, fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_WRONLY), autoClose: true });
 		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
 		const spawnSpec = getPiSpawnCommand(args, {
 			...(piPackageRoot ? { piPackageRoot } : {}),
@@ -718,7 +723,17 @@ function runPiStreaming(
 		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolError: ProtocolOutputLimit | undefined;
+		let toolDiagnosticHardKillTimer: NodeJS.Timeout | undefined;
 		let settled = false;
+		const toolDiagnosticWatcher = watchChildToolDiagnostic(toolDiagnosticPath, (diagnosticError) => {
+			if (settled || error) return;
+			error = diagnosticError;
+			trySignalChild(child, "SIGTERM");
+			toolDiagnosticHardKillTimer = setTimeout(() => {
+				if (!settled) trySignalChild(child, "SIGKILL");
+			}, 3000);
+			toolDiagnosticHardKillTimer.unref?.();
+		});
 		applyChildLifecycle = (action: ChildLifecycleAction): void => {
 			if (action === "cancel-drain") {
 				if (finalDrainTimer) {
@@ -837,6 +852,11 @@ function runPiStreaming(
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
 				protocolHardKillTimer = undefined;
+			}
+			toolDiagnosticWatcher.dispose();
+			if (toolDiagnosticHardKillTimer) {
+				clearTimeout(toolDiagnosticHardKillTimer);
+				toolDiagnosticHardKillTimer = undefined;
 			}
 		};
 		function startFinalDrain(): void {
@@ -1073,7 +1093,7 @@ function writeRunLog(
 	}
 	lines.push(input.summary.trim() || "(no output)");
 	lines.push("");
-	fs.writeFileSync(logPath, lines.join("\n"), "utf-8");
+	writePrivateFile(logPath, lines.join("\n"));
 }
 
 /** Context for running a single step */
@@ -1158,7 +1178,7 @@ async function runSingleStep(
 				timeoutMessage: importStopped || ctx.stopSignal?.aborted === true ? ctx.stopMessage : ctx.timeoutMessage,
 			}));
 			try {
-				fs.writeFileSync(ctx.outputFile, imported.output, "utf-8");
+				writePrivateFile(ctx.outputFile, imported.output);
 			} catch {
 				// Output files are observability only for imported roots.
 			}
@@ -1208,9 +1228,9 @@ async function runSingleStep(
 	if (ctx.artifactsDir && ctx.artifactConfig?.enabled !== false) {
 		const index = ctx.flatStepCount > 1 ? ctx.flatIndex : undefined;
 		artifactPaths = getArtifactPaths(ctx.artifactsDir, ctx.id, step.agent, index);
-		fs.mkdirSync(ctx.artifactsDir, { recursive: true });
+		ensurePrivateDirectory(ctx.artifactsDir);
 		if (ctx.artifactConfig?.includeInput !== false) {
-			fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`, "utf-8");
+			writePrivateFile(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`);
 		}
 		if (ctx.artifactConfig?.includeTranscript !== false) {
 			transcriptWriter = createChildTranscriptWriter({
@@ -1233,7 +1253,7 @@ async function runSingleStep(
 			promptDelivery: step.runner.promptDelivery ?? "stdin",
 			capabilities: { stop: true, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		const external = await runExternalCli(omitUndefinedProperties({
 			command: runner.command,
 			args: runner.args,
@@ -1247,7 +1267,7 @@ async function runSingleStep(
 			stopMessage: ctx.stopMessage,
 			onProcess: ctx.onExternalProcess,
 		}));
-		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
+		try { writePrivateFile(ctx.outputFile, external.output); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0
 			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot)
 			: { fullOutput: external.output };
@@ -1314,7 +1334,7 @@ async function runSingleStep(
 		if (ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break;
 		const candidate = candidates[modelIndex];
 		ctx.onAttemptStart?.(omitUndefinedProperties({ model: candidate, thinking: resolveEffectiveThinking(candidate, step.thinking) }));
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		if (effectiveStructuredOutput) {
 			try {
 				if (fs.existsSync(effectiveStructuredOutput.outputPath)) fs.unlinkSync(effectiveStructuredOutput.outputPath);
@@ -1424,6 +1444,7 @@ async function runSingleStep(
 			ctx.stopMessage,
 			ctx.registerTurnBudgetAbort,
 			ctx.onWriterProcess,
+			toolDiagnosticPath,
 		);
 		if (run.processCloseObservedAt !== undefined) {
 			writerProcesses.push({
@@ -1991,6 +2012,7 @@ async function runSubagent(
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
 	let timeoutTimer: NodeJS.Timeout | undefined;
+	let checkpointTimer: NodeJS.Timeout | undefined;
 	let timedOut = false;
 	let stopped = false;
 	let turnBudgetExceeded = false;
@@ -2127,6 +2149,8 @@ async function runSubagent(
 		startedAt: overallStartTime,
 		lastUpdate: overallStartTime,
 		...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+		...(config.checkpointAfterMs !== undefined ? { checkpointAfterMs: config.checkpointAfterMs } : {}),
+		...(config.checkpointAt !== undefined ? { checkpointAt: config.checkpointAt } : {}),
 		...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 		...(config.turnBudget ? { turnBudget: initialTurnBudgetState(config.turnBudget) } : {}),
 		...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
@@ -2149,7 +2173,7 @@ async function runSubagent(
 		outputFile: path.join(asyncDir, "output-0.log"),
 	});
 
-	fs.mkdirSync(asyncDir, { recursive: true });
+	ensurePrivateDirectory(asyncDir);
 	writeAtomicJson(statusPath, statusPayload);
 	let pendingParallelUsageCost: CostSummary = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
 	const currentUsageTotals = (): CostSummary => {
@@ -2575,7 +2599,13 @@ async function runSubagent(
 		if (state === "partial") emitSteeringNotice(requestId, "partial", `Steering partially delivered for run ${id}.`);
 		else if (state === "failed") emitSteeringNotice(requestId, "failed", failureMessage);
 	};
-	const deliverSteerRequest = (request: SteerRequest): void => {
+	const markDurationCheckpointDelivered = (request: SteerRequest, now: number): void => {
+		if (request.source !== "duration-checkpoint" || statusPayload.checkpointDelivered) return;
+		statusPayload.wrapUpRequested = true;
+		statusPayload.checkpointDelivered = true;
+		statusPayload.lastUpdate = now;
+	};
+	const deliverSteerRequest = (request: SteerRequest): number => {
 		if (statusPayload.state !== "running") {
 			const reason = `run became ${statusPayload.state} before steering request was consumed`;
 			const indexes = request.targetIndex !== undefined
@@ -2590,7 +2620,7 @@ async function runSubagent(
 			emitTerminalSteeringNotice(request.id, `Steering failed for run ${id}: ${reason}.`);
 			statusPayload.lastUpdate = Date.now();
 			writeStatusPayload();
-			return;
+			return 0;
 		}
 		const runningIndexes = statusPayload.steps
 			.map((step, index) => ({ step, index }))
@@ -2616,10 +2646,13 @@ async function runSubagent(
 		});
 		recordSteeringLifecycle(request, targetStates);
 		emitSteeringEvent("subagent.steer.requested", request, undefined, { targets: targetStates });
+		let acceptedRoutes = 0;
 		for (const target of targetStates) {
 			if (target.state === "routed") {
 				try {
 					enqueueStepSteer(asyncDir, target.index, request);
+					acceptedRoutes += 1;
+					markDurationCheckpointDelivered(request, now);
 					updateSteeringLifecycleTarget(request.id, target.index, "routed", now);
 					emitSteeringEvent("subagent.steer.routed", request, target.index);
 				} catch (error) {
@@ -2637,6 +2670,7 @@ async function runSubagent(
 		emitTerminalSteeringNotice(request.id, `Steering failed for run ${id}: no requested child remained steerable.`);
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
+		return acceptedRoutes;
 	};
 	const consumeSteerAck = (ack: SteerAck): void => {
 		const lifecycle = steeringStatus(statusPayload);
@@ -2645,6 +2679,7 @@ async function runSubagent(
 		const late = fs.existsSync(steeringMarkerPath(ack.requestId));
 		const now = Date.now();
 		if (ack.state === "delivered") {
+			if (request.source === "duration-checkpoint") markDurationCheckpointDelivered({ type: "steer", id: request.id, ts: request.requestedAt, message: SOFT_CHECKPOINT_MESSAGE, source: request.source }, now);
 			updateSteeringLifecycleTarget(ack.requestId, ack.index, late ? "late" : "delivered", now, omitUndefinedProperties({ reason: late ? "acknowledged after recovery commit" : undefined }));
 			emitSteeringEvent("subagent.steer.delivered", { type: "steer", id: ack.requestId, ts: now, message: ack.message }, ack.index, { late, deliveryStatus: "delivered", message: ack.message });
 		} else if (ack.state === "queued") {
@@ -3094,6 +3129,23 @@ async function runSubagent(
 		},
 		onSteerAck: consumeSteerAck,
 	});
+	if (config.checkpointAt !== undefined) {
+		checkpointTimer = setTimeout(() => {
+			checkpointTimer = undefined;
+			if (statusPayload.state !== "running" || timedOut || stopped || interrupted) return;
+			const request: SteerRequest = {
+				type: "steer",
+				id: `duration-checkpoint-${id}`,
+				ts: Date.now(),
+				message: SOFT_CHECKPOINT_MESSAGE,
+				source: "duration-checkpoint",
+			};
+			// A chain can be between children when the timer fires. Keep the request
+			// pending rather than recording a false delivery with no target.
+			if (deliverSteerRequest(request) === 0) pendingStepSteers.push(request);
+		}, Math.max(0, config.checkpointAt - Date.now()));
+		checkpointTimer.unref?.();
+	}
 	if (config.deadlineAt !== undefined) {
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
 		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
@@ -3316,6 +3368,10 @@ async function runSubagent(
 				const outputPath = step.parallel.namespaceOutputPath && step.parallel.outputPath
 					? path.join(path.dirname(step.parallel.outputPath), `dynamic-${stepIndex}`, `${itemIndex}-${step.parallel.agent}`, path.basename(step.parallel.outputPath))
 					: step.parallel.outputPath;
+				if (step.parallel.namespaceOutputPath) {
+					if (!outputPath) throw new Error("Namespaced dynamic output requires a resolved output path.");
+					prepareManagedSingleOutput(path.basename(outputPath), outputPath);
+				}
 				const taskText = task.task ?? step.parallel.task;
 				const materializedTask = step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText;
 				return omitUndefinedProperties({
@@ -4401,6 +4457,10 @@ async function runSubagent(
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
 	}
+	if (checkpointTimer) {
+		clearTimeout(checkpointTimer);
+		checkpointTimer = undefined;
+	}
 	const signalTerminated = !stopped && !timedOut && !turnBudgetExceeded && !interrupted && results.some((result) => result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
 		processSignal: result.processSignal,
 		interrupted: result.interrupted,
@@ -4470,6 +4530,9 @@ async function runSubagent(
 			state: checkpointRejected ? "rejected" : stopped || signalTerminated ? "stopped" : timedOut || turnBudgetExceeded || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : "failed",
 			summary: checkpointRejected ? (statusPayload.error ?? "Checkpoint rejected.") : stopped ? stopMessage : signalTerminated ? (statusPayload.error ?? "Subagent process terminated by signal.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? (statusPayload.error ?? "Subagent exceeded turn budget.") : usageBudgetExceeded ? (statusPayload.error ?? "Usage budget exhausted.") : interrupted ? "Paused after interrupt. Waiting for explicit next action." : summary,
 			...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+			...(config.checkpointAfterMs !== undefined ? { checkpointAfterMs: config.checkpointAfterMs } : {}),
+			...(config.checkpointAt !== undefined ? { checkpointAt: config.checkpointAt } : {}),
+			...(statusPayload.checkpointDelivered ? { checkpointDelivered: true } : {}),
 			...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
 			...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
 			...(statusPayload.turnBudgetExceeded ? { turnBudgetExceeded: true } : {}),
@@ -4492,6 +4555,11 @@ async function runSubagent(
 				timedOut: r.timedOut || undefined,
 				stopped: r.stopped || undefined,
 				processSignal: r.processSignal || undefined,
+				timeoutMs: config.timeoutMs,
+				checkpointAfterMs: config.checkpointAfterMs,
+				checkpointAt: config.checkpointAt,
+				checkpointDelivered: statusPayload.checkpointDelivered || undefined,
+				deadlineAt: config.deadlineAt,
 				turnBudget: r.turnBudget,
 				turnBudgetExceeded: r.turnBudgetExceeded || undefined,
 				wrapUpRequested: r.wrapUpRequested || undefined,

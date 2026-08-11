@@ -15,6 +15,55 @@ export interface ChildToolDiagnostic {
 
 const PI_CORE_CHILD_TOOLS = new Set(["bash", "edit", "find", "grep", "ls", "read", "write"]);
 
+export interface ChildToolAvailability {
+	available: string[];
+	deferred: string[];
+	definiteMissing: string[];
+}
+
+export interface ClassifyRequiredChildToolsInput {
+	required: readonly string[];
+	internal?: readonly string[];
+	mcp?: readonly string[];
+	providerToolNames?: readonly string[];
+	ambientExtensionsEnabled: boolean;
+}
+
+/**
+ * Classify launch-time tool knowledge without probing child-only providers.
+ * A deferred tool must be checked by the child after extension registration.
+ */
+export function classifyRequiredChildTools(input: ClassifyRequiredChildToolsInput): ChildToolAvailability {
+	const internal = new Set(input.internal ?? []);
+	const mcp = new Set(input.mcp ?? []);
+	const providerToolNames = new Set(input.providerToolNames ?? []);
+	const availability: ChildToolAvailability = { available: [], deferred: [], definiteMissing: [] };
+
+	for (const name of new Set(input.required)) {
+		if (PI_CORE_CHILD_TOOLS.has(name) || internal.has(name)) {
+			availability.available.push(name);
+			continue;
+		}
+		if (mcp.has(name) || providerToolNames.has(name) || input.ambientExtensionsEnabled) {
+			availability.deferred.push(name);
+			continue;
+		}
+		availability.definiteMissing.push(name);
+	}
+	return availability;
+}
+
+export function formatDefinitelyMissingChildTools(agent: string | undefined, missing: readonly string[]): string {
+	if (missing.length === 0) throw new Error("Cannot format an empty definitely-missing tool list.");
+	const subject = agent ? `Agent '${agent}'` : "Subagent";
+	return [
+		`${subject} requested definitely unavailable child tools: ${missing.join(", ")}.`,
+		"No configured or ambient child provider can register these names, so the child was not spawned.",
+		"For extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.",
+		"For MCP tools, configure `mcpDirectTools` and verify the selected names. For builtin tools, verify the name against the installed Pi version.",
+	].join("\n");
+}
+
 export function writeChildToolDiagnostic(
 	filePath: string,
 	required: string[],
@@ -80,4 +129,42 @@ export function readChildToolDiagnosticError(filePath: string | undefined): stri
 	} catch (error) {
 		return `Failed to read child tool availability diagnostic: ${error instanceof Error ? error.message : String(error)}`;
 	}
+}
+
+export interface ChildToolDiagnosticWatcher {
+	dispose(): void;
+}
+
+/** Watch the post-extension diagnostic without treating an in-progress write as terminal. */
+export function watchChildToolDiagnostic(
+	filePath: string | undefined,
+	onMissing: (error: string) => void,
+	options: { intervalMs?: number } = {},
+): ChildToolDiagnosticWatcher {
+	if (!filePath) return { dispose() {} };
+	const intervalMs = options.intervalMs ?? 25;
+	if (!Number.isSafeInteger(intervalMs) || intervalMs < 1) throw new Error("Child tool diagnostic watch interval must be a positive safe integer.");
+	let disposed = false;
+	let timer: NodeJS.Timeout | undefined;
+	const dispose = (): void => {
+		if (disposed) return;
+		disposed = true;
+		if (timer) clearInterval(timer);
+		timer = undefined;
+	};
+	const inspect = (): void => {
+		if (disposed) return;
+		try {
+			const diagnostic = readChildToolDiagnostic(filePath);
+			if (!diagnostic) return;
+			dispose();
+			onMissing(formatChildToolDiagnostic(diagnostic));
+		} catch {
+			// The child may be between truncate/write or temp-file rename operations.
+		}
+	};
+	timer = setInterval(inspect, intervalMs);
+	timer.unref?.();
+	inspect();
+	return { dispose };
 }

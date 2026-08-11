@@ -185,16 +185,22 @@ export function readSteeringStatus(asyncDir: string): SteeringStatus | undefined
 }
 
 export function remainingSteeringRecoveryLimits(
-	descriptor: Pick<SteeringRecoveryDescriptor, "absoluteDeadlineAt" | "initialTurnBudget" | "initialToolBudget">,
-	status: Pick<AsyncStatus, "turnBudget" | "turnCount" | "toolBudget" | "toolCount">,
+	descriptor: Pick<SteeringRecoveryDescriptor, "absoluteDeadlineAt" | "checkpointAfterMs" | "checkpointAt" | "checkpointDelivered" | "initialTurnBudget" | "initialToolBudget">,
+	status: Pick<AsyncStatus, "turnBudget" | "turnCount" | "toolBudget" | "toolCount" | "wrapUpRequested">,
 	now = Date.now(),
-): { timeoutMs?: number; absoluteDeadlineAt?: number; turnBudget?: ResolvedTurnBudget; toolBudget?: ResolvedToolBudget } {
-	const limits: { timeoutMs?: number; absoluteDeadlineAt?: number; turnBudget?: ResolvedTurnBudget; toolBudget?: ResolvedToolBudget } = {};
+): { timeoutMs?: number; absoluteDeadlineAt?: number; checkpointAfterMs?: number; checkpointAt?: number; checkpointDelivered?: boolean; turnBudget?: ResolvedTurnBudget; toolBudget?: ResolvedToolBudget } {
+	const limits: { timeoutMs?: number; absoluteDeadlineAt?: number; checkpointAfterMs?: number; checkpointAt?: number; checkpointDelivered?: boolean; turnBudget?: ResolvedTurnBudget; toolBudget?: ResolvedToolBudget } = {};
 	if (descriptor.absoluteDeadlineAt !== undefined) {
 		const timeoutMs = descriptor.absoluteDeadlineAt - now;
 		if (timeoutMs <= 0) throw new Error("Source run has no remaining deadline budget; it remains paused.");
 		limits.timeoutMs = timeoutMs;
 		limits.absoluteDeadlineAt = descriptor.absoluteDeadlineAt;
+	}
+	const checkpointDelivered = descriptor.checkpointDelivered === true || status.wrapUpRequested === true;
+	if (descriptor.checkpointAfterMs !== undefined && descriptor.checkpointAt !== undefined) {
+		limits.checkpointAfterMs = descriptor.checkpointAfterMs;
+		limits.checkpointAt = descriptor.checkpointAt;
+		limits.checkpointDelivered = checkpointDelivered;
 	}
 	if (descriptor.initialTurnBudget) {
 		const consumed = status.turnBudget?.turnCount ?? status.turnCount ?? 0;

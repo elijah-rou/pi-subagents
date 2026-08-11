@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import { formatResumeFirstFailedRunDetail } from "./resume-guidance.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson as writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
 	DIRS,
 	INTERCOM_DETACH_REQUEST_EVENT,

@@ -126,7 +126,8 @@ Project prompt.
 			assert.equal(result.contract.tools.capabilityAudit?.removedExtensionCount, 1);
 			assert.equal(result.contract.tools.disableAmbientExtensions, true);
 			assert.equal(result.contract.roots.sessionFile, path.join(sessionRoot, "run-123", "run-0", "session.jsonl"));
-			assert.equal(result.contract.roots.outputPath, path.join(cwd, ".pi-subagents", "artifacts", "outputs", "run-123", "report.md"));
+			assert.equal(result.contract.roots.outputPath, path.join(result.contract.roots.artifactsDir!, "outputs", "run-123", "report.md"));
+			assert.equal(result.contract.roots.artifactsDir!.startsWith(cwd + path.sep), false);
 			assert.equal(result.contract.roots.lifecycle?.statusPath.endsWith(path.join("run-123", "status.json")), true);
 			assert.equal(result.contract.roots.lifecycle?.eventsPath.endsWith(path.join("run-123", "events.jsonl")), true);
 			assert.equal(result.contract.roots.lifecycle?.processTerminalPath.endsWith(path.join("run-123", "process-terminal.json")), true);
@@ -151,6 +152,16 @@ Project prompt.
 		} finally {
 			handle.dispose();
 		}
+	});
+
+	it("reports the prospective external write root when legacy artifacts exist", async () => {
+		const cwd = path.join(tempDir, "repo-legacy-artifacts");
+		fs.mkdirSync(path.join(cwd, ".pi-subagents", "artifacts"), { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "local.md"), `---\nname: local\ndescription: Local\n---\nPrompt.`);
+		const result = await resolveSubagentLaunchContract({ agent: "local", cwd });
+		assert.equal(result.ok, true);
+		assert.equal(result.contract.roots.artifactsDir!.startsWith(cwd + path.sep), false);
+		assert.equal(fs.existsSync(result.contract.roots.artifactsDir!), false);
 	});
 
 	it("resolves agent aliases to the canonical launch contract agent", async () => {
@@ -339,6 +350,43 @@ Project prompt.
 		assert.ok(result.contract.tools.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fanout-child.ts")));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/config-ext.ts"));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/subagent-only.ts"));
+	});
+
+	it("rejects definitely missing tools while deferring child-provider tools", async () => {
+		const cwd = path.join(tempDir, "repo-tool-preflight");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "missing-tool.md"), `---
+name: missing-tool
+description: Missing tool
+tools:
+  - read
+  - typo_tool
+---
+Prompt.
+`);
+
+		const missing = await resolveSubagentLaunchContract({
+			agent: "missing-tool",
+			cwd,
+			capabilityCeiling: { version: 1, denyExtensions: true, sources: ["test"] },
+		});
+		assert.equal(missing.ok, false);
+		assert.equal(missing.code, "missing_tool");
+		assert.match(missing.message, /typo_tool/);
+
+		writeAgent(path.join(cwd, ".pi", "agents", "deferred-tool.md"), `---
+name: deferred-tool
+description: Deferred tool
+subagentOnlyExtensions:
+  - /tmp/provider.ts
+tools:
+  - custom_search
+---
+Prompt.
+`);
+		const deferred = await resolveSubagentLaunchContract({ agent: "deferred-tool", cwd });
+		assert.equal(deferred.ok, true);
+		assert.deepEqual(deferred.contract.tools.availability.deferred, ["custom_search"]);
 	});
 
 	it("fails closed when a capability ceiling denies read required for child skills", async () => {

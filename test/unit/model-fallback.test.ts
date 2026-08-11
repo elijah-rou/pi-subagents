@@ -76,9 +76,10 @@ describe("model fallback helpers", () => {
 		assert.equal(isRetryableModelFailure("Request timed out."), true);
 	});
 
-	it("does not treat ordinary task/tool failures as retryable model failures", () => {
+	it("does not treat ordinary task/tool failures or tool-contract errors as retryable model failures", () => {
 		assert.equal(isRetryableModelFailure("bash failed (exit 1): command not found"), false);
 		assert.equal(isRetryableModelFailure("read failed (exit 1): no such file or directory"), false);
+		assert.equal(isRetryableModelFailure("Agent 'researcher' requested unavailable child tools: fetch_content.\nFor extension tools, configure the provider."), false);
 		assert.equal(isRetryableModelFailure(undefined), false);
 	});
 

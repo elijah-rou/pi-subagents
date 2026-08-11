@@ -943,6 +943,44 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
+	it("validates manual resume aliases before clamping and forwards agent duration defaults", async () => {
+		mockPi.onCall({ output: "resumed with defaults" });
+		const runId = `resume-duration-defaults-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, "duration-defaults-child.jsonl");
+		let revivedId: string | undefined;
+		try {
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId, sessionId: "session-123", mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, cwd: tempDir, sessionFile,
+				steps: [{ agent: "worker", status: "complete", sessionFile }],
+			}, null, 2), "utf-8");
+			const { executor } = makeExecutor({ agents: [makeAgent("worker", { defaultTimeoutMs: 2_000, maxTimeoutMs: 3_000, defaultCheckpointAfterMs: 1_000 })] });
+
+			const invalid = await executor.execute("resume-invalid-aliases", { action: "resume", id: runId, message: "Continue", timeoutMs: 4_000, maxRuntimeMs: 5_000 }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(invalid.isError, true);
+			assert.match(invalid.content[0]?.text ?? "", /aliases/);
+			assert.equal(mockPi.callCount(), 0);
+
+			const resumed = await executor.execute("resume-default-duration", { action: "resume", id: runId, message: "Continue" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(resumed.isError, undefined);
+			revivedId = resumed.details.asyncId;
+			assert.ok(revivedId);
+			assert.equal(resumed.details.timeoutMs, 2_000);
+			assert.equal(resumed.details.checkpointAfterMs, 1_000);
+			assert.equal(typeof resumed.details.checkpointAt, "number");
+			const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, revivedId, "recovery-descriptor.json"), "utf-8")) as Record<string, unknown>;
+			assert.equal(descriptor.checkpointAfterMs, 1_000);
+			assert.equal(descriptor.checkpointAt, resumed.details.checkpointAt);
+			assert.equal(descriptor.checkpointDelivered, false);
+			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			if (revivedId) fs.rmSync(path.join(ASYNC_DIR, revivedId), { recursive: true, force: true });
+		}
+	});
+
 	it("revives from the persisted contract when the agent definition was removed", async () => {
 		mockPi.onCall({ output: "descriptor-backed answer" });
 		const runId = `resume-descriptor-${Date.now()}`;

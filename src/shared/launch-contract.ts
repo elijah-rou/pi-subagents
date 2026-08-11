@@ -58,6 +58,8 @@ export function projectAgentDefinition(agent: AgentConfig): Record<string, unkno
 		defaultContext: agent.defaultContext,
 		defaultAsync: agent.defaultAsync,
 		defaultTimeoutMs: agent.defaultTimeoutMs,
+		maxTimeoutMs: agent.maxTimeoutMs,
+		defaultCheckpointAfterMs: agent.defaultCheckpointAfterMs,
 		defaultTurnBudget: agent.defaultTurnBudget,
 		defaultAcceptance: agent.defaultAcceptance,
 		acceptanceRole: agent.acceptanceRole,

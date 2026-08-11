@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
+import { getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import {
 	createEventBus,
 	createMockPi,
@@ -453,7 +454,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId, "parallel-output.md");
+		const outputPath = path.join(getProjectArtifactsDir(tempDir, true), "outputs", runId, "parallel-output.md");
 		assert.equal(result.isError, undefined);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "Saved report");
 		assert.equal(result.details?.results?.[0]?.savedOutputPath, outputPath);
@@ -532,7 +533,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const outputPath = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId, "parallel-file-only.md");
+		const outputPath = path.join(getProjectArtifactsDir(tempDir, true), "outputs", runId, "parallel-file-only.md");
 		const text = result.content[0]?.text ?? "";
 		assert.equal(result.isError, undefined);
 		assert.match(text, /Output saved to:/);
@@ -600,7 +601,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 
 			const runId = result.details?.runId;
 			assert.ok(runId, "expected run id in details");
-			const outputDir = path.join(tempDir, ".pi-subagents", "artifacts", "outputs", runId);
+			const outputDir = path.join(getProjectArtifactsDir(tempDir, true), "outputs", runId);
 			const firstOutputPath = path.join(outputDir, "parallel-0", "0-echo", "context.md");
 			const secondOutputPath = path.join(outputDir, "parallel-0", "1-echo", "context.md");
 			assert.equal(result.isError, undefined);
@@ -673,7 +674,7 @@ Inspect`));
 		);
 		const runId = result.details?.runId;
 		assert.ok(runId, "expected run id in details");
-		const expectedProgressPath = path.join(tempDir, ".pi-subagents", "artifacts", "progress", runId, "progress.md");
+		const expectedProgressPath = path.join(getProjectArtifactsDir(tempDir, true), "progress", runId, "progress.md");
 
 		const args = readLastCallArgs();
 		const taskArg = args.at(-1) ?? "";

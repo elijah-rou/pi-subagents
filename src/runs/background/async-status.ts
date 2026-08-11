@@ -84,6 +84,9 @@ export interface AsyncRunSummary {
 	lastUpdate?: number;
 	endedAt?: number;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -311,6 +314,9 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		lastUpdate: status.lastUpdate,
 		endedAt: status.endedAt,
 		...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
+		...(status.checkpointAfterMs !== undefined ? { checkpointAfterMs: status.checkpointAfterMs } : {}),
+		...(status.checkpointAt !== undefined ? { checkpointAt: status.checkpointAt } : {}),
+		...(status.checkpointDelivered !== undefined ? { checkpointDelivered: status.checkpointDelivered } : {}),
 		...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
 		...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
 		...(status.stopped !== undefined ? { stopped: status.stopped } : {}),

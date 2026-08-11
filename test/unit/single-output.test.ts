@@ -12,6 +12,7 @@ import {
 	injectOutputPathSystemPrompt,
 	injectSingleOutputInstruction,
 	normalizeSingleOutputOverride,
+	prepareManagedSingleOutput,
 	resolveSingleOutput,
 	resolveSingleOutputPath,
 	validateFileOnlyOutputMode,
@@ -146,6 +147,40 @@ describe("resolveSingleOutput", () => {
 		assert.equal(result.fullOutput, "fresh assistant output");
 		assert.equal(result.savedPath, outputPath);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "fresh assistant output");
+	});
+
+	it("rejects managed output symlink substitution after child execution", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "review.md");
+		const victimPath = path.join(dir, "victim.md");
+		prepareManagedSingleOutput("review.md", outputPath);
+		const before = captureSingleOutputSnapshot(outputPath, true);
+		fs.writeFileSync(victimPath, "victim content", "utf-8");
+		fs.unlinkSync(outputPath);
+		fs.symlinkSync(victimPath, outputPath);
+
+		const result = resolveSingleOutput(outputPath, "assistant output", before);
+
+		assert.equal(result.savedPath, undefined);
+		assert.match(result.saveError ?? "", /substituted with a symlink/);
+		assert.equal(fs.readFileSync(victimPath, "utf-8"), "victim content");
+	});
+
+	it("rejects managed output regular-file substitution after child execution", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "review.md");
+		prepareManagedSingleOutput("review.md", outputPath);
+		const before = captureSingleOutputSnapshot(outputPath, true);
+		fs.unlinkSync(outputPath);
+		fs.writeFileSync(outputPath, "attacker replacement", "utf-8");
+
+		const result = resolveSingleOutput(outputPath, "assistant output", before);
+
+		assert.equal(result.savedPath, undefined);
+		assert.match(result.saveError ?? "", /substituted during child execution/);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "attacker replacement");
 	});
 
 	it("preserves read errors from changed output paths", () => {

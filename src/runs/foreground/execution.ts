@@ -57,13 +57,13 @@ import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "../shared/pi-args.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput } from "../shared/structured-output.ts";
 import { formatProcessSignalError, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
-import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
+import { readChildToolDiagnosticError, watchChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
@@ -95,6 +95,8 @@ import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.t
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir } from "../background/control-channel.ts";
+import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
 import {
 	acceptChildWatchdogEvent,
 	childWatchdogIsActive,
@@ -132,6 +134,9 @@ function persistSingleResultMetadata(input: {
 	agent: string;
 	task: string;
 	result: SingleResult;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	deadlineAt?: number;
 }): void {
 	if (!input.enabled || !input.metadataPath) return;
 	const target = input.result;
@@ -147,6 +152,13 @@ function persistSingleResultMetadata(input: {
 		modelAttempts: target.modelAttempts,
 		durationMs: target.progressSummary?.durationMs,
 		toolCount: target.progressSummary?.toolCount,
+		timeoutMs: target.timeoutMs,
+		deadlineAt: target.deadlineAt ?? input.deadlineAt,
+		timedOut: target.timedOut ?? false,
+		checkpointAfterMs: target.checkpointAfterMs ?? input.checkpointAfterMs,
+		checkpointAt: target.checkpointAt ?? input.checkpointAt,
+		checkpointDelivered: target.checkpointDelivered ?? false,
+		wrapUpRequested: target.wrapUpRequested ?? false,
 		error: target.error,
 		agentContract: target.agentContract,
 		launchContractDigest: target.launchContractDigest,
@@ -347,6 +359,14 @@ async function runSingleAttempt(
 		capabilityCeiling: options.capabilityCeiling,
 	});
 
+	const checkpointControlDir = options.checkpointAt !== undefined ? tempDir : undefined;
+	if (options.checkpointAt !== undefined) {
+		if (!checkpointControlDir) throw new Error("Soft checkpoint control requires a child temporary directory.");
+		sharedEnv[SUBAGENT_STEER_INBOX_ENV] = stepSteerInboxDir(checkpointControlDir, options.index ?? 0);
+		sharedEnv[SUBAGENT_STEER_CAPABILITY_ENV] = steerCapabilityPath(checkpointControlDir, options.index ?? 0);
+		sharedEnv[SUBAGENT_STEER_ACK_DIR_ENV] = steerAcksDir(checkpointControlDir, options.index ?? 0);
+	}
+
 	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget);
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agent.tools,
@@ -397,6 +417,10 @@ async function runSingleAttempt(
 		skills: shared.resolvedSkillNames,
 		...(options.acceptance !== undefined ? { acceptanceInput: options.acceptance } : {}),
 		skillsWarning: shared.skillsWarning,
+		...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+		...(options.checkpointAfterMs !== undefined ? { checkpointAfterMs: options.checkpointAfterMs } : {}),
+		...(options.checkpointAt !== undefined ? { checkpointAt: options.checkpointAt } : {}),
+		...(options.deadlineAt !== undefined ? { deadlineAt: options.deadlineAt } : {}),
 		...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
 		...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
@@ -488,6 +512,11 @@ async function runSingleAttempt(
 		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
 		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
+		let toolDiagnosticHardKillTimer: NodeJS.Timeout | undefined;
+		let toolDiagnosticWatcher: ReturnType<typeof watchChildToolDiagnostic> | undefined;
+		let checkpointTimer: NodeJS.Timeout | undefined;
+		let checkpointPending = false;
+		let checkpointDelivered = false;
 		const clearTurnBudgetTimers = () => {
 			if (turnBudgetTerminationTimer) {
 				clearTimeout(turnBudgetTerminationTimer);
@@ -657,6 +686,16 @@ async function runSingleAttempt(
 			clearStdioGuard();
 			clearTimeoutTimers();
 			clearTurnBudgetTimers();
+			toolDiagnosticWatcher?.dispose();
+			toolDiagnosticWatcher = undefined;
+			if (checkpointTimer) {
+				clearTimeout(checkpointTimer);
+				checkpointTimer = undefined;
+			}
+			if (toolDiagnosticHardKillTimer) {
+				clearTimeout(toolDiagnosticHardKillTimer);
+				toolDiagnosticHardKillTimer = undefined;
+			}
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
 				protocolHardKillTimer = undefined;
@@ -785,6 +824,25 @@ async function runSingleAttempt(
 			if (decision === "abort") requestTurnBudgetAbort(turnCount);
 		};
 
+		const deliverCheckpoint = (): void => {
+			if (!checkpointPending || checkpointDelivered || progress.currentTool || processClosed || lifecycleFinished) return;
+			checkpointPending = false;
+			checkpointDelivered = true;
+			result.checkpointDelivered = true;
+			if (!checkpointControlDir) throw new Error("Soft checkpoint control directory is unavailable.");
+			enqueueStepSteer(checkpointControlDir, options.index ?? 0, {
+				type: "steer",
+				id: `duration-checkpoint-${options.runId}-${options.index ?? 0}`,
+				ts: Date.now(),
+				message: SOFT_CHECKPOINT_MESSAGE,
+				targetIndex: options.index ?? 0,
+				source: "duration-checkpoint",
+			});
+			result.wrapUpRequested = true;
+			appendRecentOutput(progress, ["Soft runtime checkpoint delivered; bounded wrap-up requested."]);
+			fireUpdate();
+		};
+
 		const updateActivityState = (now: number): boolean => {
 			if (!controlConfig.enabled) return false;
 			const idleState = deriveActivityState({
@@ -911,6 +969,7 @@ async function runSingleAttempt(
 				progress.currentToolArgs = undefined;
 				progress.currentToolStartedAt = undefined;
 				progress.currentPath = undefined;
+				deliverCheckpoint();
 				fireUpdate();
 			}
 
@@ -1004,6 +1063,15 @@ async function runSingleAttempt(
 			activityTimer.unref?.();
 		}
 
+		if (options.checkpointAt !== undefined) {
+			checkpointTimer = setTimeout(() => {
+				checkpointTimer = undefined;
+				checkpointPending = true;
+				deliverCheckpoint();
+			}, Math.max(0, options.checkpointAt - Date.now()));
+			checkpointTimer.unref?.();
+		}
+
 		if (attemptTimeout) {
 			timeoutTimer = setTimeout(() => {
 				if (processClosed || lifecycleFinished || interruptedByControl) return;
@@ -1028,6 +1096,20 @@ async function runSingleAttempt(
 			}, attemptTimeout.remainingMs);
 			timeoutTimer.unref?.();
 		}
+
+		toolDiagnosticWatcher = watchChildToolDiagnostic(toolDiagnosticPath, (diagnosticError) => {
+			if (processClosed || lifecycleFinished || result.error) return;
+			result.error = diagnosticError;
+			progress.status = "failed";
+			progress.error = diagnosticError;
+			progress.durationMs = Date.now() - startTime;
+			fireUpdate();
+			trySignalChild(proc, "SIGTERM");
+			toolDiagnosticHardKillTimer = setTimeout(() => {
+				if (!processClosed && !lifecycleFinished) trySignalChild(proc, "SIGKILL");
+			}, 3000);
+			toolDiagnosticHardKillTimer.unref?.();
+		});
 
 		const stderrTail = createBoundedByteTail();
 		const failProtocol = (limit: ProtocolOutputLimit): void => {
@@ -1501,6 +1583,9 @@ async function runSyncCompletion(
 			agent: agentName,
 			task,
 			result: target,
+			checkpointAfterMs: options.checkpointAfterMs,
+			checkpointAt: options.checkpointAt,
+			deadlineAt: options.deadlineAt,
 		});
 	};
 
@@ -1528,7 +1613,7 @@ async function runSyncCompletion(
 	modelAttemptsLoop: for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
 		const candidate = modelsToTry[modelIndex];
 		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
-			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
+			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath, options.managedOutput === true);
 			const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
@@ -1545,6 +1630,10 @@ async function runSyncCompletion(
 				originalTask: task,
 			});
 			lastResult = result;
+			if (result.wrapUpRequested) {
+				attemptOptions.checkpointAt = undefined;
+				attemptOptions.checkpointAfterMs = undefined;
+			}
 			if (startupAttemptIndex === 0) {
 				if (result.model) attemptedModels.push(result.model);
 				else if (candidate) attemptedModels.push(candidate);
@@ -1845,6 +1934,9 @@ export async function runSync(
 				agent: failedResult.agent,
 				task: failedResult.task,
 				result: failedResult,
+				checkpointAfterMs: options.checkpointAfterMs,
+				checkpointAt: options.checkpointAt,
+				deadlineAt: options.deadlineAt,
 			});
 		} catch (metadataError) {
 			failedResult.metadataSaveError = metadataError instanceof Error ? metadataError.message : String(metadataError);

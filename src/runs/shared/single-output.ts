@@ -2,12 +2,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
+import { ensurePrivateDirectory, openPrivateFile } from "../../shared/external-state.ts";
 import { hasMutationToolCapability } from "./completion-guard.ts";
 
 export interface SingleOutputSnapshot {
 	exists: boolean;
+	managed?: boolean;
 	mtimeMs?: number;
 	size?: number;
+	device?: number;
+	inode?: number;
 }
 
 /**
@@ -74,6 +78,14 @@ export function resolveSingleOutputPath(
 		? (path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(runtimeCwd, requestedCwd))
 		: runtimeCwd;
 	return path.resolve(baseCwd, output);
+}
+
+/** Reserve generated relative output before spawn. Explicit absolute output is user-managed. */
+export function prepareManagedSingleOutput(output: string | boolean | undefined, outputPath: string | undefined): void {
+	if (!outputPath || typeof output !== "string" || path.isAbsolute(output)) return;
+	ensurePrivateDirectory(path.dirname(outputPath));
+	const fd = openPrivateFile(outputPath, fs.constants.O_CREAT | fs.constants.O_WRONLY);
+	fs.closeSync(fd);
 }
 
 interface OutputInstructionCapabilities {
@@ -144,25 +156,51 @@ export function validateFileOnlyOutputMode(outputMode: OutputMode | undefined, o
 	return undefined;
 }
 
-export function captureSingleOutputSnapshot(outputPath: string | undefined): SingleOutputSnapshot | undefined {
+export function captureSingleOutputSnapshot(outputPath: string | undefined, managed = false): SingleOutputSnapshot | undefined {
 	if (!outputPath) return undefined;
 	try {
-		const stat = fs.statSync(outputPath);
-		return { exists: true, mtimeMs: stat.mtimeMs, size: stat.size };
-	} catch {
-		// The snapshot is advisory; resolveSingleOutput reports concrete read/write failures.
-		return { exists: false };
+		const stat = managed ? fs.lstatSync(outputPath) : fs.statSync(outputPath);
+		if (managed && (stat.isSymbolicLink() || !stat.isFile())) {
+			throw new Error(`Managed output '${outputPath}' must be a regular file, not a symlink or special file.`);
+		}
+		return { exists: true, managed, mtimeMs: stat.mtimeMs, size: stat.size, device: stat.dev, inode: stat.ino };
+	} catch (error) {
+		if (managed && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		// The snapshot is advisory for user-managed absolute paths; managed paths are reserved before capture.
+		return { exists: false, managed };
+	}
+}
+
+function assertManagedOutputIdentity(outputPath: string, snapshot: SingleOutputSnapshot, stat: fs.Stats): void {
+	if (!stat.isFile()) throw new Error(`Managed output '${outputPath}' must be a regular file.`);
+	if (!snapshot.exists || snapshot.device === undefined || snapshot.inode === undefined) {
+		throw new Error(`Managed output '${outputPath}' was not reserved before child execution.`);
+	}
+	if (stat.dev !== snapshot.device || stat.ino !== snapshot.inode) {
+		throw new Error(`Managed output '${outputPath}' was substituted during child execution.`);
 	}
 }
 
 function persistSingleOutput(
 	outputPath: string | undefined,
 	fullOutput: string,
+	beforeRun?: SingleOutputSnapshot,
 ): { savedPath?: string; error?: string } {
 	if (!outputPath) return {};
 	try {
-		fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-		fs.writeFileSync(outputPath, fullOutput, "utf-8");
+		if (!beforeRun?.managed) {
+			fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+			fs.writeFileSync(outputPath, fullOutput, "utf-8");
+			return { savedPath: outputPath };
+		}
+		const fd = fs.openSync(outputPath, fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0));
+		try {
+			assertManagedOutputIdentity(outputPath, beforeRun, fs.fstatSync(fd));
+			fs.ftruncateSync(fd, 0);
+			fs.writeFileSync(fd, fullOutput, "utf-8");
+		} finally {
+			fs.closeSync(fd);
+		}
 		return { savedPath: outputPath };
 	} catch (err) {
 		return { error: err instanceof Error ? err.message : String(err) };
@@ -178,7 +216,11 @@ export function resolveSingleOutput(
 
 	let changedSinceStart = false;
 	try {
-		const stat = fs.statSync(outputPath);
+		const stat = beforeRun?.managed ? fs.lstatSync(outputPath) : fs.statSync(outputPath);
+		if (beforeRun?.managed) {
+			if (stat.isSymbolicLink()) throw new Error(`Managed output '${outputPath}' was substituted with a symlink during child execution.`);
+			assertManagedOutputIdentity(outputPath, beforeRun, stat);
+		}
 		changedSinceStart = !beforeRun?.exists
 			|| stat.mtimeMs !== beforeRun.mtimeMs
 			|| stat.size !== beforeRun.size;
@@ -194,7 +236,14 @@ export function resolveSingleOutput(
 
 	if (changedSinceStart) {
 		try {
-			return { fullOutput: fs.readFileSync(outputPath, "utf-8"), savedPath: outputPath };
+			if (!beforeRun?.managed) return { fullOutput: fs.readFileSync(outputPath, "utf-8"), savedPath: outputPath };
+			const fd = fs.openSync(outputPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+			try {
+				assertManagedOutputIdentity(outputPath, beforeRun, fs.fstatSync(fd));
+				return { fullOutput: fs.readFileSync(fd, "utf-8"), savedPath: outputPath };
+			} finally {
+				fs.closeSync(fd);
+			}
 		} catch (error) {
 			return {
 				fullOutput: fallbackOutput,
@@ -203,7 +252,7 @@ export function resolveSingleOutput(
 		}
 	}
 
-	const save = persistSingleOutput(outputPath, fallbackOutput);
+	const save = persistSingleOutput(outputPath, fallbackOutput, beforeRun);
 	if (save.savedPath) return { fullOutput: fallbackOutput, savedPath: save.savedPath };
 	return { fullOutput: fallbackOutput, saveError: save.error };
 }

@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { openPrivateFile } from "./external-state.ts";
 
 export interface DrainableSource {
 	pause(): void;
@@ -35,7 +36,10 @@ export function createJsonlWriter(
 		};
 	}
 
-	const createWriteStream = deps.createWriteStream ?? ((targetPath: string) => fs.createWriteStream(targetPath, { flags: "a" }));
+	const createWriteStream = deps.createWriteStream ?? ((targetPath: string) => fs.createWriteStream(targetPath, {
+		fd: openPrivateFile(targetPath, fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY),
+		autoClose: true,
+	}));
 	let stream: JsonlWriteStream | undefined;
 	try {
 		stream = createWriteStream(filePath);

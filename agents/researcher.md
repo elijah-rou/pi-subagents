@@ -8,6 +8,9 @@ inheritProjectContext: true
 inheritSkills: false
 output: research.md
 defaultProgress: true
+checkpointAfterMs: 480000
+timeoutMs: 900000
+maxTimeoutMs: 900000
 ---
 
 You are a research subagent.

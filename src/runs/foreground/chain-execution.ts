@@ -81,7 +81,7 @@ import {
 } from "../../shared/types.ts";
 import { resolveEffectiveSubagentModel } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
-import { injectSingleOutputInstruction, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { injectSingleOutputInstruction, prepareManagedSingleOutput, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, outputEntryFromResult, resolveOutputReferences, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -158,6 +158,8 @@ interface ParallelChainRunInput {
 	maxSubagentDepth: number;
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	usageBudget?: UsageBudgetConfig;
@@ -174,9 +176,16 @@ interface ParallelChainRunInput {
 }
 
 function buildChainExecutionDetails(input: ChainExecutionDetailsInput): Details {
+	const durationResult = input.results.find((result) => result.timeoutMs !== undefined || result.checkpointAfterMs !== undefined);
 	return compactForegroundDetails({
 		mode: "chain",
 		results: input.results,
+		...(durationResult?.timeoutMs !== undefined ? { timeoutMs: durationResult.timeoutMs } : {}),
+		...(durationResult?.checkpointAfterMs !== undefined ? { checkpointAfterMs: durationResult.checkpointAfterMs } : {}),
+		...(durationResult?.checkpointAt !== undefined ? { checkpointAt: durationResult.checkpointAt } : {}),
+		...(durationResult?.deadlineAt !== undefined ? { deadlineAt: durationResult.deadlineAt } : {}),
+		checkpointDelivered: input.results.some((result) => result.checkpointDelivered === true),
+		timedOut: input.results.some((result) => result.timedOut === true),
 		progress: input.includeProgress ? input.allProgress : undefined,
 		artifacts: input.allArtifactPaths.length ? { dir: input.artifactsDir, files: input.allArtifactPaths } : undefined,
 		chainAgents: input.chainAgents,
@@ -363,6 +372,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(input.chainDir, behavior.output))
 				: undefined;
+			prepareManagedSingleOutput(behavior.output, outputPath);
 			taskStr = injectSingleOutputInstruction(taskStr, outputPath, taskAgentConfig);
 			const interruptController = new AbortController();
 			if (input.foregroundControl) {
@@ -407,6 +417,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				artifactsDir: input.artifactConfig.enabled ? input.artifactsDir : undefined,
 				artifactConfig: input.artifactConfig,
 				outputPath,
+				managedOutput: typeof behavior.output === "string" && !path.isAbsolute(behavior.output),
 				outputMode: behavior.outputMode,
 				maxSubagentDepth,
 				controlConfig: input.controlConfig,
@@ -423,7 +434,9 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 				agentContract,
 				acceptance: mergeAcceptanceInputs(input.acceptance, task.acceptance),
 				acceptanceContext: { mode: "chain", dynamic: input.dynamic && task.acceptance === undefined && input.acceptance === undefined },
-	timeoutMs: input.timeoutMs,
+				timeoutMs: input.timeoutMs,
+				checkpointAfterMs: input.checkpointAfterMs,
+				checkpointAt: input.checkpointAt,
 				deadlineAt: input.deadlineAt,
 				turnBudget: input.turnBudget,
 				onDetachedExit: (result) => {
@@ -529,6 +542,8 @@ interface ChainExecutionParams {
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	onDetachedExit?: (index: number, result: SingleResult) => void;
@@ -749,11 +764,14 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		tuiBehaviorOverrides = result.behaviorOverrides;
 	}
 
-	const deadlineAt = params.deadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	const durationStartedAt = Date.now();
+	const deadlineAt = params.deadlineAt ?? (params.timeoutMs !== undefined ? durationStartedAt + params.timeoutMs : undefined);
+	const checkpointAt = params.checkpointAt ?? (params.checkpointAfterMs !== undefined ? durationStartedAt + params.checkpointAfterMs : undefined);
 	const globalSemaphore = new Semaphore(params.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 	let prev = "";
 	let globalTaskIndex = 0;
 	let progressCreated = false;
+	let durationCheckpointDelivered = false;
 
 	for (let stepIndex = 0; stepIndex < chainSteps.length; stepIndex++) {
 		const budgetError = usageBudgetError(stepIndex, globalTaskIndex);
@@ -869,6 +887,8 @@ ${step.message}` : ""}` }],
 					worktreeSetup,
 					maxSubagentDepth: params.maxSubagentDepth,
 					timeoutMs: params.timeoutMs,
+					checkpointAfterMs: durationCheckpointDelivered ? undefined : params.checkpointAfterMs,
+					checkpointAt: durationCheckpointDelivered ? undefined : checkpointAt,
 					deadlineAt,
 					turnBudget: params.turnBudget,
 					usageBudget: params.usageBudget,
@@ -883,6 +903,7 @@ ${step.message}` : ""}` }],
 	});
 				globalTaskIndex += step.parallel.length;
 
+				durationCheckpointDelivered ||= parallelResults.some((result) => result.checkpointDelivered === true);
 				for (const result of parallelResults) {
 					results.push(result);
 					if (result.progress) allProgress.push(result.progress);
@@ -1133,6 +1154,8 @@ ${step.message}` : ""}` }],
 				nestedRoute: params.nestedRoute,
 				maxSubagentDepth: params.maxSubagentDepth,
 				timeoutMs: params.timeoutMs,
+				checkpointAfterMs: durationCheckpointDelivered ? undefined : params.checkpointAfterMs,
+				checkpointAt: durationCheckpointDelivered ? undefined : checkpointAt,
 				deadlineAt,
 				turnBudget: params.turnBudget,
 				usageBudget: params.usageBudget,
@@ -1147,6 +1170,7 @@ ${step.message}` : ""}` }],
 			});
 			globalTaskIndex = dynamicStartIndex + reservedDynamicItems;
 
+			durationCheckpointDelivered ||= parallelResults.some((result) => result.checkpointDelivered === true);
 			for (const result of parallelResults) {
 				results.push(result);
 				if (result.progress) allProgress.push(result.progress);
@@ -1326,6 +1350,7 @@ ${step.message}` : ""}` }],
 			const outputPath = typeof behavior.output === "string"
 				? (path.isAbsolute(behavior.output) ? behavior.output : path.join(chainDir, behavior.output))
 				: undefined;
+			prepareManagedSingleOutput(behavior.output, outputPath);
 			stepTask = injectSingleOutputInstruction(stepTask, outputPath, agentConfig);
 			const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Chain step ${stepIndex + 1} (${seqStep.agent})`);
 			if (validationError) {
@@ -1393,6 +1418,7 @@ ${step.message}` : ""}` }],
 				artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
 				artifactConfig,
 				outputPath,
+				managedOutput: typeof behavior.output === "string" && !path.isAbsolute(behavior.output),
 				outputMode: behavior.outputMode,
 				maxSubagentDepth,
 				controlConfig,
@@ -1410,6 +1436,8 @@ ${step.message}` : ""}` }],
 				acceptance: mergeAcceptanceInputs(params.acceptance, seqStep.acceptance),
 	acceptanceContext: { mode: "chain" },
 				timeoutMs: params.timeoutMs,
+				checkpointAfterMs: durationCheckpointDelivered ? undefined : params.checkpointAfterMs,
+				checkpointAt: durationCheckpointDelivered ? undefined : checkpointAt,
 				deadlineAt,
 				turnBudget: params.turnBudget,
 				onDetachedExit: (result) => {
@@ -1465,6 +1493,7 @@ ${step.message}` : ""}` }],
 
 			globalTaskIndex++;
 			results.push(r);
+			durationCheckpointDelivered ||= r.checkpointDelivered === true;
 			if (r.progress) allProgress.push(r.progress);
 			if (r.artifactPaths) allArtifactPaths.push(r.artifactPaths);
 

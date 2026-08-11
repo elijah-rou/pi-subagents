@@ -132,6 +132,8 @@ defaultReads: context.md
 defaultProgress: true
 async: true
 timeoutMs: 900000
+maxTimeoutMs: 900000
+checkpointAfterMs: 480000
 turnBudget: {"maxTurns":20,"graceTurns":2}
 acceptance: {"level":"none","reason":"lightweight lookup"}
 acceptanceRole: read-only
@@ -176,7 +178,9 @@ Field notes:
 | `defaultReads` | Files to read before running the agent. |
 | `defaultProgress` | Maintain `progress.md`. |
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
-| `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win. |
+| `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout. |
+| `maxTimeoutMs` | Positive integer hard ceiling for this agent. Explicit `timeoutMs` and `maxRuntimeMs` values are clamped to it. The builtin researcher uses `900000`. |
+| `checkpointAfterMs` | Positive integer soft runtime checkpoint. The builtin researcher uses `480000`; it requests bounded wrap-up but does not replace the hard timeout. |
 | `turnBudget` | JSON object default such as `{"maxTurns":20,"graceTurns":2}` for single-agent launches. An explicit call value wins, followed by this agent default, then global `turnBudget` config. |
 | `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |

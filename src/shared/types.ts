@@ -12,6 +12,7 @@ import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 import type { AuthorityPolicyConfig } from "../policy/authority.ts";
 import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
+import { ensurePrivateDirectory, resolvePrivateRuntimeRoot } from "./external-state.ts";
 
 // ============================================================================
 // Basic Types
@@ -492,6 +493,9 @@ export interface SteeringRecoveryDescriptor {
 	acceptance?: AcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
 	absoluteDeadlineAt?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
 	initialTurnBudget?: ResolvedTurnBudget;
 	initialToolBudget?: ResolvedToolBudget;
 	maxSubagentDepth: number;
@@ -894,6 +898,11 @@ export interface SingleResult {
 	interrupted?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
+	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
+	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
@@ -1012,7 +1021,11 @@ export interface Details {
 	asyncId?: string;
 	asyncDir?: string;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
 	deadlineAt?: number;
+	wrapUpRequested?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudget?: ResolvedTurnBudget;
@@ -1212,6 +1225,8 @@ export interface NestedRunSummary extends NestedRunAddress {
 	endedAt?: number;
 	lastUpdate?: number;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -1255,6 +1270,8 @@ export interface AsyncStartedEvent {
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	usageBudget?: UsageBudgetState;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
 	nestedRoute?: NestedRouteInfo;
@@ -1320,6 +1337,9 @@ export interface AsyncStatus {
 	endedAt?: number;
 	lastUpdate?: number;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -1464,6 +1484,8 @@ export interface AsyncJobState {
 	startedAt?: number;
 	updatedAt?: number;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	timedOut?: boolean;
 	stopped?: boolean;
@@ -1704,6 +1726,8 @@ export interface RunSyncOptions {
 	signal?: AbortSignal;
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	usageBudget?: UsageBudgetConfig;
@@ -1733,6 +1757,8 @@ export interface RunSyncOptions {
 	sessionFile?: string;
 	share?: boolean;
 	outputPath?: string;
+	/** Generated output reserved by the runtime; finalization rejects path substitution. */
+	managedOutput?: boolean;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */
@@ -1924,7 +1950,8 @@ export function resolveTempScopeId(options?: {
 
 const MAX_PARALLEL = 8;
 export const MAX_CONCURRENCY = 4;
-export const TEMP_ROOT_DIR = path.join(os.tmpdir(), `pi-subagents-${resolveTempScopeId()}`);
+export const TEMP_ROOT_DIR = path.join(resolvePrivateRuntimeRoot(), `runtime-${resolveTempScopeId()}`);
+ensurePrivateDirectory(TEMP_ROOT_DIR);
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
 export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");

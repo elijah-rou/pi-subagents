@@ -152,7 +152,7 @@ const AcceptanceOverride = Type.Unsafe({
 			additionalProperties: false,
 		},
 	],
-	description: "Optional acceptance policy. Omitted or auto inherits a parent contract, with advisory inference only at final resolution; false disables. Canonical child objects merge only present dimensions. Legacy levels replace the inherited contract; none disables with a warning, verified requires a runtime command, and review supports only required:false.",
+	description: "Optional acceptance policy. Omitted or auto inherits a parent contract, with advisory inference only at final resolution; false disables. Canonical child objects merge only present dimensions. Legacy levels replace the inherited contract; none disables with a warning, verified requires a runtime command, and review supports only required:false. Supported evidence kinds: changed-files, tests-added, commands-run, validation-output, residual-risks, no-staged-files, diff-summary, review-findings, manual-notes. Example: { level: \"checked\", evidence: [\"commands-run\", \"changed-files\"] }.",
 });
 
 const AgentContractOverride = Type.Object({
@@ -386,8 +386,9 @@ const SubagentParamsSchema = Type.Object({
 		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child in the invocation. If omitted, each requested agent uses its own defaultContext; agents without defaultContext: 'fork' run fresh.",
 	})),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional timeout for foreground and async/background runs. Foreground workflows default to 30m; async workflows have no default timeout. Alias maxRuntimeMs." })),
-	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs for foreground and async/background runs. Foreground workflows default to 30m; async workflows have no default timeout." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483_647, description: "Hard timeout for foreground and async/background runs; async workflows have no default timeout. Alias maxRuntimeMs." })),
+	checkpointAfterMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483_647 })),
+	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483_647, description: "Alias timeoutMs; async workflows have no default timeout." })),
 	turnBudget: Type.Optional(TurnBudgetOverride),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	usageBudget: Type.Optional(UsageBudgetOverride),

@@ -10,6 +10,9 @@ import {
 	getProjectArtifactsDir,
 	getProjectChainRunsDir,
 	getProjectSubagentsDir,
+	appendJsonl,
+	writeArtifact,
+	writeMetadata,
 } from "../../src/shared/artifacts.ts";
 import { CHAIN_RUNS_DIR } from "../../src/shared/types.ts";
 
@@ -28,41 +31,34 @@ describe("project-local artifact paths", () => {
 		return dir;
 	}
 
-	it("warns only when package settings can include project artifacts", () => {
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "unsafe" })) ?? "", /\.npmignore/);
+	it("does not warn about package inclusion after generated artifacts moved outside projects", () => {
+		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "unsafe" })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "gitignored" }, { name: ".gitignore", content: ".pi-subagents/\n" })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "globignored" }, { name: ".npmignore", content: "**/.pi-subagents/**\n" })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "classignored" }, { name: ".npmignore", content: "[.]pi-subagents/**\n" })), undefined);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "explicit-files-over-ignore", files: [".pi-subagents/**"] }, { name: ".npmignore", content: ".pi-subagents/\n" })) ?? "", /artifactDir/);
+		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "explicit-files-over-ignore", files: [".pi-subagents/**"] }, { name: ".npmignore", content: ".pi-subagents/\n" })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "restricted", files: ["src/**"] })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "malformed-pattern", files: ["[z-a]"] })), undefined);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "broad", files: ["**/*"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "root-wildcard", files: ["*"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "included", files: [".pi-subagents/**"] })) ?? "", /artifactDir/);
+		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "broad", files: ["**/*"] })), undefined);
+		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "root-wildcard", files: ["*"] })), undefined);
+		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "included", files: [".pi-subagents/**"] })), undefined);
 		assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "excluded-after-include", files: [".pi-subagents/**", "!.pi-subagents/**"] })), undefined);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "artifacts-included", files: [".pi-subagents/artifacts/**"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "artifacts-directory-included", files: [".pi-subagents/artifacts"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "dynamic-input-included", files: [".pi-subagents/artifacts/*_input.md"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "dynamic-output-included", files: [".pi-subagents/artifacts/*_output.md"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "dynamic-jsonl-included", files: [".pi-subagents/artifacts/*.jsonl"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "dynamic-meta-included", files: [".pi-subagents/artifacts/*_meta.json"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "progress-included", files: [".pi-subagents/artifacts/progress/**"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "outputs-included", files: [".pi-subagents/artifacts/outputs/**"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "nested-output-included", files: [".pi-subagents/artifacts/outputs/*/*.md"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "chain-runs-included", files: [".pi-subagents/chain-runs/**"] })) ?? "", /artifactDir/);
-		assert.match(getProjectArtifactPackagingWarning(packageDir({ name: "chain-runs-directory-included", files: [".pi-subagents/chain-runs"] })) ?? "", /artifactDir/);
+		for (const files of [[".pi-subagents/artifacts/**"], [".pi-subagents/artifacts"], [".pi-subagents/artifacts/*_input.md"], [".pi-subagents/artifacts/*_output.md"], [".pi-subagents/artifacts/*.jsonl"], [".pi-subagents/artifacts/*_meta.json"], [".pi-subagents/artifacts/progress/**"], [".pi-subagents/artifacts/outputs/**"], [".pi-subagents/artifacts/outputs/*/*.md"], [".pi-subagents/chain-runs/**"], [".pi-subagents/chain-runs"]]) {
+			assert.equal(getProjectArtifactPackagingWarning(packageDir({ name: "legacy", files })), undefined);
+		}
 	});
 
-	it("places generated subagent files under .pi-subagents for a project cwd", () => {
-		const cwd = path.join("tmp", "repo");
+	it("places generated subagent files in stable external project namespaces", () => {
+		const cwd = packageDir({ name: "project" });
+		const artifacts = getProjectArtifactsDir(cwd);
+		assert.equal(artifacts.startsWith(cwd + path.sep), false);
 		assert.equal(getProjectSubagentsDir(cwd), path.join(cwd, ".pi-subagents"));
-		assert.equal(getProjectArtifactsDir(cwd), path.join(cwd, ".pi-subagents", "artifacts"));
-		assert.equal(getProjectChainRunsDir(cwd), path.join(cwd, ".pi-subagents", "chain-runs"));
-		assert.equal(getArtifactsDir(null, cwd), path.join(cwd, ".pi-subagents", "artifacts"));
+		assert.equal(getArtifactsDir(null, cwd), artifacts);
+		assert.equal(getProjectChainRunsDir(cwd).startsWith(cwd + path.sep), false);
 	});
 
 	it("routes chain scratch files according to the artifact preference", () => {
-		const cwd = path.join("tmp", "repo");
+		const cwd = packageDir({ name: "chain-project" });
 		assert.equal(getChainRunsDir(cwd), getProjectChainRunsDir(cwd));
 		assert.equal(getChainRunsDir(cwd, "project"), getProjectChainRunsDir(cwd));
 		assert.equal(getChainRunsDir(cwd, "session"), CHAIN_RUNS_DIR);
@@ -72,5 +68,33 @@ describe("project-local artifact paths", () => {
 	it("keeps the session artifact fallback when no project cwd is available", () => {
 		const sessionFile = path.join("tmp", "sessions", "parent.jsonl");
 		assert.equal(getArtifactsDir(sessionFile), path.join("tmp", "sessions", "subagent-artifacts"));
+	});
+
+	it("writes private artifact files and rejects hostile final symlinks", () => {
+		const dir = packageDir({ name: "private-artifacts" });
+		const artifactsDir = path.join(path.dirname(dir), `${path.basename(dir)}-external`);
+		tempDirs.push(artifactsDir);
+		fs.mkdirSync(artifactsDir, { mode: 0o700 });
+		const existing = path.join(artifactsDir, "existing.md");
+		fs.writeFileSync(existing, "old", { mode: 0o644 });
+		writeArtifact(existing, "new");
+		assert.equal(fs.statSync(existing).mode & 0o777, 0o600);
+		const metadata = path.join(artifactsDir, "meta.json");
+		writeMetadata(metadata, { private: true });
+		assert.equal(fs.statSync(metadata).mode & 0o777, 0o600);
+		const jsonl = path.join(artifactsDir, "events.jsonl");
+		appendJsonl(jsonl, "{}");
+		assert.equal(fs.statSync(jsonl).mode & 0o777, 0o600);
+
+		const victim = path.join(artifactsDir, "victim");
+		fs.writeFileSync(victim, "untouched", { mode: 0o644 });
+		const hostile = path.join(artifactsDir, "hostile.jsonl");
+		fs.symlinkSync(victim, hostile);
+		assert.throws(() => appendJsonl(hostile, "attack"), /symlink|regular file/i);
+		const hostileMetadata = path.join(artifactsDir, "hostile-meta.json");
+		fs.symlinkSync(victim, hostileMetadata);
+		assert.throws(() => writeMetadata(hostileMetadata, { attack: true }), /symlink|regular file/i);
+		assert.equal(fs.readFileSync(victim, "utf-8"), "untouched");
+		assert.equal(fs.statSync(victim).mode & 0o777, 0o644);
 	});
 });

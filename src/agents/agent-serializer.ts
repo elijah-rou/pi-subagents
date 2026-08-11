@@ -18,6 +18,8 @@ export const KNOWN_FIELDS = new Set([
 	"defaultContext",
 	"async",
 	"timeoutMs",
+	"maxTimeoutMs",
+	"checkpointAfterMs",
 	"turnBudget",
 	"acceptance",
 	"acceptanceRole",
@@ -86,6 +88,8 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (config.defaultAsync !== undefined || preserve("async")) lines.push(`async: ${config.defaultAsync === undefined ? "" : config.defaultAsync ? "true" : "false"}`);
 	if (config.defaultTimeoutMs !== undefined || preserve("timeoutMs")) lines.push(`timeoutMs: ${config.defaultTimeoutMs ?? ""}`);
+	if (config.maxTimeoutMs !== undefined || preserve("maxTimeoutMs")) lines.push(`maxTimeoutMs: ${config.maxTimeoutMs ?? ""}`);
+	if (config.defaultCheckpointAfterMs !== undefined || preserve("checkpointAfterMs")) lines.push(`checkpointAfterMs: ${config.defaultCheckpointAfterMs ?? ""}`);
 	if (config.defaultTurnBudget || preserve("turnBudget")) lines.push(`turnBudget: ${config.defaultTurnBudget ? JSON.stringify(config.defaultTurnBudget) : ""}`);
 	if (config.defaultAcceptance !== undefined || preserve("acceptance")) {
 		lines.push(`acceptance: ${config.defaultAcceptance === undefined

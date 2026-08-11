@@ -5,7 +5,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveAgentName, type AgentConfig, type AgentScope } from "../../agents/agents.ts";
 import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning } from "../../shared/artifacts.ts";
-import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { writePrivateAtomicJson as writeAtomicJson } from "../../shared/atomic-json.ts";
 import { ChainClarifyComponent, type ChainClarifyResult } from "./chain-clarify.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import { executeChain } from "./chain-execution.ts";
@@ -56,15 +56,17 @@ import { ChainOutputValidationError, validateChainOutputBindingsWithContext } fr
 import { acceptanceBlocksRun, mergeAcceptanceInputs, normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { createForkContextResolver, forkedChildRequiresThinkingOff } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
+import { appendPrivateFile, createPrivateDirectoryExclusive } from "../../shared/external-state.ts";
 import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBridge, resolveIntercomSessionTarget, resolveSubagentIntercomTarget, type IntercomBridgeState } from "../../intercom/intercom-bridge.ts";
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
+import { clampDurationToAgentMaximum, resolveDurationBudget } from "../shared/duration-budget.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, prepareManagedSingleOutput, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.ts";
@@ -238,6 +240,7 @@ export interface SubagentParamsLike {
 	async?: boolean;
 	foregroundOnly?: boolean;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
 	maxRuntimeMs?: number;
 	turnBudget?: TurnBudgetConfig;
 	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
@@ -337,6 +340,8 @@ interface ExecutionContextData {
 	intercomBridge: IntercomBridgeState;
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
@@ -1315,6 +1320,8 @@ async function resumeAsyncRun(input: {
 	deps: ExecutorDeps;
 	parentModel?: ParentModel;
 	absoluteDeadlineAt?: number;
+	absoluteCheckpointAt?: number;
+	checkpointDelivered?: boolean;
 }): Promise<AgentToolResult<Details>> {
 	const followUp = (input.params.message ?? input.params.task ?? "").trim();
 	const attachChain = (input.params.chain?.length ?? 0) > 0 ? input.params.chain as ChainStep[] : undefined;
@@ -1491,7 +1498,7 @@ async function resumeAsyncRun(input: {
 			availableModels,
 			cwd: effectiveCwd,
 			maxOutput: input.params.maxOutput,
-			artifactsDir: getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir),
+			artifactsDir: getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir, true),
 			artifactConfig,
 			shareEnabled: input.params.share === true,
 			sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
@@ -1534,8 +1541,31 @@ async function resumeAsyncRun(input: {
 		: "acceptance" in target ? target.acceptance : undefined;
 	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance);
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
+	let revivalDuration: ReturnType<typeof resolveDurationBudget>;
+	const manualResume = input.absoluteDeadlineAt === undefined;
+	try {
+		// Alias consistency must be checked before either value is clamped. Otherwise
+		// two conflicting large aliases can collapse to the same maximum and pass.
+		const boundedAliases = clampDurationToAgentMaximum({
+			timeoutMs: input.params.timeoutMs,
+			maxRuntimeMs: input.params.maxRuntimeMs,
+		}, agentConfig.maxTimeoutMs);
+		const explicitTimeout = boundedAliases.timeoutMs ?? boundedAliases.maxRuntimeMs;
+		const cappedTimeout = explicitTimeout ?? (manualResume ? agentConfig.defaultTimeoutMs : undefined);
+		const remainingCheckpointMs = input.absoluteCheckpointAt !== undefined && input.checkpointDelivered !== true
+			? Math.max(1, input.absoluteCheckpointAt - Date.now())
+			: undefined;
+		revivalDuration = resolveDurationBudget({
+			checkpointAfterMs: manualResume
+				? input.params.checkpointAfterMs ?? (explicitTimeout === undefined ? agentConfig.defaultCheckpointAfterMs : undefined)
+				: remainingCheckpointMs,
+			timeoutMs: cappedTimeout,
+		});
+	} catch (error) {
+		return buildRequestedModeError(input.params, error instanceof Error ? error.message : String(error));
+	}
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
-	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir);
+	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir, true);
 	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const parentModel = input.parentModel;
 	const result = executeAsyncSingle(runId, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
@@ -1586,7 +1616,13 @@ async function resumeAsyncRun(input: {
 		...(recoveryDescriptor?.structuredOutputSchema ? { structuredOutputSchema: recoveryDescriptor.structuredOutputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
 		...(acceptance !== undefined ? { acceptance } : {}),
-		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
+		...(revivalDuration.timeoutMs !== undefined ? { timeoutMs: revivalDuration.timeoutMs } : {}),
+		...(input.checkpointDelivered !== true && revivalDuration.checkpointAfterMs !== undefined
+			? {
+				checkpointAfterMs: manualResume ? revivalDuration.checkpointAfterMs : (input.params.checkpointAfterMs ?? revivalDuration.checkpointAfterMs),
+				checkpointAt: input.absoluteCheckpointAt ?? revivalDuration.checkpointAt,
+			}
+			: {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.turnBudget !== undefined ? { turnBudget: input.params.turnBudget } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
@@ -2008,20 +2044,44 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): A
 }
 
 function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: AgentConfig[]): SubagentParamsLike {
-	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
-	const agent = agents.find((candidate) => candidate.name === params.agent);
-	if (!agent) return params;
+	const names = new Set<string>();
+	if (params.agent) names.add(params.agent);
+	for (const task of params.tasks ?? []) if (task.agent) names.add(task.agent);
+	const collectChainAgents = (steps: ChainStep[]): void => {
+		for (const step of steps) {
+			if (isParallelStep(step)) {
+				for (const task of step.parallel) if (task.agent) names.add(task.agent);
+			} else if (isDynamicParallelStep(step)) {
+				if (step.parallel.agent) names.add(step.parallel.agent);
+			} else if (step.agent) {
+				names.add(step.agent);
+			}
+		}
+	};
+	collectChainAgents(params.chain ?? []);
+	const selected = agents.filter((candidate) => names.has(candidate.name));
+	if (selected.length === 0) return params;
+	const maximums = selected.map((agent) => agent.maxTimeoutMs).filter((value): value is number => value !== undefined);
+	const maximumMs = maximums.length > 0 ? Math.min(...maximums) : undefined;
+	const boundedParams = clampDurationToAgentMaximum(params, maximumMs);
+	const explicitTimeout = params.timeoutMs !== undefined || params.maxRuntimeMs !== undefined;
+	const defaultTimeouts = selected.map((agent) => agent.defaultTimeoutMs).filter((value): value is number => value !== undefined);
+	const defaultCheckpoints = selected.map((agent) => agent.defaultCheckpointAfterMs).filter((value): value is number => value !== undefined);
+	const directSingleAgent = (params.chain?.length ?? 0) === 0 && (params.tasks?.length ?? 0) === 0 && params.agent
+		? selected.find((agent) => agent.name === params.agent)
+		: undefined;
 	return {
-		...params,
-		...(params.async === undefined && agent.defaultAsync !== undefined ? { async: agent.defaultAsync } : {}),
-		...(params.timeoutMs === undefined && params.maxRuntimeMs === undefined && agent.defaultTimeoutMs !== undefined
-			? { timeoutMs: agent.defaultTimeoutMs }
+		...boundedParams,
+		...(boundedParams.async === undefined && directSingleAgent?.defaultAsync !== undefined ? { async: directSingleAgent.defaultAsync } : {}),
+		...(!explicitTimeout && defaultTimeouts.length > 0 ? { timeoutMs: Math.min(...defaultTimeouts, maximumMs ?? Number.MAX_SAFE_INTEGER) } : {}),
+		...(boundedParams.checkpointAfterMs === undefined && !explicitTimeout && defaultCheckpoints.length > 0
+			? { checkpointAfterMs: Math.min(...defaultCheckpoints) }
 			: {}),
-		...(params.turnBudget === undefined && agent.defaultTurnBudget !== undefined
-			? { turnBudget: agent.defaultTurnBudget }
+		...(boundedParams.turnBudget === undefined && directSingleAgent?.defaultTurnBudget !== undefined
+			? { turnBudget: directSingleAgent.defaultTurnBudget }
 			: {}),
-		...(params.acceptance === undefined && agent.defaultAcceptance !== undefined
-			? { acceptance: agent.defaultAcceptance }
+		...(boundedParams.acceptance === undefined && directSingleAgent?.defaultAcceptance !== undefined
+			? { acceptance: directSingleAgent.defaultAcceptance }
 			: {}),
 	};
 }
@@ -2524,6 +2584,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			childIntercomTarget,
 			nestedRoute,
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
@@ -2569,6 +2631,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			childIntercomTarget,
 			nestedRoute,
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
@@ -2631,6 +2695,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			structuredOutputSchema: params.outputSchema,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
@@ -2708,6 +2774,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		worktreeSetupHookTimeoutMs: deps.config.worktreeSetupHookTimeoutMs,
 		worktreeBaseDir: deps.config.worktreeBaseDir,
 		timeoutMs: data.timeoutMs,
+		checkpointAfterMs: data.checkpointAfterMs,
+		checkpointAt: data.checkpointAt,
 		deadlineAt: data.deadlineAt,
 		turnBudget: data.turnBudget,
 		onDetachedExit: (index, result) => {
@@ -2780,6 +2848,8 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
 			nestedRoute: data.nestedRoute,
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
@@ -2865,6 +2935,8 @@ interface ForegroundParallelRunInput {
 	onUpdate?: (r: AgentToolResult<Details>) => void;
 	worktreeSetup?: WorktreeSetup;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	usageBudget?: UsageBudgetConfig;
@@ -3056,6 +3128,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			? buildChainInstructions({ ...behavior, output: false, reads: false }, input.progressDir, index === input.firstProgressIndex)
 			: { prefix: "", suffix: "" };
 		const outputPath = resolveSingleOutputPath(behavior?.output, input.ctx.cwd, taskCwd, input.outputBaseDir);
+		prepareManagedSingleOutput(behavior?.output, outputPath);
 		const agentConfig = input.agents.find((agent) => agent.name === task.agent);
 		const taskText = injectSingleOutputInstruction(
 			`${readInstructions.prefix}${input.taskTexts[index]!}${progressInstructions.suffix}`,
@@ -3101,6 +3174,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			artifactConfig: input.artifactConfig,
 			maxOutput: input.maxOutput,
 			outputPath,
+			managedOutput: typeof behavior?.output === "string" && !path.isAbsolute(behavior.output),
 			outputMode: behavior?.outputMode,
 			maxSubagentDepth: input.maxSubagentDepths[index],
 			waitToolEnabled: input.waitToolEnabled,
@@ -3132,6 +3206,8 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 			acceptance: mergeAcceptanceInputs(input.acceptance, task.acceptance),
 	acceptanceContext: { mode: "parallel" },
 			timeoutMs: input.timeoutMs,
+			checkpointAfterMs: input.checkpointAfterMs,
+			checkpointAt: input.checkpointAt,
 			deadlineAt: input.deadlineAt,
 			turnBudget: input.turnBudget,
 			toolBudget: input.toolBudgets[index],
@@ -3373,6 +3449,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 				childIntercomTarget: data.intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(id, agent, index) : undefined,
 				nestedRoute: data.nestedRoute,
 				timeoutMs: data.timeoutMs,
+				checkpointAfterMs: data.checkpointAfterMs,
+				checkpointAt: data.checkpointAt,
 				turnBudget: data.turnBudget,
 				usageBudget: data.usageBudget,
 				toolBudget: data.toolBudget,
@@ -3491,6 +3569,8 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			onUpdate,
 			worktreeSetup,
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			deadlineAt,
 			turnBudget: data.turnBudget,
 			usageBudget: data.usageBudget,
@@ -3526,6 +3606,11 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			mode: "parallel",
 			runId,
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
+			checkpointDelivered: results.some((result) => result.checkpointDelivered === true),
+			deadlineAt,
+			timedOut: results.some((result) => result.timedOut === true),
 			results,
 			progress: params.includeProgress ? allProgress : undefined,
 			artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
@@ -3739,6 +3824,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				structuredOutputSchema: params.outputSchema,
 				acceptance: params.acceptance,
 				timeoutMs: data.timeoutMs,
+				checkpointAfterMs: data.checkpointAfterMs,
+				checkpointAt: data.checkpointAt,
 				turnBudget: data.turnBudget,
 				toolBudget: effectiveToolBudget.toolBudget,
 				usageBudget: data.usageBudget,
@@ -3752,6 +3839,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	}
 	const cleanTask = task;
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(deps, artifactsDir, runId));
+	prepareManagedSingleOutput(effectiveOutput, outputPath);
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
 		return { content: [{ type: "text", text: validationError }], isError: true, details: { mode: "single", results: [] } };
@@ -3821,6 +3909,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			artifactConfig,
 			maxOutput: params.maxOutput,
 			outputPath,
+			managedOutput: typeof effectiveOutput === "string" && !path.isAbsolute(effectiveOutput),
 			outputMode: effectiveOutputMode,
 			maxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
@@ -3865,6 +3954,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				recordRun(params.agent!, cleanTask, result.exitCode, result.progressSummary?.durationMs ?? 0);
 			},
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			deadlineAt,
 			turnBudget: data.turnBudget,
 			enforceHardTurnLimit: params.enforceHardTurnLimit,
@@ -3908,6 +3999,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		mode: "single",
 		runId,
 		timeoutMs: data.timeoutMs,
+		checkpointAfterMs: data.checkpointAfterMs,
+		checkpointAt: data.checkpointAt,
+		checkpointDelivered: r.checkpointDelivered,
+		deadlineAt,
+		timedOut: r.timedOut,
 		results: [r],
 		...(data.turnBudget ? { turnBudget: data.turnBudget } : {}),
 		...(effectiveToolBudget.toolBudget ? { toolBudget: effectiveToolBudget.toolBudget } : {}),
@@ -4026,7 +4122,13 @@ export function prepareWorkflowLaunchParams(
 		if (childParams.gate !== undefined || workflowDefaults.gate !== undefined) {
 			throw new Error("gate is not supported with retained resume; resume uses the retained child contract.");
 		}
-		const timeoutMs = childParams.timeoutMs ?? childParams.maxRuntimeMs ?? workflowDefaults.timeoutMs ?? workflowDefaults.maxRuntimeMs;
+		const childTimeoutAliases = childParams.timeoutMs !== undefined || childParams.maxRuntimeMs !== undefined
+			? { timeoutMs: childParams.timeoutMs as number | undefined, maxRuntimeMs: childParams.maxRuntimeMs as number | undefined }
+			: { timeoutMs: workflowDefaults.timeoutMs, maxRuntimeMs: workflowDefaults.maxRuntimeMs };
+		const normalizedTimeout = resolveForegroundTimeout(childTimeoutAliases);
+		if (normalizedTimeout.error) throw new Error(normalizedTimeout.error);
+		const timeoutMs = normalizedTimeout.timeoutMs;
+		const checkpointAfterMs = childParams.checkpointAfterMs ?? workflowDefaults.checkpointAfterMs;
 		const turnBudget = childParams.turnBudget ?? workflowDefaults.turnBudget;
 		const toolBudget = childParams.toolBudget ?? workflowDefaults.toolBudget;
 		return {
@@ -4036,7 +4138,8 @@ export function prepareWorkflowLaunchParams(
 			workflowParentRunId: parentWorkflowRunId,
 			workflowKey,
 			...(options.missionDetached ? { mission: false } : {}),
-			...(timeoutMs !== undefined ? { timeoutMs: timeoutMs as number } : {}),
+			...(timeoutMs !== undefined ? { timeoutMs } : {}),
+			...(checkpointAfterMs !== undefined ? { checkpointAfterMs: checkpointAfterMs as number } : {}),
 			...(turnBudget !== undefined ? { turnBudget: turnBudget as TurnBudgetConfig } : {}),
 			...(toolBudget !== undefined ? { toolBudget: toolBudget as ToolBudgetConfig } : {}),
 		};
@@ -4217,7 +4320,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
 			const parentCwd = ctx.cwd;
-			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
+			const workflowDurationStartedAt = Date.now();
+			let workflowDuration: ReturnType<typeof resolveDurationBudget>;
+			try {
+				const normalizedTimeout = resolveForegroundTimeout(requestParams, requestParams.async === false ? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
+				if (normalizedTimeout.error) return buildRequestedModeError(requestParams, normalizedTimeout.error);
+				workflowDuration = resolveDurationBudget({ timeoutMs: normalizedTimeout.timeoutMs, checkpointAfterMs: requestParams.checkpointAfterMs }, workflowDurationStartedAt);
+			} catch (error) {
+				return buildRequestedModeError(requestParams, error instanceof Error ? error.message : String(error));
+			}
+			const timeout = workflowDuration.timeoutMs;
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
@@ -4280,8 +4392,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const eventsPath = path.join(asyncDir, "events.jsonl");
 				const startedAt = Date.now();
 				const currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-				fs.mkdirSync(asyncDir, { recursive: true });
-				fs.mkdirSync(DIRS.results, { recursive: true });
+				createPrivateDirectoryExclusive(asyncDir);
+				fs.mkdirSync(DIRS.results, { recursive: true, mode: 0o700 });
 				const controller = new AbortController();
 				deps.state.workflowControllers ??= new Map();
 				deps.state.workflowControllers.set(workflowRunId, controller);
@@ -4293,13 +4405,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					state: "running",
 					startedAt,
 					lastUpdate: startedAt,
-					...(timeout !== undefined ? { deadlineAt: startedAt + timeout, timeoutMs: timeout } : {}),
+					...(timeout !== undefined ? { deadlineAt: workflowDuration.deadlineAt, timeoutMs: timeout } : {}),
+					...(workflowDuration.checkpointAfterMs !== undefined ? { checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowDuration.checkpointAt, checkpointDelivered: false } : {}),
 					cwd: workflowCwd,
 					pid: process.pid,
 					steps: [],
 					workflow: { trace: [], emits: [], console: [] },
 				};
-				const appendWorkflowEvent = (event: Record<string, unknown>) => fs.appendFileSync(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`, "utf-8");
+				const appendWorkflowEvent = (event: Record<string, unknown>) => appendPrivateFile(eventsPath, `${JSON.stringify({ ts: Date.now(), runId: workflowRunId, ...event })}\n`);
 				const persist = () => {
 					status.lastUpdate = Date.now();
 					writeAtomicJson(statusPath, status);
@@ -4346,7 +4459,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					status.toolCount = toolCounts.length > 0 ? toolCounts.reduce((total, count) => total + count, 0) : undefined;
 					status.currentStep = runningSteps.length === 1 ? steps.indexOf(runningSteps[0]!) : undefined;
 				};
-				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, cwd: workflowCwd, status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], startedAt, updatedAt: startedAt, ...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}), workflow: status.workflow };
+				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, cwd: workflowCwd, status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], startedAt, updatedAt: startedAt, ...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: workflowDuration.deadlineAt } : {}), ...(workflowDuration.checkpointAfterMs !== undefined ? { checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowDuration.checkpointAt, checkpointDelivered: false } : {}), workflow: status.workflow };
 				deps.state.asyncJobs.set(workflowRunId, workflowJob);
 				deps.state.fleetJobs ??= new Map();
 				deps.state.fleetJobs.set(workflowRunId, workflowJob);
@@ -4355,7 +4468,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
 					const workflowResults: SingleResult[] = [];
-					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
+					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, checkpointAfterMs: _checkpointAfterMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = workflowRequest;
 					const updateTrace = (trace: NonNullable<Details["workflow"]>["trace"]) => {
 						status.workflow = { ...(status.workflow ?? { emits: [], console: [] }), trace };
 						for (const entry of trace.filter((candidate) => candidate.operation === "run")) {
@@ -4379,7 +4492,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
-							timeoutMs: timeout,
+							timeoutMs: workflowDuration.deadlineAt !== undefined ? Math.max(1, workflowDuration.deadlineAt - Date.now()) : undefined,
 							signal: controller.signal,
 							...(workflowState ? { state: workflowState } : {}),
 							onTrace: updateTrace,
@@ -4394,7 +4507,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
 								patchMissionObjective(childParams.task);
-								const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions });
+								const checkpointPending = workflowDuration.checkpointAt !== undefined && status.checkpointDelivered !== true;
+								const durationDefaults = {
+									...workflowChildDefaults,
+									...(workflowDuration.deadlineAt !== undefined ? { timeoutMs: Math.max(1, workflowDuration.deadlineAt - Date.now()) } : {}),
+									...(checkpointPending ? { checkpointAfterMs: Math.max(1, workflowDuration.checkpointAt! - Date.now()) } : {}),
+								};
+								const childRequest = prepareWorkflowLaunchParams(durationDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions });
+								if (workflowDuration.deadlineAt !== undefined) {
+									const remaining = Math.max(1, workflowDuration.deadlineAt - Date.now());
+									childRequest.timeoutMs = Math.min(childRequest.timeoutMs ?? childRequest.maxRuntimeMs ?? remaining, remaining);
+									delete childRequest.maxRuntimeMs;
+								}
+								if (checkpointPending) childRequest.checkpointAfterMs = Math.min(childRequest.checkpointAfterMs ?? Number.MAX_SAFE_INTEGER, Math.max(1, workflowDuration.checkpointAt! - Date.now()));
 								workflowLaunchObservers.set(childRequest, (launch) => {
 									const step = status.steps?.find((candidate) => candidate.workflowKey === key);
 									if (!step) return;
@@ -4424,6 +4549,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									persist();
 								}, ctx, preserveActiveSession);
 								workflowResults.push(...result.details.results);
+								if (result.details.checkpointDelivered === true || result.details.results.some((childResult) => childResult.checkpointDelivered === true)) {
+									status.checkpointDelivered = true;
+									status.wrapUpRequested = true;
+								}
 								const child = workflowChildResult(key, result);
 								if (result.details.asyncId) {
 									const childJob = deps.state.asyncJobs.get(result.details.asyncId);
@@ -4438,14 +4567,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const summary = `Workflow completed with ${workflow.children.length} child run(s). Return: ${returnPreview}${emitPreview} Trace: ${workflow.trace.length} event(s).`;
 						const workflowUsage = sumResultsUsage(workflowResults);
 						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
-						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary, output: summary, results: workflow.children.map((child) => ({ agent: child.key, ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
+						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary, output: summary, timeoutMs: workflowDuration.timeoutMs, deadlineAt: workflowDuration.deadlineAt, checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowDuration.checkpointAt, checkpointDelivered: status.checkpointDelivered, wrapUpRequested: status.wrapUpRequested, results: workflow.children.map((child) => ({ agent: child.key, ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, durationMs: workflow.trace.findLast((entry) => entry.operation === "run" && entry.key === child.key)?.durationMs, terminal: child.results, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
 						persist();
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: "complete" });
 					} catch (error) {
 						const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
 						const stopped = controller.signal.aborted;
 						status = compactOptional<AsyncStatus>({ ...status, state: stopped ? "stopped" : "failed", stopped: stopped || undefined, error: error instanceof Error ? error.message : String(error), endedAt: Date.now(), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console } });
-						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: false, state: status.state, summary: status.error, error: status.error, stopped: status.stopped, results: partial.children.map((child) => ({ agent: child.key, ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
+						writeAtomicJson(resultPath, { id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: false, state: status.state, summary: status.error, error: status.error, stopped: status.stopped, timedOut: workflowDuration.deadlineAt !== undefined && Date.now() >= workflowDuration.deadlineAt, timeoutMs: workflowDuration.timeoutMs, deadlineAt: workflowDuration.deadlineAt, checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowDuration.checkpointAt, checkpointDelivered: status.checkpointDelivered, wrapUpRequested: status.wrapUpRequested, results: partial.children.map((child) => ({ agent: child.key, ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, durationMs: partial.trace.findLast((entry) => entry.operation === "run" && entry.key === child.key)?.durationMs, terminal: child.results, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, timestamp: Date.now(), durationMs: Date.now() - startedAt });
 						persist();
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, error: status.error });
 					} finally {
@@ -4454,10 +4583,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 				return attachWorkflowMission({
 					content: [{ type: "text", text: formatAsyncStartedMessage(`Async workflow [${workflowRunId}]`, ctx.hasUI === true) }],
-					details: { mode: "workflow", runId: workflowRunId, toolCallId, asyncId: workflowRunId, asyncDir, results: [], chatProgress },
+					details: { mode: "workflow", runId: workflowRunId, toolCallId, asyncId: workflowRunId, asyncDir, results: [], chatProgress, timeoutMs: workflowDuration.timeoutMs, deadlineAt: workflowDuration.deadlineAt, checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowDuration.checkpointAt, checkpointDelivered: false },
 				});
 			}
-			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, checkpointAfterMs: _checkpointAfterMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, ...workflowChildDefaults } = requestParams;
 			const workflowResults: SingleResult[] = [];
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			const sendWorkflowProgress = () => {
@@ -4467,7 +4596,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			try {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
-					timeoutMs: timeout,
+					timeoutMs: workflowDuration.deadlineAt !== undefined ? Math.max(1, workflowDuration.deadlineAt - Date.now()) : undefined,
 					signal,
 					...(workflowState ? { state: workflowState } : {}),
 					onTrace: (trace) => {
@@ -4483,7 +4612,19 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
 						patchMissionObjective(childParams.task);
-						const childRequest = prepareWorkflowLaunchParams(workflowChildDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card" });
+						const checkpointDelivered = workflowResults.some((childResult) => childResult.checkpointDelivered === true);
+						const durationDefaults = {
+							...workflowChildDefaults,
+							...(workflowDuration.deadlineAt !== undefined ? { timeoutMs: Math.max(1, workflowDuration.deadlineAt - Date.now()) } : {}),
+							...(workflowDuration.checkpointAt !== undefined && !checkpointDelivered ? { checkpointAfterMs: Math.max(1, workflowDuration.checkpointAt - Date.now()) } : {}),
+						};
+						const childRequest = prepareWorkflowLaunchParams(durationDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card" });
+						if (workflowDuration.deadlineAt !== undefined) {
+							const remaining = Math.max(1, workflowDuration.deadlineAt - Date.now());
+							childRequest.timeoutMs = Math.min(childRequest.timeoutMs ?? childRequest.maxRuntimeMs ?? remaining, remaining);
+							delete childRequest.maxRuntimeMs;
+						}
+						if (workflowDuration.checkpointAt !== undefined && !checkpointDelivered) childRequest.checkpointAfterMs = Math.min(childRequest.checkpointAfterMs ?? Number.MAX_SAFE_INTEGER, Math.max(1, workflowDuration.checkpointAt - Date.now()));
 						const result = await execute(randomUUID(), childRequest, workflowSignal, undefined, ctx, preserveActiveSession);
 						workflowResults.push(...result.details.results);
 						return workflowChildResult(key, result);
@@ -4497,7 +4638,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (traceLines.length > 0) sections.push(`Call trace:\n${traceLines.join("\n")}`);
 				return attachWorkflowMission({
 					content: [{ type: "text", text: sections.join("\n\n") }],
-					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: workflow.children.flatMap((child) => (child.results ?? []) as SingleResult[]), timeoutMs: workflowDuration.timeoutMs, deadlineAt: workflowDuration.deadlineAt, checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowDuration.checkpointAt, checkpointDelivered: workflowResults.some((child) => child.checkpointDelivered === true), wrapUpRequested: workflowResults.some((child) => child.wrapUpRequested === true), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, chatProgress }),
 				});
 			} catch (error) {
 				const partial = error instanceof WorkflowScriptError ? error.partial : { trace: [], emits: [], console: [], children: [] };
@@ -4510,7 +4651,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				return attachWorkflowMission({
 					content: [{ type: "text", text: sections.join("\n\n") }],
 					isError: true,
-					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console }, chatProgress }),
+					details: compactOptional<Details>({ mode: "workflow", runId: _id, results: partial.children.flatMap((child) => (child.results ?? []) as SingleResult[]), timeoutMs: workflowDuration.timeoutMs, deadlineAt: workflowDuration.deadlineAt, checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowDuration.checkpointAt, checkpointDelivered: workflowResults.some((child) => child.checkpointDelivered === true), wrapUpRequested: workflowResults.some((child) => child.wrapUpRequested === true), timedOut: workflowDuration.deadlineAt !== undefined && Date.now() >= workflowDuration.deadlineAt, totalChildUsage: sumResultsUsage(workflowResults), totalCost: sumResultsCost(workflowResults), usageBudget: usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults)), workflow: { trace: partial.trace, emits: partial.emits, console: partial.console }, chatProgress }),
 				});
 			}
 		}
@@ -4887,8 +5028,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(paramsWithResolvedCwd.steeringRecovery === false
 								? {}
 								: {
-										recover: ({ absoluteDeadlineAt, ...limits }) =>
-											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt })),
+										recover: ({ absoluteDeadlineAt, checkpointAt, checkpointDelivered, ...limits }) =>
+											resumeAsyncRun(omitUndefinedProperties({ params: { ...limits, action: "resume", id: runId, message }, requestCwd, ctx, deps, parentModel: requestParentModel, absoluteDeadlineAt, absoluteCheckpointAt: checkpointAt, checkpointDelivered })),
 									}
 							),
 						}));
@@ -4924,7 +5065,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					...(paramsWithResolvedCwd.steeringRecovery === false
 						? {}
 						: {
-								recover: ({ absoluteDeadlineAt, ...limits }) =>
+								recover: ({ absoluteDeadlineAt, checkpointAt, checkpointDelivered, ...limits }) =>
 									resumeAsyncRun(omitUndefinedProperties({
 										params: { ...limits, action: "resume", id: resolved!.id, message },
 										requestCwd,
@@ -4932,6 +5073,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										deps,
 										parentModel: requestParentModel,
 										absoluteDeadlineAt,
+										absoluteCheckpointAt: checkpointAt,
+										checkpointDelivered,
 									})),
 							}
 					),
@@ -5113,7 +5256,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (canonicalParams.error) return buildRequestedModeError(effectiveParams, canonicalParams.error);
 		effectiveParams = canonicalParams.params!;
 		const modelScope = discovered.modelScope;
-		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
+		try {
+			effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
+		} catch (error) {
+			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
+		}
 		const turnBudget = resolveTurnBudgetConfig(effectiveParams.turnBudget ?? deps.config.turnBudget);
 		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
 		const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents);
@@ -5216,6 +5363,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			effectiveAsync ? undefined : DEFAULT_FOREGROUND_TIMEOUT_MS,
 		);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
+		let durationBudget: ReturnType<typeof resolveDurationBudget>;
+		try {
+			durationBudget = resolveDurationBudget({ checkpointAfterMs: effectiveParams.checkpointAfterMs, timeoutMs: foregroundTimeout.timeoutMs });
+		} catch (error) {
+			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
+		}
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 
 		const artifactConfig: ArtifactConfig = omitUndefinedProperties({
@@ -5223,7 +5376,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			enabled: effectiveParams.artifacts !== false,
 			dir: deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir,
 		});
-		const artifactsDir = getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir);
+		const artifactsDir = getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir, true);
 		if (artifactConfig.dir === "project" && !warnedArtifactPackageDirs.has(effectiveCwd)) {
 			warnedArtifactPackageDirs.add(effectiveCwd);
 			const warning = getProjectArtifactPackagingWarning(effectiveCwd);
@@ -5346,7 +5499,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			controlConfig,
 			intercomBridge,
 			nestedRoute,
-			timeoutMs: foregroundTimeout.timeoutMs,
+			timeoutMs: durationBudget.timeoutMs,
+			checkpointAfterMs: durationBudget.checkpointAfterMs,
+			checkpointAt: durationBudget.checkpointAt,
+			deadlineAt: durationBudget.deadlineAt,
 			turnBudget: turnBudget.turnBudget,
 			toolBudget: runToolBudget.toolBudget,
 			usageBudget: usageBudget.budget,

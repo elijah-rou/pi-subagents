@@ -98,9 +98,12 @@ describe("steering lifecycle ledger", () => {
 		assert.equal(result?.targets[0]?.lateDeliveredAt, 5);
 	});
 
-	it("preserves only remaining deadline, turn, and tool budgets", () => {
+	it("preserves the absolute deadline, pending checkpoint, turn, and tool budgets", () => {
 		assert.deepEqual(remainingSteeringRecoveryLimits({
 			absoluteDeadlineAt: 10_000,
+			checkpointAfterMs: 5_000,
+			checkpointAt: 7_000,
+			checkpointDelivered: false,
 			initialTurnBudget: { maxTurns: 20, graceTurns: 3 },
 			initialToolBudget: { soft: 45, hard: 65, block: ["read"] },
 		}, {
@@ -109,8 +112,23 @@ describe("steering lifecycle ledger", () => {
 		}, 4_000), {
 			timeoutMs: 6_000,
 			absoluteDeadlineAt: 10_000,
+			checkpointAfterMs: 5_000,
+			checkpointAt: 7_000,
+			checkpointDelivered: false,
 			turnBudget: { maxTurns: 1, graceTurns: 1 },
 			toolBudget: { hard: 15, block: ["read"] },
+		});
+	});
+
+	it("does not redeliver a checkpoint already delivered before recovery", () => {
+		assert.deepEqual(remainingSteeringRecoveryLimits({
+			checkpointAfterMs: 5_000,
+			checkpointAt: 7_000,
+			checkpointDelivered: false,
+		}, { wrapUpRequested: true }, 6_000), {
+			checkpointAfterMs: 5_000,
+			checkpointAt: 7_000,
+			checkpointDelivered: true,
 		});
 	});
 

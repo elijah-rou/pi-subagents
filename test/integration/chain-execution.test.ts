@@ -99,6 +99,8 @@ interface ChainResultItem {
 	task?: string;
 	detached?: boolean;
 	timedOut?: boolean;
+	checkpointDelivered?: boolean;
+	wrapUpRequested?: boolean;
 	error?: string;
 	attemptedModels?: string[];
 	skills?: string[];
@@ -216,6 +218,30 @@ describe("chain execution — sequential", { skip: !available ? "pi packages not
 			"utf-8",
 		);
 	}
+
+	it("delivers a run-level duration checkpoint only once across sequential children", async () => {
+		mockPi.onCall({ delay: 150, output: "first wrapped" });
+		mockPi.onCall({ delay: 100, output: "second completed" });
+		const startedAt = Date.now();
+
+		const result = await executeChain!(makeChainParams([
+			{ agent: "first", task: "First" },
+			{ agent: "second", task: "Second" },
+		], [makeAgent("first"), makeAgent("second")], {
+			timeoutMs: 2_000,
+			deadlineAt: startedAt + 2_000,
+			checkpointAfterMs: 50,
+			checkpointAt: startedAt + 50,
+		}));
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.results.length, 2);
+		assert.equal(result.details.results[0]?.checkpointDelivered, true);
+		assert.equal(result.details.results[0]?.wrapUpRequested, true);
+		assert.equal(result.details.results[1]?.checkpointDelivered, undefined);
+		assert.equal(result.details.results[1]?.wrapUpRequested, undefined);
+		assert.equal(mockPi.callCount(), 2);
+	});
 
 	it("pauses foreground chains at approval checkpoints without launching the next child", async () => {
 		mockPi.onCall({ output: "analysis done" });

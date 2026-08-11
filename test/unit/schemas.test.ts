@@ -36,6 +36,12 @@ interface SubagentParamsSchema {
 		};
 		timeoutMs?: {
 			minimum?: number;
+			maximum?: number;
+			description?: string;
+		};
+		checkpointAfterMs?: {
+			minimum?: number;
+			maximum?: number;
 			description?: string;
 		};
 		maxRuntimeMs?: {
@@ -221,11 +227,16 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 	it("documents workflow timeout aliases and turn budget", () => {
 		const timeoutSchema = SubagentParams?.properties?.timeoutMs;
 		const maxRuntimeSchema = SubagentParams?.properties?.maxRuntimeMs;
+		const checkpointSchema = SubagentParams?.properties?.checkpointAfterMs;
 		const turnBudgetSchema = SubagentParams?.properties?.turnBudget;
 		const toolBudgetSchema = SubagentParams?.properties?.toolBudget;
 		assert.ok(timeoutSchema, "timeoutMs schema should exist");
 		assert.ok(maxRuntimeSchema, "maxRuntimeMs schema should exist");
+		assert.ok(checkpointSchema, "checkpointAfterMs schema should exist");
 		assert.equal(timeoutSchema.minimum, 1);
+		assert.equal(timeoutSchema.maximum, 2_147_483_647);
+		assert.equal(checkpointSchema.minimum, 1);
+		assert.equal(checkpointSchema.maximum, 2_147_483_647);
 		assert.equal(maxRuntimeSchema.minimum, 1);
 		assert.match(String(timeoutSchema.description ?? ""), /foreground and async\/background/i);
 		assert.match(String(timeoutSchema.description ?? ""), /async workflows have no default timeout/i);
@@ -367,7 +378,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		assert.ok(serialized.length < 30_000, `expected compact schema under 30k chars, got ${serialized.length}`);
+		assert.ok(serialized.length < 31_000, `expected compact schema under 31k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);

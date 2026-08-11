@@ -9,7 +9,7 @@ import { buildAgentMemoryInjection } from "../agents/agent-memory.ts";
 import { buildModelCandidates, resolveEffectiveSubagentModel, type AvailableModelInfo, type ParentModel } from "../runs/shared/model-fallback.ts";
 import { applyThinkingSuffix, resolvePiLaunchToolPlan, type PiLaunchToolPlan } from "../runs/shared/pi-args.ts";
 import { injectOutputPathSystemPrompt, normalizeSingleOutputOverride, resolveSingleOutputPath } from "../runs/shared/single-output.ts";
-import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
+import { getArtifactPaths, getArtifactsDir, getProspectiveProjectArtifactsDir } from "../shared/artifacts.ts";
 import { resolveEffectiveThinking } from "../shared/model-info.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import { capabilityCeilingAgentRestrictionMessage, intersectSubagentCapabilityCeilings, type ResolvedSubagentCapabilityCeiling, type SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
@@ -21,6 +21,7 @@ import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindi
 import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
+import { formatDefinitelyMissingChildTools, type ChildToolAvailability } from "../runs/shared/tool-availability.ts";
 
 export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 2 as const;
 
@@ -29,6 +30,7 @@ export type SubagentLaunchContractReasonCode =
 	| "ambiguous_agent"
 	| "missing_skill"
 	| "denied_required_tool"
+	| "missing_tool"
 	| "invalid_artifact_dir"
 	| "invalid_cwd"
 	| "unsupported_mode"
@@ -101,6 +103,7 @@ export interface SubagentLaunchContractTools {
 	effectiveAllowlist: string[];
 	explicitAllowlist: boolean;
 	requiredChildTools: string[];
+	availability: ChildToolAvailability;
 	internalTools: string[];
 	mcp: ResolvedMcpDirectToolSelection[];
 	effectiveMcpTools: string[];
@@ -284,8 +287,18 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		diagnostics.push({ code: "denied_required_tool", severity: "error", message });
 		return { ok: false, code: "denied_required_tool", message, diagnostics };
 	}
+	if (toolPlan.availability.definiteMissing.length > 0) {
+		const message = formatDefinitelyMissingChildTools(agent.name, toolPlan.availability.definiteMissing);
+		diagnostics.push({ code: "missing_tool", severity: "error", message });
+		return { ok: false, code: "missing_tool", message, diagnostics };
+	}
 	const artifactsEnabled = input.artifacts !== false;
-	const artifactsDir = artifactsEnabled ? getArtifactsDir(input.parentSessionFile ?? null, effectiveCwd, input.artifactDir ?? "project") : undefined;
+	const artifactPreference = input.artifactDir ?? "project";
+	const artifactsDir = artifactsEnabled
+		? artifactPreference === "project"
+			? getProspectiveProjectArtifactsDir(effectiveCwd)
+			: getArtifactsDir(input.parentSessionFile ?? null, effectiveCwd, artifactPreference)
+		: undefined;
 	const artifactPaths = artifactsDir ? getArtifactPaths(artifactsDir, runId, agent.name, 0) : undefined;
 	const outputPath = resolveSingleOutputPath(behavior.output, effectiveCwd, effectiveCwd, artifactsDir ? path.join(artifactsDir, "outputs", runId) : undefined);
 	const sessionRoot = input.sessionDir ? path.resolve(input.sessionDir) : input.sessionRoot ? path.join(path.resolve(input.sessionRoot), runId) : undefined;
@@ -347,6 +360,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			effectiveAllowlist: toolPlan.effectiveToolAllowlist,
 			explicitAllowlist: toolPlan.explicitToolAllowlist,
 			requiredChildTools: toolPlan.requiredChildTools,
+			availability: toolPlan.availability,
 			internalTools: toolPlan.internalTools,
 			mcp: toolPlan.effectiveMcpSelections,
 			effectiveMcpTools: toolPlan.effectiveMcpTools,

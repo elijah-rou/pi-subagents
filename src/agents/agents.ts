@@ -130,6 +130,8 @@ export interface AgentConfig {
 	defaultContext?: AgentDefaultContext;
 	defaultAsync?: boolean;
 	defaultTimeoutMs?: number;
+	maxTimeoutMs?: number;
+	defaultCheckpointAfterMs?: number;
 	defaultTurnBudget?: TurnBudgetConfig;
 	defaultAcceptance?: AcceptanceInput;
 	acceptanceRole?: AcceptanceRole;
@@ -1553,6 +1555,28 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			}
 			defaultTimeoutMs = parsed;
 		}
+		let maxTimeoutMs: number | undefined;
+		if (frontmatter.maxTimeoutMs !== undefined) {
+			const parsed = Number(frontmatter.maxTimeoutMs);
+			if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+				throw new Error(`Agent '${localName}' has invalid maxTimeoutMs frontmatter; expected a positive safe integer.`);
+			}
+			if (defaultTimeoutMs !== undefined && defaultTimeoutMs > parsed) {
+				throw new Error(`Agent '${localName}' timeoutMs must not exceed maxTimeoutMs.`);
+			}
+			maxTimeoutMs = parsed;
+		}
+		let defaultCheckpointAfterMs: number | undefined;
+		if (frontmatter.checkpointAfterMs !== undefined) {
+			const parsed = Number(frontmatter.checkpointAfterMs);
+			if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+				throw new Error(`Agent '${localName}' has invalid checkpointAfterMs frontmatter; expected a positive safe integer.`);
+			}
+			if (defaultTimeoutMs !== undefined && parsed >= defaultTimeoutMs) {
+				throw new Error(`Agent '${localName}' checkpointAfterMs must be less than timeoutMs.`);
+			}
+			defaultCheckpointAfterMs = parsed;
+		}
 		let defaultTurnBudget: TurnBudgetConfig | undefined;
 		if (frontmatter.turnBudget !== undefined && frontmatter.turnBudget.trim()) {
 			const parsed = JSON.parse(frontmatter.turnBudget) as unknown;
@@ -1619,6 +1643,8 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
 			...(defaultContext !== undefined ? { defaultContext } : {}),
 			...(defaultAsync !== undefined ? { defaultAsync } : {}),
 			...(defaultTimeoutMs !== undefined ? { defaultTimeoutMs } : {}),
+			...(maxTimeoutMs !== undefined ? { maxTimeoutMs } : {}),
+			...(defaultCheckpointAfterMs !== undefined ? { defaultCheckpointAfterMs } : {}),
 			...(defaultTurnBudget !== undefined ? { defaultTurnBudget } : {}),
 			...(defaultAcceptance !== undefined ? { defaultAcceptance } : {}),
 			...(acceptanceRole !== undefined ? { acceptanceRole } : {}),

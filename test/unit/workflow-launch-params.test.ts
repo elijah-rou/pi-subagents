@@ -48,7 +48,7 @@ describe("workflow launch params", () => {
 	it("preserves execution limits when routing retained resume items", () => {
 		assert.deepEqual(
 			prepareWorkflowLaunchParams(
-				{ turnBudget: { maxTurns: 8 }, toolBudget: { hard: 12, block: ["read"] } },
+				{ checkpointAfterMs: 2_500, turnBudget: { maxTurns: 8 }, toolBudget: { hard: 12, block: ["read"] } },
 				{
 					resume: " retained-run ",
 					task: "Continue carefully",
@@ -68,9 +68,14 @@ describe("workflow launch params", () => {
 				workflowKey: "continue",
 				mission: false,
 				timeoutMs: 5_000,
+				checkpointAfterMs: 2_500,
 				turnBudget: { maxTurns: 3, graceTurns: 1 },
 				toolBudget: { soft: 2, hard: 4, block: "*" },
 			},
+		);
+		assert.throws(
+			() => prepareWorkflowLaunchParams({}, { resume: "retained-run", task: "Continue", timeoutMs: 4_000, maxRuntimeMs: 5_000 }, "workflow-run", "continue"),
+			/aliases/,
 		);
 	});
 });
