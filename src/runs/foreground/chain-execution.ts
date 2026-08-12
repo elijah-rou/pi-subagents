@@ -122,6 +122,7 @@ interface ParallelChainRunInput {
 	stepIndex: number;
 	availableModels: ModelInfo[];
 	modelScope?: ModelScopeConfig;
+	defaultModel?: string;
 	chainDir: string;
 	prev: string;
 	originalTask: string;
@@ -297,7 +298,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 	const effectiveModels = input.step.parallel.map((task) => {
 		const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
 		return resolveEffectiveSubagentModel(
-			task.model,
+			task.model ?? input.defaultModel,
 			taskAgentConfig?.model,
 			input.ctx.model,
 			input.availableModels,
@@ -522,6 +523,7 @@ interface ChainExecutionParams {
 	thinkingOverrideForTask?: (agentName: string, idx?: number, modelOverride?: string) => AgentConfig["thinking"] | undefined;
 	contextForAgent?: (agentName: string) => ContextMode;
 	modelScope?: ModelScopeConfig;
+	model?: string;
 	artifactsDir: string;
 	artifactConfig: ArtifactConfig;
 	includeProgress?: boolean;
@@ -851,6 +853,7 @@ ${step.message}` : ""}` }],
 					stepIndex,
 					availableModels,
 					modelScope,
+					defaultModel: params.model,
 					chainDir,
 					prev,
 					originalTask,
@@ -1119,6 +1122,7 @@ ${step.message}` : ""}` }],
 				stepIndex,
 				availableModels,
 				modelScope,
+				defaultModel: params.model,
 				chainDir,
 				prev,
 				originalTask,
@@ -1337,7 +1341,7 @@ ${step.message}` : ""}` }],
 			const cleanTask = stepTask;
 			stepTask = prefix + stepTask + suffix;
 
-			const explicitStepModel = tuiOverride?.model ?? seqStep.model;
+			const explicitStepModel = tuiOverride?.model ?? seqStep.model ?? params.model;
 			const effectiveModel = resolveEffectiveSubagentModel(
 				explicitStepModel,
 				agentConfig.model,

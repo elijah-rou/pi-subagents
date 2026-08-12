@@ -22,6 +22,7 @@ import { DIRS, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
 import { formatDefinitelyMissingChildTools, type ChildToolAvailability } from "../runs/shared/tool-availability.ts";
+import { resolveSubagentChildProfile } from "../runs/shared/child-profile-resolver.ts";
 
 export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 2 as const;
 
@@ -48,6 +49,7 @@ export interface SubagentLaunchContractInput {
 	task?: string;
 	agentScope?: AgentScope;
 	context?: "fresh" | "fork";
+	parallel?: boolean;
 	model?: string;
 	thinking?: string | false;
 	parentModel?: ParentModel;
@@ -61,6 +63,7 @@ export interface SubagentLaunchContractInput {
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
 	parentSessionFile?: string | null;
+	parentSessionId?: string;
 	sessionRoot?: string;
 	sessionDir?: string;
 	runId?: string;
@@ -264,8 +267,25 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 
 	const availableModels = normalizeAvailableModels(input.availableModels);
 	const preferredProvider = input.preferredProvider ?? input.parentModel?.provider;
-	const primaryModel = resolveEffectiveSubagentModel(input.model, agent.model, input.parentModel, availableModels, preferredProvider, { scope: discovered.modelScope });
-	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : agent.thinking;
+	let childProfileModel: string | undefined;
+	let childProfileThinking: string | undefined;
+	if (input.model === undefined && input.thinking === undefined) {
+		const childProfile = await resolveSubagentChildProfile(input.parentSessionId, {
+			agent: agent.name,
+			task: input.task ?? "",
+			cwd: effectiveCwd,
+			parallel: input.parallel === true,
+			...(input.context ? { context: input.context } : {}),
+			...(input.parentModel ? { parentModel: input.parentModel } : {}),
+		});
+		for (const warning of childProfile.warnings) diagnostics.push({ code: "snapshot_warning", severity: "warning", message: warning });
+		if (childProfile.selection) {
+			childProfileModel = childProfile.selection.model;
+			childProfileThinking = childProfile.selection.thinking;
+		}
+	}
+	const primaryModel = resolveEffectiveSubagentModel(input.model ?? childProfileModel, agent.model, input.parentModel, availableModels, preferredProvider, { scope: discovered.modelScope });
+	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : childProfileThinking ?? agent.thinking;
 	const model = applyThinkingSuffix(primaryModel, effectiveThinkingConfig, input.thinking !== undefined);
 	const modelCandidates = buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, { scope: discovered.modelScope })
 		.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, input.thinking !== undefined) ?? candidate);

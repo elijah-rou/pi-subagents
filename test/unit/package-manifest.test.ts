@@ -57,6 +57,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./background-work": "./src/api/background-work.ts",
 		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
+		"./child-profile-resolver": "./src/api/child-profile-resolver.ts",
 		"./delegation": "./src/api/delegation.ts",
 		"./preflight": "./src/api/preflight.ts",
 		"./control-channel": "./src/api/control-channel.ts",
@@ -73,6 +74,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	const capability = await import("pi-subagents/capability-ceiling");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
+	const childProfiles = await import("pi-subagents/child-profile-resolver");
+	assert.equal(childProfiles.SUBAGENT_CHILD_PROFILE_RESOLVER_VERSION, 1);
+	assert.equal(childProfiles.SUBAGENT_CHILD_PROFILE_RESOLVER_REGISTRY_KEY, "pi-subagents.child-profile-resolver.v1");
 	const delegation = await import("pi-subagents/delegation");
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
 	const preflight = await import("pi-subagents/preflight");

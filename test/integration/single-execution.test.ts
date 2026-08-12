@@ -51,6 +51,7 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
 import { getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
+import { registerSubagentChildProfileResolver } from "../../src/api/child-profile-resolver.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -364,6 +365,66 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const output = getFinalOutput(result.messages);
 		assert.equal(output, "Hello from mock agent");
+	});
+
+	it("applies a parent child profile with workflow topology before foreground execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "routed child" });
+		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);
+		let parallel = false;
+		const parentSessionFile = path.join(tempDir, "parent-session.jsonl");
+		const handle = registerSubagentChildProfileResolver({
+			sessionId: parentSessionFile,
+			source: "profile-router",
+			resolve: async (request) => { parallel = request.parallel; return { profile: "standard", model: "test/routed", thinking: "high", confidence: 90 } },
+		});
+		try {
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionFile = () => parentSessionFile;
+			const result = await executor.execute(
+				"child-profile",
+				{ workflowScript: "return runs.all([{ key: 'main', agent: 'worker', task: 'Inspect the target and report findings without edits' }])", async: false },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.isError, undefined, JSON.stringify(result.content));
+			assert.equal(parallel, true);
+			const args = readCallArgs();
+			assert.ok(args.includes("test/routed:high"), `expected routed model in ${JSON.stringify(args)}`);
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("propagates explicit top-level model and thinking defaults to task and chain children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "task child" });
+		mockPi.onCall({ output: "chain child" });
+		mockPi.onCall({ output: "async task child" });
+		mockPi.onCall({ output: "async chain child" });
+		const asyncJobs: SubagentState["asyncJobs"] = new Map();
+		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })], {}, false, undefined, true, asyncJobs);
+		const signal = new AbortController().signal;
+		const ctx = makeMinimalCtx(tempDir);
+		const taskResult = await executor.execute("task-defaults", { tasks: [{ agent: "worker", task: "Inspect without edits" }], model: "test/explicit", thinking: "high" }, signal, undefined, ctx);
+		assert.equal(taskResult.isError, undefined, JSON.stringify(taskResult.content));
+		let args = readCallArgs();
+		assert.ok(args.includes("test/explicit:high"), `expected task model and thinking in ${JSON.stringify(args)}`);
+		const chainResult = await executor.execute("chain-defaults", { chain: [{ agent: "worker", task: "Inspect without edits" }], model: "test/explicit", thinking: "high" }, signal, undefined, ctx);
+		assert.equal(chainResult.isError, undefined, JSON.stringify(chainResult.content));
+		args = readCallArgs();
+		assert.ok(args.includes("test/explicit:high"), `expected chain model and thinking in ${JSON.stringify(args)}`);
+
+		const asyncTask = await executor.execute("async-task-defaults", { tasks: [{ agent: "worker", task: "Inspect without edits" }], model: "test/explicit", thinking: "high", async: true }, signal, undefined, ctx);
+		assert.equal(asyncTask.isError, undefined, JSON.stringify(asyncTask.content));
+		for (let attempt = 0; attempt < 100 && mockPi.callCount() < 3; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		args = readCallArgs();
+		assert.ok(args.includes("test/explicit:high"), `expected async task model and thinking in ${JSON.stringify(args)}`);
+
+		const asyncChain = await executor.execute("async-chain-defaults", { chain: [{ parallel: [{ agent: "worker", task: "Inspect without edits" }] }], model: "test/explicit", thinking: "high", async: true }, signal, undefined, ctx);
+		assert.equal(asyncChain.isError, undefined, JSON.stringify(asyncChain.content));
+		for (let attempt = 0; attempt < 100 && mockPi.callCount() < 4; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		args = readCallArgs();
+		assert.ok(args.includes("test/explicit:high"), `expected async chain model and thinking in ${JSON.stringify(args)}`);
 	});
 
 	it("rejects action='single' with execution fields", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

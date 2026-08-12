@@ -65,6 +65,7 @@ import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightS
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { applySubagentChildProfiles } from "../shared/child-profile-routing.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, prepareManagedSingleOutput, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -230,6 +231,8 @@ export interface SubagentParamsLike {
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
+	/** Internal workflow topology metadata; not part of the public schema. */
+	workflowParallel?: boolean;
 	suppressRoutineResultIntercom?: boolean;
 	/** Internal durable-run compatibility fields. Public callers must use workflowScript. */
 	chain?: ChainStep[];
@@ -2043,6 +2046,19 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): A
 	);
 }
 
+function applyTopLevelModelDefaults(params: SubagentParamsLike): SubagentParamsLike {
+	if (params.model === undefined) return params;
+	const withDefault = <T extends { model?: string }>(item: T): T => item.model === undefined ? { ...item, model: params.model } : item;
+	const tasks = params.tasks?.map(withDefault);
+	const chain = params.chain?.map((step): ChainStep => {
+		if (isParallelStep(step)) return { ...step, parallel: step.parallel.map(withDefault) };
+		if (isDynamicParallelStep(step)) return { ...step, parallel: withDefault(step.parallel) };
+		if ("checkpoint" in step) return step;
+		return withDefault(step);
+	});
+	return { ...params, ...(tasks ? { tasks } : {}), ...(chain ? { chain } : {}) };
+}
+
 function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: AgentConfig[]): SubagentParamsLike {
 	const names = new Set<string>();
 	if (params.agent) names.add(params.agent);
@@ -2744,6 +2760,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		agents,
 		ctx: chainCtx,
 		modelScope: data.modelScope,
+		model: params.model,
 		intercomEvents: deps.pi.events,
 		signal,
 		runId,
@@ -3335,7 +3352,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		...(task.model !== undefined ? { model: task.model } : {}),
 	}));
 	const modelOverrides: (string | undefined)[] = tasks.map((_, i) =>
-		resolveEffectiveSubagentModel(behaviorOverrides[i]?.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope }),
+		resolveEffectiveSubagentModel(behaviorOverrides[i]?.model ?? params.model, agentConfigs[i]?.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope }),
 	);
 
 	if (params.clarify === true && ctx.hasUI) {
@@ -4116,7 +4133,7 @@ export function prepareWorkflowLaunchParams(
 	childParams: Record<string, unknown>,
 	parentWorkflowRunId: string,
 	workflowKey: string,
-	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean } = {},
+	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; parallel?: boolean } = {},
 ): SubagentParamsLike {
 	if (typeof childParams.resume === "string") {
 		if (childParams.gate !== undefined || workflowDefaults.gate !== undefined) {
@@ -4150,6 +4167,7 @@ export function prepareWorkflowLaunchParams(
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
 		workflowKey,
+		...(options.parallel ? { workflowParallel: true } : {}),
 		...(options.suppressRoutineResultIntercom ? { suppressRoutineResultIntercom: true } : {}),
 	} as SubagentParamsLike;
 	const normalizedGate = normalizeGateParams(launchParams);
@@ -4502,7 +4520,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								persist();
 								appendWorkflowEvent({ type: "subagent.workflow.emit", value: emits.at(-1) });
 							},
-							launch: async (key, childParams, workflowSignal) => {
+							launch: async (key, childParams, workflowSignal, metadata) => {
 								if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 								const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 								if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
@@ -4513,7 +4531,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 									...(workflowDuration.deadlineAt !== undefined ? { timeoutMs: Math.max(1, workflowDuration.deadlineAt - Date.now()) } : {}),
 									...(checkpointPending ? { checkpointAfterMs: Math.max(1, workflowDuration.checkpointAt! - Date.now()) } : {}),
 								};
-								const childRequest = prepareWorkflowLaunchParams(durationDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions });
+								const childRequest = prepareWorkflowLaunchParams(durationDefaults, childParams, workflowRunId, key, { missionDetached: detachWorkflowChildMissions, parallel: metadata.parallel });
 								if (workflowDuration.deadlineAt !== undefined) {
 									const remaining = Math.max(1, workflowDuration.deadlineAt - Date.now());
 									childRequest.timeoutMs = Math.min(childRequest.timeoutMs ?? childRequest.maxRuntimeMs ?? remaining, remaining);
@@ -4607,7 +4625,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						liveWorkflow = { ...liveWorkflow, emits };
 						sendWorkflowProgress();
 					},
-					launch: async (key, childParams, workflowSignal) => {
+					launch: async (key, childParams, workflowSignal, metadata) => {
 						if (workflowUsageBudget.budget && childParams.async === true) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, "workflow usageBudget does not support async runs.run launches."));
 						const budgetState = usageBudgetState(workflowUsageBudget.budget, sumResultsCost(workflowResults));
 						if (budgetState?.exhausted) return workflowChildResult(key, buildRequestedModeError(childParams as SubagentParamsLike, usageBudgetExceededMessage(budgetState)));
@@ -4618,7 +4636,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							...(workflowDuration.deadlineAt !== undefined ? { timeoutMs: Math.max(1, workflowDuration.deadlineAt - Date.now()) } : {}),
 							...(workflowDuration.checkpointAt !== undefined && !checkpointDelivered ? { checkpointAfterMs: Math.max(1, workflowDuration.checkpointAt - Date.now()) } : {}),
 						};
-						const childRequest = prepareWorkflowLaunchParams(durationDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card" });
+						const childRequest = prepareWorkflowLaunchParams(durationDefaults, childParams, _id, key, { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", parallel: metadata.parallel });
 						if (workflowDuration.deadlineAt !== undefined) {
 							const remaining = Math.max(1, workflowDuration.deadlineAt - Date.now());
 							childRequest.timeoutMs = Math.min(childRequest.timeoutMs ?? childRequest.maxRuntimeMs ?? remaining, remaining);
@@ -5258,6 +5276,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const modelScope = discovered.modelScope;
 		try {
 			effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
+			effectiveParams = await applySubagentChildProfiles(effectiveParams, {
+				sessionId: requestSessionId,
+				cwd: effectiveCwd,
+				...(requestParentModel ? { parentModel: requestParentModel } : {}),
+				directParallel: effectiveParams.workflowParallel === true,
+				tasksParallel: effectiveParams.workflowParentRunId === undefined || effectiveParams.workflowParallel === true,
+				disabled: delegatedThinkingOverride !== undefined,
+				onWarning: (warning) => console.warn(`[pi-subagents] ${warning}`),
+			});
+			effectiveParams = applyTopLevelModelDefaults(effectiveParams);
 		} catch (error) {
 			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
 		}
@@ -5409,12 +5437,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			prepareForkThinking(agentName, idx, modelOverride);
 			return forkSessionFileForIndex(idx);
 		};
+		const runThinkingOverride = effectiveParams.thinking ?? delegatedThinkingOverride;
 		const forkThinkingOverrideForTask: ForkThinkingOverrideForTask = (agentName, idx = 0, modelOverride) => {
-			if (!shouldForkAgent(contextPolicy, agentName)) return delegatedThinkingOverride;
+			if (!shouldForkAgent(contextPolicy, agentName)) return runThinkingOverride;
 			prepareForkThinking(agentName, idx, modelOverride);
 			const override = forkThinkingOverrideForIndex(idx);
 			if (override === "off") forkThinkingDowngrades.set(idx, agentName);
-			return override ?? delegatedThinkingOverride;
+			return override ?? runThinkingOverride;
 		};
 		const childSessionFileForTask: ForkSessionFileForTask = (agentName, idx, modelOverride) =>
 			forkSessionFileForTask(agentName, idx, modelOverride) ?? path.join(sessionDirForIndex(idx), "session.jsonl");

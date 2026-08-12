@@ -73,7 +73,7 @@ const runs = Object.freeze({
       calls.push({ key, params });
     }
     for (const { key, params } of calls) runFingerprints.set(key, stableRunJson(params));
-    return Promise.all(calls.map(({ key, params }) => hostCall("run", { key, params, collectFailure: true })));
+    return Promise.all(calls.map(({ key, params }) => hostCall("run", { key, params, collectFailure: true, parallel: true })));
   },
   status(keyOrRunId) { return hostCall("status", { keyOrRunId }); },
   ref: formatRef,
@@ -235,7 +235,7 @@ export interface RunWorkflowScriptOptions {
 	script: string;
 	timeoutMs?: number;
 	signal?: AbortSignal;
-	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
+	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, metadata: { parallel: boolean }) => Promise<WorkflowScriptChildResult>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	state?: {
 		get: (key: string) => unknown | Promise<unknown>;
@@ -501,6 +501,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				return respond(Promise.reject(new Error(`runs.run('${key}') resume requires a non-empty task follow-up.`)));
 			}
 			const collectFailure = message.args.collectFailure === true;
+			const parallel = message.args.parallel === true;
 			const deliver = (promise: Promise<WorkflowScriptChildResult>) => collectFailure
 				? promise
 				: promise.then((result) => {
@@ -520,7 +521,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 			childOrder.push(key);
 			trace.push({ operation: "run", key, state: "started", ...workflowStringMetadata(params) });
 			traceChanged();
-			const promise = Promise.resolve().then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal)).then((result) => {
+			const promise = Promise.resolve().then(() => options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { parallel })).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				children.set(key, normalized);
 				trace.push({ operation: "run", key, state: normalized.ok ? "completed" : "failed", durationMs: Date.now() - startedAt, ...workflowStringMetadata(params), ...(normalized.runId ? { runId: normalized.runId } : {}), ...(!normalized.ok ? { error: normalized.error ?? normalized.output } : {}) });

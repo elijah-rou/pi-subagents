@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { registerSubagentCapabilityCeiling, resolveSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
+import { registerSubagentChildProfileResolver } from "../../src/api/child-profile-resolver.ts";
 import { resolveSubagentLaunchContract, SUBAGENT_LAUNCH_CONTRACT_VERSION } from "../../src/api/preflight.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { computeMcpServerHash } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
@@ -31,7 +32,7 @@ function writeJson(filePath: string, value: unknown): void {
 
 function writeMcpFixture(): void {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
-	assert.equal(typeof agentDir, "string");
+	if (typeof agentDir !== "string") throw new Error("PI_CODING_AGENT_DIR is required for this fixture");
 	const definition = { command: "github-mcp" };
 	writeJson(path.join(agentDir, "mcp.json"), { mcpServers: { github: definition } });
 	writeJson(path.join(agentDir, "mcp-cache.json"), {
@@ -69,6 +70,47 @@ describe("public launch contract preflight", () => {
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		fs.rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("applies a parent child-profile resolver while preserving explicit model overrides", async () => {
+		const cwd = path.join(tempDir, "repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeAgent(path.join(cwd, ".pi", "agents", "worker.md"), `---
+name: worker
+description: Project worker
+tools: read
+model: test/static
+thinking: low
+---
+Project prompt.
+`);
+		const sessionId = "profile-session";
+		let calls = 0;
+		let parallel = false;
+		const handle = registerSubagentChildProfileResolver({
+			sessionId,
+			source: "profile-router",
+			resolve: async (request) => { calls += 1; parallel = request.parallel; return { profile: "standard", model: "test/routed", thinking: "high", confidence: 89 } },
+		});
+		try {
+			const availableModels = [
+				{ provider: "test", id: "static", fullId: "test/static" },
+				{ provider: "test", id: "routed", fullId: "test/routed" },
+				{ provider: "test", id: "explicit", fullId: "test/explicit" },
+			];
+			const routed = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Implement", parentSessionId: sessionId, parallel: true, availableModels });
+			assert.equal(routed.ok, true);
+			if (!routed.ok) return;
+			assert.equal(routed.contract.model, "test/routed:high");
+			assert.equal(parallel, true);
+			const explicit = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Implement", parentSessionId: sessionId, model: "test/explicit", availableModels });
+			assert.equal(explicit.ok, true);
+			if (!explicit.ok) return;
+			assert.equal(explicit.contract.model, "test/explicit:low");
+			assert.equal(calls, 1);
+		} finally {
+			handle.dispose();
+		}
 	});
 
 	it("resolves an ordinary single-agent contract without creating launch directories", async () => {

@@ -165,6 +165,24 @@ Constraints:
 
 Unversioned prompt-template payloads with `requestId`, `agent`, `task`, `context`, `model`, and `cwd` are rejected as legacy direct delegation. New integrations must use the structured owned-leaf request above. `pi-subagents/delegation` is the canonical contract for extension integrations.
 
+## Child profile resolvers
+
+Parent extensions can register one session-scoped child model/effort resolver through `pi-subagents/child-profile-resolver`. New launches without an explicit model or thinking override pass their canonical agent, bounded task, cwd, context mode, parent model, and serial/parallel topology to the resolver. A valid selection supplies `profile`, `model`, optional `thinking`, and integer `confidence`.
+
+Explicit launch overrides remain authoritative. Resolver failure, malformed output, low-confidence `null`, missing registration, retained resume, and child-process launches preserve static agent/default model behavior. The resolver controls no identity, tools, permissions, context, or workflow topology.
+
+```ts
+import { registerSubagentChildProfileResolver } from "pi-subagents/child-profile-resolver";
+
+const handle = registerSubagentChildProfileResolver({
+  sessionId: ctx.sessionManager.getSessionId(),
+  source: "profile-router",
+  resolve: async ({ agent, task, parallel }) => classifyChild(agent, task, parallel),
+});
+// handle.update(...) atomically replaces this resolver.
+// handle.dispose() removes only this registration.
+```
+
 ## Capability ceilings
 
 Parent extensions can enforce an out-of-band, session-scoped capability ceiling without adding a model-visible field to `subagent`:
