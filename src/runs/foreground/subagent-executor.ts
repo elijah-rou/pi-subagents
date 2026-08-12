@@ -64,6 +64,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { resolveDurationBudget } from "../shared/duration-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { applySubagentChildProfiles } from "../shared/child-profile-routing.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
@@ -318,6 +319,8 @@ export interface SubagentParamsLike {
 	/** Internal workflow ownership metadata; not part of the public schema. */
 	workflowParentRunId?: string;
 	workflowKey?: string;
+	/** Internal workflow topology metadata; not part of the public schema. */
+	workflowParallel?: boolean;
 	lane?: import("../../shared/types.ts").WorkflowLaneMetadata;
 	/** Set by the scheduler so this run's completion can name the schedule that produced it. */
 	scheduleOrigin?: ScheduleOrigin;
@@ -2662,6 +2665,19 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): A
 	);
 }
 
+function applyTopLevelModelDefaults(params: SubagentParamsLike): SubagentParamsLike {
+	if (params.model === undefined) return params;
+	const withDefault = <T extends { model?: string }>(item: T): T => item.model === undefined ? { ...item, model: params.model } : item;
+	const tasks = params.tasks?.map(withDefault);
+	const chain = params.chain?.map((step): ChainStep => {
+		if (isParallelStep(step)) return { ...step, parallel: step.parallel.map(withDefault) };
+		if (isDynamicParallelStep(step)) return { ...step, parallel: withDefault(step.parallel) };
+		if ("checkpoint" in step) return step;
+		return withDefault(step);
+	});
+	return { ...params, ...(tasks ? { tasks } : {}), ...(chain ? { chain } : {}) };
+}
+
 function applySingleAgentLaunchDefaults(params: SubagentParamsLike, agents: AgentConfig[]): SubagentParamsLike {
 	if ((params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || !params.agent) return params;
 	const agent = agents.find((candidate) => candidate.name === params.agent);
@@ -3489,7 +3505,7 @@ function prepareWorkflowChildLaunchParams(input: {
 	workflowAgentScope?: unknown;
 	outputOverride?: string;
 	outputClaimPath?: string;
-	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; capabilityCeiling?: ResolvedSubagentCapabilityCeiling };
+	options?: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; parallel?: boolean };
 }): SubagentParamsLike {
 	let childParams = input.childParams;
 	const usesDefaultOutput = input.childParams.output === undefined && input.childParams.resume === undefined;
@@ -4354,7 +4370,7 @@ export function prepareWorkflowLaunchParams(
 	childParams: Record<string, unknown>,
 	parentWorkflowRunId: string,
 	workflowKey: string,
-	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; outputClaimPath?: string } = {},
+	options: { missionDetached?: boolean; suppressRoutineResultIntercom?: boolean; awaitDetachedChild?: boolean; runFanoutBudget?: RunFanoutBudgetDescriptor; parentDeadlineAt?: number; externalAsyncRequired?: boolean; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; outputClaimPath?: string; parallel?: boolean } = {},
 ): SubagentParamsLike {
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(workflowDefaults.capabilityCeiling, options.capabilityCeiling);
 	const lane = normalizeWorkflowLaneMetadata(Object.hasOwn(childParams, "lane") ? childParams.lane : workflowDefaults.lane, `workflow child '${workflowKey}'.lane`);
@@ -4419,6 +4435,7 @@ export function prepareWorkflowLaunchParams(
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,
 		workflowKey,
+		...(options.parallel ? { workflowParallel: true } : {}),
 		...(options.outputClaimPath ? { workflowOutputClaimPath: options.outputClaimPath } : {}),
 		...(options.awaitDetachedChild ? { workflowAwaitDetached: true } : {}),
 		...(lane ? { lane } : {}),
@@ -5173,7 +5190,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								let preparedChildParams: SubagentParamsLike | undefined;
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), outputClaimPath: childOutputClaimPaths.get(key), options: { missionDetached: detachWorkflowChildMissions, awaitDetachedChild: true, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: parentCwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), outputClaimPath: childOutputClaimPaths.get(key), options: { missionDetached: detachWorkflowChildMissions, awaitDetachedChild: true, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling, parallel: admission.batch } }), runFanoutAdmitted: admission.admitted },
 										missionBinding,
 										deps.asyncByDefault,
 									);
@@ -5403,7 +5420,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						let preparedChildParams: SubagentParamsLike | undefined;
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
-								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), outputClaimPath: childOutputClaimPaths.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling } }), runFanoutAdmitted: admission.admitted },
+								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: discoverWorkflowAgents, agents: workflowAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), outputClaimPath: childOutputClaimPaths.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt, capabilityCeiling: workflowCapabilityCeiling, parallel: admission.batch } }), runFanoutAdmitted: admission.admitted },
 								missionBinding,
 								deps.asyncByDefault,
 							);
@@ -6205,6 +6222,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		effectiveParams = canonicalParams.params!;
 		const modelScope = discovered.modelScope;
 		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
+		try {
+			effectiveParams = await applySubagentChildProfiles(effectiveParams, {
+				sessionId: requestSessionId,
+				cwd: effectiveCwd,
+				...(requestParentModel ? { parentModel: requestParentModel } : {}),
+				directParallel: effectiveParams.workflowParallel === true,
+				tasksParallel: effectiveParams.workflowParentRunId === undefined || effectiveParams.workflowParallel === true,
+				disabled: delegatedThinkingOverride !== undefined,
+				onWarning: (warning) => console.warn(`[pi-subagents] ${warning}`),
+			});
+			effectiveParams = applyTopLevelModelDefaults(effectiveParams);
+		} catch (error) {
+			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
+		}
 		// An agent-level defaultContext is a preference, unlike an explicit request.
 		// Prefer fork only when the parent session is persisted and has a current leaf;
 		// otherwise use fresh immediately instead of launching a guaranteed-to-fail fork.
@@ -6425,12 +6456,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent);
 			await prepareForkSessionForIndex(idx);
 		};
+		const runThinkingOverride = effectiveParams.thinking ?? delegatedThinkingOverride;
 		const forkThinkingOverrideForTask: ForkThinkingOverrideForTask = (agentName, idx = 0, modelOverride, modelOverrideFromParent) => {
-			if (!shouldForkAgent(contextPolicy, agentName)) return delegatedThinkingOverride;
+			if (!shouldForkAgent(contextPolicy, agentName)) return runThinkingOverride;
 			prepareForkThinking(agentName, idx, modelOverride, modelOverrideFromParent);
 			const override = forkThinkingOverrideForIndex(idx);
 			if (override === "off") forkThinkingDowngrades.set(idx, agentName);
-			return override ?? delegatedThinkingOverride;
+			return override ?? runThinkingOverride;
 		};
 		const childSessionFileForTask: ForkSessionFileForTask = (agentName, idx, modelOverride, modelOverrideFromParent) =>
 			forkSessionFileForTask(agentName, idx, modelOverride, modelOverrideFromParent) ?? path.join(sessionDirForIndex(idx), "session.jsonl");

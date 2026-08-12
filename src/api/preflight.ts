@@ -25,6 +25,7 @@ import { processTerminalCandidatePath, processTerminalPath } from "../runs/backg
 import { resultFilePath } from "../runs/background/result-files.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../runs/shared/extension-bindings.ts";
+import { resolveSubagentChildProfile } from "../runs/shared/child-profile-resolver.ts";
 
 export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 2 as const;
 
@@ -54,6 +55,8 @@ export interface SubagentLaunchContractInput {
 	task?: string;
 	agentScope?: AgentScope;
 	context?: "fresh" | "fork";
+	/** Whether this launch belongs to a parallel workflow/fanout group. */
+	parallel?: boolean;
 	model?: string;
 	fast?: boolean;
 	thinking?: string | false;
@@ -70,6 +73,8 @@ export interface SubagentLaunchContractInput {
 	artifacts?: boolean;
 	artifactDir?: ArtifactDirPreference;
 	parentSessionFile?: string | null;
+	/** Parent session whose registered child-profile resolver may route this new launch. */
+	parentSessionId?: string;
 	/** Current parent leaf required before an implicit `defaultContext: fork` stays `fork`. */
 	parentLeafId?: string | null;
 	sessionRoot?: string;
@@ -154,6 +159,8 @@ export interface SubagentLaunchContract {
 	modelCandidates: string[];
 	thinking?: string;
 	thinkingCeiling?: ThinkingLevel;
+	/** Resolver provenance when this launch was dynamically routed. */
+	childProfile?: { profile: string; source: string; confidence: number };
 	systemPromptMode: AgentConfig["systemPromptMode"];
 	inheritProjectContext: boolean;
 	inheritGlobalContext: boolean;
@@ -317,24 +324,39 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const availableModels = normalizeAvailableModels(input.availableModels);
 	const preferredProvider = agent.modelProvider ?? input.preferredProvider ?? input.parentModel?.provider;
 	const modelScopes = resolveModelScopesForAgent(discovered.modelScope, agent.name, input.parentModel);
+	let resolvedProfile: Awaited<ReturnType<typeof resolveSubagentChildProfile>>["selection"];
+	if (!externalRunner && input.model === undefined && input.thinking === undefined) {
+		const result = await resolveSubagentChildProfile(input.parentSessionId, {
+			agent: agent.name,
+			task: input.task ?? "",
+			cwd: effectiveCwd,
+			parallel: input.parallel === true,
+			...(input.context === "fresh" || input.context === "fork" ? { context: input.context } : {}),
+			...(input.parentModel ? { parentModel: input.parentModel } : {}),
+		});
+		for (const warning of result.warnings) diagnostics.push({ code: "snapshot_warning", severity: "warning", message: warning });
+		resolvedProfile = result.selection;
+	}
+	const selectedModel = input.model ?? resolvedProfile?.model;
 	const primaryModel = externalRunner
 		? undefined
-		: resolveEffectiveSubagentModel(input.model, agent.model, input.parentModel, availableModels, preferredProvider, { scope: modelScopes });
-	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : agent.thinking;
+		: resolveEffectiveSubagentModel(selectedModel, agent.model, input.parentModel, availableModels, preferredProvider, { scope: modelScopes });
+	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : resolvedProfile?.thinking ?? agent.thinking;
 	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
 		discovered.maxThinking,
 		input.thinkingCeiling,
 		input.inheritedThinkingCeiling,
 		decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
 	);
-	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinkingConfig, input.thinking !== undefined);
+	const replaceModelThinking = input.thinking !== undefined || resolvedProfile?.thinking !== undefined;
+	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinkingConfig, replaceModelThinking);
 	const modelCandidates = externalRunner
 		? []
 		: buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, {
 			scope: modelScopes,
-			primaryModelFromParent: inheritsParentModel(input.model, agent.model, input.parentModel),
+			primaryModelFromParent: inheritsParentModel(selectedModel, agent.model, input.parentModel),
 		})
-			.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, input.thinking !== undefined) ?? candidate);
+			.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, replaceModelThinking) ?? candidate);
 	if (!externalRunner) {
 		try {
 			assertThinkingWithinCeiling({ model, configThinking: effectiveThinkingConfig, ceiling: thinkingCeiling, agent: agent.name, runId });
@@ -418,6 +440,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		modelCandidates,
 		...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
 		...(thinkingCeiling ? { thinkingCeiling } : {}),
+		...(resolvedProfile ? { childProfile: { profile: resolvedProfile.profile, source: resolvedProfile.source, confidence: resolvedProfile.confidence } } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritGlobalContext: agent.inheritGlobalContext,

@@ -326,7 +326,7 @@ describe("workflow launch params", () => {
 				},
 				"workflow-run",
 				"continue",
-				{ missionDetached: true, runFanoutBudget: { version: 1, rootRunId: "root-run", directory: "/tmp/fanout", limit: 64, parentPath: "parent" } },
+				{ missionDetached: true, parallel: true, runFanoutBudget: { version: 1, rootRunId: "root-run", directory: "/tmp/fanout", limit: 64, parentPath: "parent" } },
 			),
 			{
 				action: "resume",

@@ -185,6 +185,8 @@ Builtin `worker` and `delegate` use strict tool allowlists and do not inherit am
 
 Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. The table records recommended tier routing, not shipped hard defaults; explicit run, user, or project settings still win. Keep the parent/orchestrator on the ordinary strong default model unless parent/user policy says otherwise. Override builtin defaults before copying full agent files when a small tweak is enough.
 
+A cooperating parent extension may register the versioned `pi-subagents/child-profile-resolver` seam. New launches without explicit model or thinking settings may then resolve model/effort from the child role, bounded task, and serial/parallel topology. Precedence is explicit per-run settings, then resolver selection, then provider/project/static defaults. Resolver selections still obey model availability/scope/exclusions and thinking ceilings; failures and retained resumes keep the static or persisted contract. Resolution cannot change identity, tools, permissions, cwd/context, authority, or workflow topology.
+
 Set `subagents.defaultThinking` to apply a shared thinking level to builtin, package, user, and project agents whose frontmatter leaves `thinking` unset. Project settings win over user settings; explicit frontmatter (including `thinking: false`), `agentOverrides.<name>.thinking`, and per-run overrides remain more specific. This setting affects child agents only and does not change the parent session's default thinking level.
 
 ```json

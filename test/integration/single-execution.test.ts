@@ -68,6 +68,7 @@ import { createResultWatcher } from "../../src/runs/background/result-watcher.ts
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
+import { registerSubagentChildProfileResolver } from "../../src/api/child-profile-resolver.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -409,6 +410,38 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const output = getFinalOutput(result.messages);
 		assert.equal(output, "Hello from mock agent");
+	});
+
+	it("routes a parallel workflow child through the parent child-profile resolver", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "routed child" });
+		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);
+		const sessionId = `profile-session-${Date.now()}`;
+		let observedParallel = false;
+		const handle = registerSubagentChildProfileResolver({
+			sessionId,
+			source: "profile-router",
+			resolve: async (request) => {
+				observedParallel = request.parallel;
+				return { profile: "standard", model: "test/routed", thinking: "high", confidence: 90 };
+			},
+		});
+		try {
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => sessionId;
+			const result = await executor.execute(
+				"child-profile",
+				{ workflowScript: "return runs.all([{ key: 'main', agent: 'worker', task: 'Inspect and report without edits' }])", async: false },
+				new AbortController().signal,
+				undefined,
+				ctx,
+			);
+			assert.equal(result.isError, undefined, JSON.stringify(result.content));
+			assert.equal(observedParallel, true);
+			const args = readCallArgs();
+			assert.ok(args.includes("test/routed:high"), `expected routed model in ${JSON.stringify(args)}`);
+		} finally {
+			handle.dispose();
+		}
 	});
 
 	it("derives a child session name and passes it to the child env", async () => {
