@@ -94,7 +94,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, acceptanceReportFromStructuredOutput, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, structuredOutputHasAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
@@ -1629,7 +1629,11 @@ async function runSyncCompletionInner(
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 		agentContract: options.agentContract,
 	});
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) });
+	const structuredAcceptanceReport = structuredOutputHasAcceptanceReport(options.structuredOutput?.schema);
+	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, {
+		reportOptional: isAgentContractV1(options.agentContract),
+		structuredReport: structuredAcceptanceReport,
+	});
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	options.onEffectivePrompt?.(taskWithAcceptance);
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
@@ -1939,6 +1943,7 @@ async function runSyncCompletionInner(
 			result.acceptance = await evaluateAcceptance({
 				acceptance: effectiveAcceptance,
 				output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
+				...(structuredAcceptanceReport ? { report: acceptanceReportFromStructuredOutput(result.structuredOutput) } : {}),
 				fileOutput: childWrittenOutput !== undefined && options.outputPath
 					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
 					: undefined,

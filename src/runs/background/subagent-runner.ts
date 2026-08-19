@@ -126,7 +126,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, acceptanceReportFromStructuredOutput, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, structuredOutputHasAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
@@ -1278,8 +1278,12 @@ async function runSingleStepInner(
 	let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
 	if (ctx.outputs) task = resolveOutputReferences(task, ctx.outputs);
 	const taskForCompletionGuard = task;
+	const structuredAcceptanceReport = structuredOutputHasAcceptanceReport(effectiveStructuredOutput?.schema);
 	if (step.effectiveAcceptance) {
-		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract) });
+		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, {
+			reportOptional: isAgentContractV1(step.agentContract),
+			structuredReport: structuredAcceptanceReport,
+		});
 		if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
 	}
 	const sessionEnabled = Boolean(step.sessionFile) || ctx.sessionEnabled;
@@ -1824,6 +1828,7 @@ async function runSingleStepInner(
 		? await evaluateAcceptance(omitUndefinedProperties({
 			acceptance: step.effectiveAcceptance,
 			output: outputForAcceptance,
+			...(structuredAcceptanceReport ? { report: acceptanceReportFromStructuredOutput((finalResult as (RunPiStreamingResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput) } : {}),
 			fileOutput: childWrittenOutput !== undefined && step.outputPath
 				? { content: childWrittenOutput, path: step.outputPath, authoritative: step.outputMode === "file-only" }
 				: undefined,

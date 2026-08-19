@@ -21,6 +21,7 @@ import type {
 	ResolvedAcceptanceGate,
 	SingleResult,
 	SubagentRunMode,
+	JsonSchemaObject,
 } from "../../shared/types.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";
@@ -404,14 +405,29 @@ function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): bo
 	return acceptance.criteria.length > 0 || acceptance.evidence.length > 0;
 }
 
-export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean } = {}): string {
+export function structuredOutputHasAcceptanceReport(schema: JsonSchemaObject | undefined): boolean {
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) return false;
+	const properties = (schema as { properties?: unknown }).properties;
+	return Boolean(properties && typeof properties === "object" && !Array.isArray(properties) && Object.hasOwn(properties, "acceptanceReport"));
+}
+
+export function acceptanceReportFromStructuredOutput(output: unknown): unknown {
+	if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+	return Object.hasOwn(output, "acceptanceReport")
+		? (output as Record<string, unknown>).acceptanceReport
+		: null;
+}
+
+export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean; structuredReport?: boolean } = {}): string {
 	if (acceptance.level === "none") return "";
 	if (options.reportOptional && !acceptanceRequiresChildReport(acceptance)) return "";
 	const lines = [
 		"",
 		"## Acceptance Contract",
 		`Acceptance level: ${acceptance.level}`,
-		"Completion is not accepted from prose alone. End with a structured acceptance report.",
+		options.structuredReport
+			? "Completion is not accepted from the role result alone. Populate the top-level `acceptanceReport` field in the structured output. Do not emit a fenced acceptance report."
+			: "Completion is not accepted from prose alone. End with a structured acceptance report.",
 		"",
 		"Criteria:",
 		...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`) : ["- Return the requested result."]),
@@ -431,13 +447,15 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 	}
 	lines.push(
 		"",
-		"Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
+		options.structuredReport
+			? "Set the structured output's top-level `acceptanceReport` field to an object in this shape:"
+			: "Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
 		"Empty-string entries (`[\"\"]`) are ignored; use `[]` when nothing applies.",
 		"`criteriaSatisfied[].status` must be exactly one of: satisfied, not-satisfied, not-applicable.",
 		"`commandsRun[].result` must be exactly one of: passed, failed, not-run.",
 		"`manualNotes` and `notes` are optional strings; an empty string means no note and does not satisfy `manual-notes` evidence.",
-		"```acceptance-report",
+		...(options.structuredReport ? [] : ["```acceptance-report"]),
 		JSON.stringify({
 			criteriaSatisfied: acceptance.criteria
 				.filter((criterion) => criterion.severity !== "recommended")
@@ -452,7 +470,7 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 			reviewFindings: ["blocker: file.ts:12 - issue found, or no blockers"],
 			manualNotes: "anything else the parent should know",
 		}, null, 2),
-		"```",
+		...(options.structuredReport ? [] : ["```"]),
 	);
 	return lines.join("\n");
 }
@@ -1227,7 +1245,7 @@ export async function evaluateAcceptance(input: {
 	 * the assistant output when `authoritative` (outputMode "file-only").
 	 */
 	fileOutput?: { content: string; path: string; authoritative?: boolean };
-	report?: AcceptanceReport;
+	report?: unknown;
 	reviewResult?: AcceptanceReviewResult;
 	signal?: AbortSignal;
 	abortMessage?: string;
@@ -1249,7 +1267,7 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	const parsed = input.report
+	const parsed = input.report !== undefined
 		? (() => {
 			const validation = validateAcceptanceReport(input.report);
 			return validation.report

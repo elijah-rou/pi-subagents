@@ -8,6 +8,28 @@ const boundedText = (maxLength = 1_000) => Type.String({ minLength: 1, maxLength
 const stringList = (maxItems: number, maxLength = 1_000) => Type.Array(boundedText(maxLength), { maxItems });
 const pathText = Type.String({ minLength: 1, maxLength: 4_096 });
 
+const acceptanceReport = Type.Object({
+	criteriaSatisfied: Type.Optional(Type.Array(Type.Object({
+		id: Type.Optional(boundedText(256)),
+		status: Type.Union([Type.Literal("satisfied"), Type.Literal("not-satisfied"), Type.Literal("not-applicable")]),
+		evidence: boundedText(4_000),
+	}, { additionalProperties: false }), { maxItems: 64 })),
+	changedFiles: Type.Optional(stringList(64, 4_096)),
+	testsAddedOrUpdated: Type.Optional(stringList(64, 4_096)),
+	commandsRun: Type.Optional(Type.Array(Type.Object({
+		command: boundedText(2_000),
+		result: Type.Union([Type.Literal("passed"), Type.Literal("failed"), Type.Literal("not-run")]),
+		summary: boundedText(4_000),
+	}, { additionalProperties: false }), { maxItems: 32 })),
+	validationOutput: Type.Optional(stringList(64, 4_000)),
+	residualRisks: Type.Optional(stringList(32, 4_000)),
+	noStagedFiles: Type.Optional(Type.Boolean()),
+	diffSummary: Type.Optional(boundedText(4_000)),
+	reviewFindings: Type.Optional(stringList(64, 4_000)),
+	manualNotes: Type.Optional(Type.String({ maxLength: 4_000 })),
+	notes: Type.Optional(Type.String({ maxLength: 4_000 })),
+}, { additionalProperties: false });
+
 function envelope(id: string, data: TSchema): JsonSchemaObject {
 	return Type.Object({
 		contract: Type.Object({ id: Type.Literal(id), version: Type.Literal(1) }, { additionalProperties: false }),
@@ -16,6 +38,7 @@ function envelope(id: string, data: TSchema): JsonSchemaObject {
 		evidence: stringList(32),
 		risks: stringList(16),
 		data,
+		acceptanceReport: Type.Optional(acceptanceReport),
 	}, { additionalProperties: false }) as unknown as JsonSchemaObject;
 }
 

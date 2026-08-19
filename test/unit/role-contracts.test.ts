@@ -15,10 +15,20 @@ describe("role result contracts", () => {
 		assert.equal(roleResultContractId(agent("custom", "user")), "pi-subagents/generic");
 	});
 
-	it("accepts a bounded worker result and rejects extra fields", () => {
+	it("accepts a strictly bounded optional acceptance report and rejects extra fields", () => {
 		const validator = Compile(roleResultSchema(agent("worker", "builtin")));
-		const value = { contract: { id: "pi-subagents/worker", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { changedFiles: [], validation: [], decisionsNeeded: [] } };
+		const value = {
+			contract: { id: "pi-subagents/worker", version: 1 },
+			outcome: "completed",
+			summary: "done",
+			evidence: [],
+			risks: [],
+			data: { changedFiles: [], validation: [], decisionsNeeded: [] },
+			acceptanceReport: { criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "verified" }], residualRisks: [] },
+		};
 		assert.equal(validator.Check(value), true);
 		assert.equal(validator.Check({ ...value, extra: true }), false);
+		assert.equal(validator.Check({ ...value, acceptanceReport: { residualRisks: ["x".repeat(4_001)] } }), false);
+		assert.equal(validator.Check({ ...value, acceptanceReport: { unsupported: true } }), false);
 	});
 });

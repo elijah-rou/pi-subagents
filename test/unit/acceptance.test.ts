@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	acceptanceFailureMessage,
+	acceptanceReportFromStructuredOutput,
 	aggregateAcceptanceReport,
 	evaluateAcceptance,
 	formatAcceptancePrompt,
@@ -14,6 +15,7 @@ import {
 	parseAcceptanceReport,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
+	structuredOutputHasAcceptanceReport,
 	validateAcceptanceInput,
 	validateExecutionAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
@@ -230,6 +232,32 @@ describe("acceptance gates", () => {
 
 		assert.equal(ledger.status, "rejected");
 		assert.match(acceptanceFailureMessage(ledger) ?? "", /Structured acceptance report not found/);
+	});
+
+	it("uses the structured acceptanceReport field when the output schema owns it", async () => {
+		const resolved = resolveEffectiveAcceptance({ agentName: "reviewer", task: "Review the fix", explicit: "attested" });
+		const schema = { type: "object", properties: { acceptanceReport: { type: "object" } } };
+		assert.equal(structuredOutputHasAcceptanceReport(schema), true);
+		assert.equal(structuredOutputHasAcceptanceReport({ type: "object", properties: { result: { type: "string" } } }), false);
+
+		const prompt = formatAcceptancePrompt(resolved, { structuredReport: true });
+		assert.match(prompt, /top-level `acceptanceReport` field/);
+		assert.doesNotMatch(prompt, /```acceptance-report/);
+
+		const valid = await evaluateAcceptance({
+			acceptance: resolved,
+			output: "",
+			cwd: process.cwd(),
+			report: acceptanceReportFromStructuredOutput({ acceptanceReport: { criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "reviewed" }], reviewFindings: [], residualRisks: [] } }),
+		});
+		assert.equal(valid.status, "attested");
+		assert.equal(valid.childReportParseError, undefined);
+
+		for (const structuredOutput of [{}, { acceptanceReport: { residualRisks: [42] } }]) {
+			const malformed = await evaluateAcceptance({ acceptance: resolved, output: "", cwd: process.cwd(), report: acceptanceReportFromStructuredOutput(structuredOutput) });
+			assert.equal(malformed.status, "rejected");
+			assert.match(malformed.childReportParseError ?? "", /Invalid acceptance-report/);
+		}
 	});
 
 	it("formats a standardized child prompt section", () => {

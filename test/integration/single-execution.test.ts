@@ -29,6 +29,7 @@ import {
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
+import { roleResultSchema } from "../../src/contracts/role-contracts.ts";
 import {
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
@@ -3581,6 +3582,54 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.details.results[0]?.resultContract, { id: "pi-subagents/generic", version: 1, source: "role" });
 	});
 
+	it("accepts a foreground direct worker role report from structured output", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptanceReport = {
+			criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+			changedFiles: [],
+			testsAddedOrUpdated: [],
+			commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+			residualRisks: [],
+			noStagedFiles: true,
+		};
+		const value = { contract: { id: "pi-subagents/worker", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { changedFiles: [], validation: [], decisionsNeeded: [] }, acceptanceReport };
+		mockPi.onCall({ stdoutRaw: [
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+			{ type: "tool_execution_end", toolName: "structured_output" },
+		].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
+		const worker = makeAgent("worker", { source: "builtin", completionGuard: false });
+		const executor = makeExecutor([worker], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role" });
+
+		const result = await executor.executePublic("direct-worker-role", { agent: "worker", task: "Implement typed data", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "direct worker role failed");
+		assert.equal(result.details.results[0]?.acceptance?.status, "checked");
+		assert.deepEqual(result.details.results[0]?.acceptance?.childReport, acceptanceReport);
+		assert.match(readCallArgs().join(" "), /top-level `acceptanceReport` field/);
+		assert.doesNotMatch(readCallArgs().join(" "), /```acceptance-report/);
+	});
+
+	it("rejects missing and semantically malformed structured role acceptance reports", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const worker = makeAgent("worker", { source: "builtin", completionGuard: false });
+		const executor = makeExecutor([worker], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role" });
+		for (const [name, acceptanceReport] of [["missing", undefined], ["malformed", {}]] as const) {
+			const value = {
+				contract: { id: "pi-subagents/worker", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [],
+				data: { changedFiles: [], validation: [], decisionsNeeded: [] },
+				...(acceptanceReport !== undefined ? { acceptanceReport } : {}),
+			};
+			mockPi.onCall({ stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
+			const result = await executor.executePublic(`direct-worker-role-${name}`, { agent: "worker", task: "Implement typed data", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details.results[0]?.acceptance?.status, "rejected");
+			assert.match(result.details.results[0]?.acceptance?.childReportParseError ?? "", /Invalid acceptance-report/);
+		}
+	});
+
 	it("resolves relative direct cwd before shadow and result-contract discovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const nested = path.join(tempDir, "nested");
 		fs.mkdirSync(nested);
@@ -3599,8 +3648,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.results[0]?.resultContract?.id, "pi-subagents/generic");
 	});
 
-	it("persists direct role and routing provenance for async workflow children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const value = { contract: { id: "pi-subagents/generic", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { deliverables: [], decisionsNeeded: [], nextSteps: [] } };
+	it("persists direct worker role acceptance and routing provenance for genuine async execution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptanceReport = {
+			criteriaSatisfied: [
+				{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
+				{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
+			],
+			changedFiles: [],
+			testsAddedOrUpdated: [],
+			commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+			residualRisks: [],
+			noStagedFiles: true,
+		};
+		const value = { contract: { id: "pi-subagents/worker", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { changedFiles: [], validation: [], decisionsNeeded: [] }, acceptanceReport };
 		mockPi.onCall({ stdoutRaw: [
 			{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
 			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
@@ -3608,11 +3668,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
 		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", reasoningEffort: "none", reasoningSummary: "auto", textVerbosity: "low", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed", thinking: "high" } } };
 		const classify = async () => ({ profile: "standard", description: "standard", model: "test/routed", thinking: "high" as const, confidence: 90, source: "child-router" as const });
-		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role", childRouting: routing }, classify as never);
-		const result = await executor.executePublic("async-direct-role", { agent: "echo", task: "typed async", async: true, mission: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const executor = makeExecutor([makeAgent("worker", { source: "builtin", completionGuard: false })], {}, true, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role", childRouting: routing }, classify as never);
+		const result = await executor.executePublic("async-direct-role", { agent: "worker", task: "Implement typed async", async: true, mission: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(result.isError, undefined);
 		const statusPath = path.join(result.details.asyncDir!, "status.json");
-		let status: { state?: string; steps?: Array<{ childRouting?: { profile?: string }; resultContract?: { id?: string } }> } = {};
+		let status: { state?: string; steps?: Array<{ childRouting?: { profile?: string }; resultContract?: { id?: string }; acceptance?: { childReport?: unknown; childReportParseError?: string } }> } = {};
 		for (let attempt = 0; attempt < 100; attempt++) {
 			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
 			if (status.state === "complete" || status.state === "failed") break;
@@ -3620,7 +3680,44 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(status.state, "complete");
 		assert.equal(status.steps?.[0]?.childRouting?.profile, "standard");
-		assert.equal(status.steps?.[0]?.resultContract?.id, "pi-subagents/generic");
+		assert.equal(status.steps?.[0]?.resultContract?.id, "pi-subagents/worker");
+		const workflowResult = (status as unknown as { workflow?: { value?: { results?: Array<{ acceptance?: { childReport?: unknown; childReportParseError?: string } }> } } }).workflow?.value?.results?.[0];
+		assert.deepEqual(workflowResult?.acceptance?.childReport, acceptanceReport);
+		assert.equal(workflowResult?.acceptance?.childReportParseError, undefined);
+	});
+
+	it("evaluates a package role acceptance report in a genuine async worker run", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptanceReport = {
+			criteriaSatisfied: [
+				{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
+				{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
+			],
+			changedFiles: [], testsAddedOrUpdated: [],
+			commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+			residualRisks: [], noStagedFiles: true,
+		};
+		const value = { contract: { id: "pi-subagents/worker", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { changedFiles: [], validation: [], decisionsNeeded: [] }, acceptanceReport };
+		mockPi.onCall({ stdoutRaw: [
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+			{ type: "tool_execution_end", toolName: "structured_output" },
+		].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
+		const worker = makeAgent("worker", { source: "builtin", completionGuard: false });
+		const executor = makeExecutor([worker]);
+		const started = await executor.execute("genuine-async-worker-role", {
+			agent: "worker", task: "Implement typed async", async: true, outputSchema: roleResultSchema(worker),
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(started.isError, undefined);
+		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
+		let persisted: { state?: string; results?: Array<{ acceptance?: { childReport?: unknown; childReportParseError?: string } }> } = {};
+		for (let attempt = 0; attempt < 150; attempt++) {
+			if (fs.existsSync(resultPath)) persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+			if (["complete", "failed"].includes(persisted.state ?? "")) break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(persisted.state, "complete");
+		assert.deepEqual(persisted.results?.[0]?.acceptance?.childReport, acceptanceReport);
+		assert.equal(persisted.results?.[0]?.acceptance?.childReportParseError, undefined);
 	});
 
 	it("persists immutable routing provenance for genuine async single runs and recovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -3643,7 +3740,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.steps?.[0]?.childRouting?.profile, "standard");
 		const recovery = JSON.parse(fs.readFileSync(path.join(asyncDir, "recovery-descriptor.json"), "utf-8"));
 		assert.equal(recovery.childRouting.profile, "standard");
-		const result = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${started.details.asyncId}.json`), "utf-8"));
+		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
+		for (let attempt = 0; attempt < 100 && !fs.existsSync(resultPath); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(result.results[0].childRouting.profile, "standard");
 	});
 
