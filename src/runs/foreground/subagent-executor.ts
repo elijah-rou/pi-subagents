@@ -25,7 +25,7 @@ import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { normalizePublicSubagentExecution } from "../../extension/public-execution.ts";
-import { roleResultSchema, type DirectResultContract } from "../../contracts/role-contracts.ts";
+import { roleResultContractId, roleResultSchema, type DirectResultContract } from "../../contracts/role-contracts.ts";
 import { classifyChildProfile, type ChildRoutingConfig, type ChildRoutingSelection } from "../../routing/child-routing.ts";
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
@@ -347,6 +347,7 @@ export interface SubagentParamsLike {
 	/** Internal workflow topology and resolved child-routing provenance. */
 	workflowParallel?: boolean;
 	childRouting?: ChildRoutingSelection;
+	resolvedResultContract?: { id: string; version: 1; source: "role" };
 	agentScope?: unknown;
 	chainDir?: string;
 	acceptance?: AcceptanceInput;
@@ -3398,6 +3399,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (params.childRouting) {
 		r.childRouting = { profile: params.childRouting.profile, confidence: params.childRouting.confidence, source: params.childRouting.source, model: params.childRouting.model, ...(params.childRouting.thinking ? { thinking: params.childRouting.thinking } : {}) };
 	}
+	if (params.resolvedResultContract) r.resultContract = params.resolvedResultContract;
 	if (!r.detached) {
 		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 	}
@@ -3606,6 +3608,7 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 	}
 	const structured = result.details.results.map((child) => child.structuredOutput).filter((value) => value !== undefined);
 	const resolvedAgents = [...new Set(result.details.results.map((child) => child.agent).filter((agent): agent is string => Boolean(agent)))];
+	const soleChild = result.details.results.length === 1 ? result.details.results[0] : undefined;
 	return {
 		key,
 		ok,
@@ -3615,6 +3618,8 @@ function workflowChildResult(key: string, result: AgentToolResult<Details>): Wor
 		...(!ok ? { error: receiptOutput || output || "Child run failed." } : {}),
 		...(detached ? { detached: true } : {}),
 		...(structured.length === 1 ? { structuredOutput: structured[0] } : structured.length > 1 ? { structuredOutput: structured } : {}),
+		...(soleChild?.childRouting ? { childRouting: soleChild.childRouting } : {}),
+		...(soleChild?.resultContract ? { resultContract: soleChild.resultContract } : {}),
 		artifactPaths: [...artifactPaths],
 		results: result.details.results,
 	};
@@ -4324,6 +4329,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								if (step) {
 									step.async = Boolean(result.details.asyncId || result.details.asyncDir);
 									if (child.runId) step.runId = child.runId;
+									if (child.childRouting) step.childRouting = child.childRouting;
+									if (child.resultContract) step.resultContract = child.resultContract;
 								}
 								if (result.details.asyncDir && missionBinding) writeMissionAsyncBinding(result.details.asyncDir, missionBinding);
 								const childStatus = missionWorkflowChildStatus(result);
@@ -4352,7 +4359,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						const resultSummary = appendWorkflowOutputWarning(summary, outputWarning);
 						const workflowUsage = sumResultsUsage(workflowResults);
 						status = { ...status, state: "complete", endedAt: Date.now(), workflow: { value: workflow.value, trace: workflow.trace, emits: workflow.emits, console: workflow.console }, totalTokens: { input: workflowUsage.input, output: workflowUsage.output, total: workflowUsage.input + workflowUsage.output }, totalCost: sumResultsCost(workflowResults) };
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: true, state: "complete", summary: resultSummary, output: resultSummary, results: workflow.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.childRouting ? { childRouting: child.childRouting } : {}), ...(child.resultContract ? { resultContract: child.resultContract } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}) });
@@ -4384,7 +4391,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 							: status.error ?? (pauseForDetached ? "Workflow paused." : "Workflow failed.");
 						const outputWarning = writeWorkflowAggregateOutput(workflowAggregateOutputPath, terminalSummary, producedChildOutputPaths);
 						const resultSummary = appendWorkflowOutputWarning(terminalSummary, outputWarning);
-						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
+						if (!writeWorkflowResult({ id: workflowRunId, runId: workflowRunId, toolCallId, agent: "workflow", mode: "workflow", success: status.state === "complete", state: status.state, summary: resultSummary, error: status.state === "complete" ? undefined : status.error, stopped: status.stopped, activityState: status.activityState, results: partial.children.map((child) => ({ workflowKey: child.key, ...(child.agent ? { agent: child.agent } : {}), ...(child.runId ? { runId: child.runId } : {}), output: child.output, outputState: child.output.trim() || child.structuredOutput !== undefined ? "present" : "absent", structuredOutput: child.structuredOutput, success: child.ok, ...(child.detached && status.state !== "complete" ? { detached: true } : {}), ...(child.childRouting ? { childRouting: child.childRouting } : {}), ...(child.resultContract ? { resultContract: child.resultContract } : {}), ...(child.artifactPaths[0] ? { artifactPaths: { outputPath: child.artifactPaths[0] } } : {}) })), workflow: status.workflow, asyncDir, cwd: workflowCwd, sessionId: currentSessionId, completionOwnerId, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), timestamp: Date.now(), durationMs: Date.now() - startedAt })) return;
 						persist();
 						persistClosed = true;
 						appendWorkflowEvent({ type: "subagent.workflow.completed", state: status.state, ...(status.error ? { error: status.error } : {}), ...(status.activityState ? { activityState: status.activityState } : {}) });
@@ -5728,7 +5735,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const normalized = normalizePublicSubagentExecution(params, {
 			asyncByDefault: deps.asyncByDefault,
 			directResultDefault: directDiscovery?.directResultDefault,
-			...(directDiscovery ? { roleOutputSchema: roleResultSchema(directAgent) } : {}),
+			...(directDiscovery ? { roleOutputSchema: roleResultSchema(directAgent), roleContractId: roleResultContractId(directAgent) } : {}),
 		});
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });

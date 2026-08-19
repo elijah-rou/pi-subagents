@@ -3575,6 +3575,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await executor.executePublic("direct-role", { agent: "echo", task: "Return typed data", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "direct role failed");
 		assert.deepEqual(result.details.results[0]?.structuredOutput, value);
+		assert.deepEqual(result.details.results[0]?.resultContract, { id: "pi-subagents/generic", version: 1, source: "role" });
+	});
+
+	it("persists direct role and routing provenance for async workflow children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const value = { contract: { id: "pi-subagents/generic", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { deliverables: [], decisionsNeeded: [], nextSteps: [] } };
+		mockPi.onCall({ stdoutRaw: [
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+			{ type: "tool_execution_end", toolName: "structured_output" },
+		].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", reasoningEffort: "none", reasoningSummary: "auto", textVerbosity: "low", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed", thinking: "high" } } };
+		const classify = async () => ({ profile: "standard", description: "standard", model: "test/routed", thinking: "high" as const, confidence: 90, source: "child-router" as const });
+		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role", childRouting: routing }, classify as never);
+		const result = await executor.executePublic("async-direct-role", { agent: "echo", task: "typed async", async: true, mission: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined);
+		const statusPath = path.join(result.details.asyncDir!, "status.json");
+		let status: { state?: string; steps?: Array<{ childRouting?: { profile?: string }; resultContract?: { id?: string } }> } = {};
+		for (let attempt = 0; attempt < 100; attempt++) {
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
+			if (status.state === "complete" || status.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status.state, "complete");
+		assert.equal(status.steps?.[0]?.childRouting?.profile, "standard");
+		assert.equal(status.steps?.[0]?.resultContract?.id, "pi-subagents/generic");
 	});
 
 	it("rejects role contracts for external runners before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

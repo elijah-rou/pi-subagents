@@ -937,6 +937,8 @@ export interface SingleResult {
 	thinking?: string;
 	/** Bounded parent-side provenance for automatic child compute selection. */
 	childRouting?: ChildRoutingMetadata;
+	/** Package-owned direct-call result contract selected before workflow normalization. */
+	resultContract?: { id: string; version: 1; source: "role" };
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];
@@ -1476,6 +1478,8 @@ export interface AsyncStatus {
 		skills?: string[];
 		model?: string;
 		thinking?: string;
+		childRouting?: ChildRoutingMetadata;
+		resultContract?: { id: string; version: 1; source: "role" };
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		totalCost?: CostSummary;

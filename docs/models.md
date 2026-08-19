@@ -203,7 +203,7 @@ The fork can route only child compute at launch time with `subagents.childRoutin
     "childRouting": {
       "enabled": true,
       "threshold": 75,
-      "classifier": { "model": "openai-codex/gpt-5.6-terra", "thinking": "off", "timeoutMs": 5000 },
+      "classifier": { "provider": "openai-codex", "model": "gpt-5.6-terra", "reasoningEffort": "none", "reasoningSummary": "auto", "textVerbosity": "low", "serviceTier": "default", "timeoutMs": 5000 },
       "profiles": {
         "fast": { "description": "Bounded serial delegation on the critical path.", "model": "openai-codex/gpt-5.6-terra", "thinking": "high" },
         "standard": { "description": "Outcome-critical implementation or synthesis.", "model": "openai-codex/gpt-5.6-sol", "thinking": "medium" },
@@ -214,4 +214,4 @@ The fork can route only child compute at launch time with `subagents.childRoutin
 }
 ```
 
-Routing selects only model and thinking. The parent still owns agent role, topology, context, worktree, acceptance, tools, and permissions. `runs.run` is classified as serial and `runs.all` as parallel.
+Routing selects only model and thinking. The parent still owns agent role, topology, context, worktree, acceptance, tools, and permissions. `runs.run` is classified as serial and `runs.all` as parallel. Classifier `reasoningEffort` accepts `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`; `reasoningSummary`, `textVerbosity`, `serviceTier`, and `timeoutMs` are forwarded explicitly. The legacy `thinking` classifier field remains accepted as an alias when it does not conflict with `reasoningEffort`.

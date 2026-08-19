@@ -277,6 +277,8 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.skills ? { skills: step.skills } : {}),
 			...(step.model ? { model: step.model } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),
+			...(step.childRouting ? { childRouting: step.childRouting } : {}),
+			...(step.resultContract ? { resultContract: step.resultContract } : {}),
 			...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.transcriptPath ? { transcriptPath: step.transcriptPath } : {}),

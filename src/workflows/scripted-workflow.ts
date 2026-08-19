@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Worker } from "node:worker_threads";
+import type { ChildRoutingMetadata } from "../shared/types.ts";
 
 const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const requireFromPackage = createRequire(import.meta.url);
@@ -538,6 +539,8 @@ export interface WorkflowScriptChildResult {
 	error?: string;
 	detached?: boolean;
 	structuredOutput?: unknown;
+	childRouting?: ChildRoutingMetadata;
+	resultContract?: { id: string; version: 1; source: "role" };
 	artifactPaths: string[];
 	results?: unknown[];
 }

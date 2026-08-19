@@ -72,6 +72,15 @@ describe("public launch contract preflight", () => {
 		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
+	it("reports host-required model prediction when task-aware routing is enabled", async () => {
+		const cwd = path.join(tempDir, "repo");
+		fs.mkdirSync(cwd, { recursive: true });
+		writeJson(path.join(process.env.PI_CODING_AGENT_DIR!, "settings.json"), { subagents: { childRouting: { enabled: true, classifier: { model: "test/classifier", thinking: "off" }, profiles: { fast: { description: "fast", model: "test/fast", thinking: "low" } } } } });
+		const result = await resolveSubagentLaunchContract({ agent: "scout", cwd, task: "Inspect" });
+		assert.equal(result.ok, true);
+		assert.ok(result.contract.diagnostics.some((diagnostic) => diagnostic.severity === "host-required" && diagnostic.message.includes("Task-aware child routing")));
+	});
+
 	it("resolves an ordinary single-agent contract without creating launch directories", async () => {
 		const cwd = path.join(tempDir, "repo");
 		fs.mkdirSync(cwd, { recursive: true });
