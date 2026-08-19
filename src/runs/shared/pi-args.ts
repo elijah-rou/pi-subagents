@@ -20,6 +20,7 @@ import {
 } from "./structured-output.ts";
 import {
 	TEMP_ROOT_DIR,
+	type ChildRoutingMetadata,
 	type JsonSchemaObject,
 	type LaunchResolvedChildExtensionsV1,
 	type ResolvedToolBudget,
@@ -114,6 +115,7 @@ export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
 export const SUBAGENT_CHILD_INDEX_ENV = "PI_SUBAGENT_CHILD_INDEX";
 export const SUBAGENT_FANOUT_CHILD_ENV = "PI_SUBAGENT_FANOUT_CHILD";
+export const SUBAGENT_CHILD_SERVICE_TIER_ENV = "PI_SUBAGENT_CHILD_SERVICE_TIER";
 export const SUBAGENT_PARENT_EVENT_SINK_ENV = "PI_SUBAGENT_PARENT_EVENT_SINK";
 export const SUBAGENT_PARENT_CONTROL_INBOX_ENV =
 	"PI_SUBAGENT_PARENT_CONTROL_INBOX";
@@ -140,6 +142,7 @@ export interface BuildPiArgsInput {
 	sessionFile?: string;
 	model?: string;
 	thinking?: string | false;
+	childRouting?: ChildRoutingMetadata;
 	systemPromptMode?: "append" | "replace";
 	inheritProjectContext: boolean;
 	inheritSkills: boolean;
@@ -554,6 +557,9 @@ function escapeXmlAttr(value: string): string {
 }
 
 export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
+	if (input.childRouting?.serviceTier && !input.childRouting.model.startsWith("openai-codex/")) {
+		throw new Error("Child routing serviceTier requires an openai-codex routed model.");
+	}
 	const args = [...input.baseArgs];
 
 	if (input.sessionFile) {
@@ -668,6 +674,8 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 			: undefined;
 	env[SUBAGENT_CHILD_ENV] = "1";
 	env[SUBAGENT_FANOUT_CHILD_ENV] = toolPlan.fanoutAuthorized ? "1" : "0";
+	// Always shadow a leaked parent value so the tier remains scoped to this child.
+	env[SUBAGENT_CHILD_SERVICE_TIER_ENV] = input.childRouting?.serviceTier;
 	if (input.waitToolEnabled !== undefined) {
 		env[WAIT_TOOL_ENABLED_ENV] = input.waitToolEnabled ? "true" : "false";
 	}

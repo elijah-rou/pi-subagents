@@ -80,6 +80,7 @@ export interface LaunchBindingInput {
 	model?: string;
 	modelCandidates?: string[];
 	thinking?: string;
+	serviceTier?: "default" | "priority";
 	systemPrompt?: string | null;
 	systemPromptMode?: AgentConfig["systemPromptMode"];
 	inheritProjectContext: boolean;
@@ -104,6 +105,7 @@ export function projectLaunchBinding(input: LaunchBindingInput): Record<string, 
 		// this set makes retries correlate to the same preflight binding.
 		modelCandidates: input.modelCandidates,
 		thinking: input.thinking,
+		serviceTier: input.serviceTier,
 		systemPromptDigest: input.systemPrompt === undefined || input.systemPrompt === null ? undefined : sha256(input.systemPrompt),
 		systemPromptMode: input.systemPromptMode,
 		inheritProjectContext: input.inheritProjectContext,

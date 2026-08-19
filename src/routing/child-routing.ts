@@ -7,7 +7,7 @@ import { splitKnownThinkingSuffix, toModelInfo } from "../shared/model-info.ts";
 import type { ChildRoutingConfig, ChildRoutingProfile, ChildRoutingRequest, ChildRoutingSelection } from "./child-routing-config.ts";
 
 export { parseChildRoutingConfig } from "./child-routing-config.ts";
-export type { ChildRoutingClassifierConfig, ChildRoutingConfig, ChildRoutingProfile, ChildRoutingRequest, ChildRoutingSelection } from "./child-routing-config.ts";
+export type { ChildRoutingClassifierConfig, ChildRoutingConfig, ChildRoutingProfile, ChildRoutingRequest, ChildRoutingSelection, ChildServiceTier } from "./child-routing-config.ts";
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 

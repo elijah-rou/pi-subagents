@@ -292,7 +292,7 @@ describe("async resume lookup", () => {
 				...descriptor,
 				launchContractDigest: "launch-contract-digest",
 				intercomBridge: { mode: "off" },
-				childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "test/routed", thinking: "high" },
+				childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "openai-codex/test-routed", thinking: "high", serviceTier: "priority" },
 				resultContract: { id: "pi-subagents/worker", version: 1, source: "role" },
 			});
 			const valid = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
@@ -300,6 +300,7 @@ describe("async resume lookup", () => {
 			assert.equal(valid.recoveryDescriptor?.launchContractDigest, "launch-contract-digest");
 			assert.deepEqual(valid.recoveryDescriptor?.intercomBridge, { mode: "off" });
 			assert.equal(valid.recoveryDescriptor?.childRouting?.profile, "standard");
+			assert.equal(valid.recoveryDescriptor?.childRouting?.serviceTier, "priority");
 			assert.equal(valid.recoveryDescriptor?.resultContract?.id, "pi-subagents/worker");
 
 			for (const provenance of [
@@ -307,6 +308,8 @@ describe("async resume lookup", () => {
 				{ childRouting: { profile: "standard", confidence: 101, source: "child-router", model: "test/model" } },
 				{ childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "x".repeat(257) } },
 				{ childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "test/model", thinking: "turbo" } },
+				{ childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "openai-codex/test", serviceTier: "auto" } },
+				{ childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "anthropic/test", serviceTier: "priority" } },
 				{ resultContract: { id: "pi-subagents/unknown", version: 1, source: "role" } },
 				{ resultContract: { id: "pi-subagents/worker", version: 2, source: "role" } },
 			] as const) {

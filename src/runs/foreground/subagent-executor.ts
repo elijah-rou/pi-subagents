@@ -349,6 +349,7 @@ export interface SubagentParamsLike {
 	/** Internal workflow topology and resolved child-routing provenance. */
 	workflowParallel?: boolean;
 	childRouting?: ChildRoutingSelection;
+	serviceTier?: unknown;
 	resolvedResultContract?: { id: string; version: 1; source: "role" };
 	agentScope?: unknown;
 	chainDir?: string;
@@ -1874,6 +1875,8 @@ async function resumeAsyncRun(input: {
 			...(completed.stopped ? { stopped: true } : {}),
 			...(completed.sessionFile ? { sessionFile: completed.sessionFile } : {}),
 			...(completed.model ? { model: completed.model } : {}),
+			...(recoveryDescriptor?.childRouting ? { childRouting: recoveryDescriptor.childRouting } : {}),
+			...(recoveryDescriptor?.resultContract ? { resultContract: recoveryDescriptor.resultContract } : {}),
 			...(completed.attemptedModels ? { attemptedModels: completed.attemptedModels } : {}),
 			...(completed.modelAttempts ? { modelAttempts: completed.modelAttempts } : {}),
 			...(completed.structuredOutput !== undefined ? { structuredOutput: completed.structuredOutput } : {}),
@@ -3345,6 +3348,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			index: 0,
 			modelOverride,
 			modelOverrideFromParent,
+			childRouting: params.childRouting,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			availableModels,
 			preferredModelProvider: currentProvider,
@@ -3361,7 +3365,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			},
 			onDetachedExit: (result) => {
 				try {
-					if (params.childRouting) result.childRouting = { profile: params.childRouting.profile, confidence: params.childRouting.confidence, source: params.childRouting.source, model: params.childRouting.model, ...(params.childRouting.thinking ? { thinking: params.childRouting.thinking } : {}) };
+					if (params.childRouting) result.childRouting = { profile: params.childRouting.profile, confidence: params.childRouting.confidence, source: params.childRouting.source, model: params.childRouting.model, ...(params.childRouting.thinking ? { thinking: params.childRouting.thinking } : {}), ...(params.childRouting.serviceTier ? { serviceTier: params.childRouting.serviceTier } : {}) };
 					if (params.resolvedResultContract) result.resultContract = params.resolvedResultContract;
 					try {
 						updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: true });
@@ -3415,7 +3419,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}
 	}
 	if (params.childRouting) {
-		r.childRouting = { profile: params.childRouting.profile, confidence: params.childRouting.confidence, source: params.childRouting.source, model: params.childRouting.model, ...(params.childRouting.thinking ? { thinking: params.childRouting.thinking } : {}) };
+		r.childRouting = { profile: params.childRouting.profile, confidence: params.childRouting.confidence, source: params.childRouting.source, model: params.childRouting.model, ...(params.childRouting.thinking ? { thinking: params.childRouting.thinking } : {}), ...(params.childRouting.serviceTier ? { serviceTier: params.childRouting.serviceTier } : {}) };
 	}
 	if (params.resolvedResultContract) r.resultContract = params.resolvedResultContract;
 	if (!r.detached) {
@@ -3911,6 +3915,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const hostResultContract = (params as HostOwnedParams)[HOST_RESULT_CONTRACT];
 		const requestParams: HostOwnedParams = { ...normalizedGate.params };
 		delete requestParams.childRouting;
+		delete requestParams.serviceTier;
 		delete requestParams.resolvedResultContract;
 		if (hostResultContract) requestParams.resolvedResultContract = hostResultContract;
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
@@ -5345,7 +5350,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						if (selection.thinking !== undefined && splitKnownThinkingSuffix(selection.model).thinkingSuffix) throw new Error("Child routing profile model must not include a thinking suffix when profile.thinking is set.");
 						canonicalModel = resolveSubagentModelOverride(selection.model, undefined, ctx.modelRegistry.getAvailable().map(toModelInfo), requestParentModel?.provider, { source: "inherited" });
+						if (selection.serviceTier && canonicalModel && !canonicalModel.startsWith("openai-codex/")) throw new Error("Child routing serviceTier requires an openai-codex routed model.");
 					} catch (error) {
+						canonicalModel = undefined;
 						const message = error instanceof Error ? error.message : String(error);
 						if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
 					}

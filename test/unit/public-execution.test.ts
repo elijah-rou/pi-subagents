@@ -78,7 +78,8 @@ describe("public subagent execution normalization", () => {
 
 	it("rejects host-owned provenance at the public boundary", () => {
 		for (const params of [
-			{ agent: "worker", childRouting: { profile: "forged" } },
+			{ agent: "worker", childRouting: { profile: "forged", serviceTier: "priority" } },
+			{ workflowScript: "return 1", serviceTier: "priority" },
 			{ workflowScript: "return 1", resolvedResultContract: { id: "forged" } },
 		] as const) {
 			const result = normalizePublicSubagentExecution(params);

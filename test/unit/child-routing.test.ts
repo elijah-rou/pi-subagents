@@ -7,7 +7,7 @@ const raw = {
 	threshold: 75,
 	classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 },
 	profiles: {
-		fast: { description: "bounded fast work", model: "test/fast", thinking: "low" },
+		fast: { description: "bounded fast work", model: "openai-codex/test-fast", thinking: "low", serviceTier: "priority" },
 		judge: { description: "high stakes judgment", model: "test/strong", thinking: "high" },
 	},
 };
@@ -17,6 +17,7 @@ describe("child routing", () => {
 		const config = parseChildRoutingConfig(raw)!;
 		assert.equal(config.threshold, 75);
 		assert.equal(config.profiles.judge?.thinking, "high");
+		assert.equal(config.profiles.fast?.serviceTier, "priority");
 		const transport = parseChildRoutingConfig({ ...raw, classifier: { provider: "test", model: "classifier", reasoningEffort: "minimal", reasoningSummary: "concise", textVerbosity: "medium", serviceTier: "priority", timeoutMs: 1000 } })!;
 		assert.equal(transport.classifier.model, "test/classifier");
 		assert.equal(transport.classifier.thinking, "minimal");
@@ -28,6 +29,8 @@ describe("child routing", () => {
 			/must not include a thinking suffix when profile\.thinking is set/,
 		);
 		assert.equal(parseChildRoutingConfig({ ...raw, profiles: { valid: { description: "model-owned thinking", model: "test/child:low" } } })?.profiles.valid?.model, "test/child:low");
+		assert.throws(() => parseChildRoutingConfig({ ...raw, profiles: { invalid: { description: "invalid tier", model: "openai-codex/test", serviceTier: "auto" } } }), /serviceTier must be 'default' or 'priority'/);
+		assert.throws(() => parseChildRoutingConfig({ ...raw, profiles: { invalid: { description: "unknown key", model: "openai-codex/test", serviceTier: "priority", service_tier: "priority" } } }), /unsupported field 'service_tier'/);
 	});
 
 	it("accepts only exact classifier output", () => {

@@ -6,7 +6,7 @@ import { registerNativeSupervisorClient } from "../../intercom/native-supervisor
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { decodePermissionRules, permissionDecision, PERMISSION_AUDIT_PATH_ENV, PERMISSION_POLICY_ENV } from "./permissions.ts";
 import { consumeSteerRequestsFromDir, MAX_STEER_QUEUE_SIZE, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerDeliveryStatus, type SteerRequest } from "../background/control-channel.ts";
-import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
+import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_CHILD_SERVICE_TIER_ENV, SUBAGENT_FANOUT_CHILD_ENV, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV, isRuntimeAcknowledgedExtensionId, writeRuntimeAcknowledgedExtensions } from "./runtime-acknowledged-extensions.ts";
 import { createStructuredOutputToolParameters, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue } from "./structured-output.ts";
 import {
@@ -309,6 +309,16 @@ export function registerPermissionGate(
 	});
 }
 
+export function registerChildServiceTier(pi: ExtensionAPI, rawTier = process.env[SUBAGENT_CHILD_SERVICE_TIER_ENV]): void {
+	if (rawTier !== "default" && rawTier !== "priority") return;
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { payload?: unknown }, ctx?: ExtensionContext) => unknown) => void;
+	onRuntimeEvent("before_provider_request", (event, ctx) => {
+		if (ctx?.model?.provider !== "openai-codex") return undefined;
+		if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return undefined;
+		return { ...(event.payload as Record<string, unknown>), service_tier: rawTier };
+	});
+}
+
 function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undefined): void {
 	if (!budget) return;
 	let toolCount = 0;
@@ -567,6 +577,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerRuntimeExtensionAcknowledgements(pi);
 	registerSteeringInbox(pi);
 	registerPermissionGate(pi);
+	registerChildServiceTier(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
 	registerChildWatchdog(pi);
 	const waitToolEnabled = resolveWaitToolConfig().enabled;

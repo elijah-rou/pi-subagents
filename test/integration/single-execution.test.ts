@@ -47,6 +47,7 @@ import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
 	SUBAGENT_CHILD_ENV,
+	SUBAGENT_CHILD_SERVICE_TIER_ENV,
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_STEER_ACK_DIR_ENV,
 	SUBAGENT_STEER_CAPABILITY_ENV,
@@ -3756,9 +3757,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("persists immutable routing provenance for genuine async single runs and recovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "async routed" });
-		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed", thinking: "high" } } };
-		const classify = async () => ({ profile: "standard", description: "standard", model: "test/routed", thinking: "high" as const, confidence: 90, source: "child-router" as const });
+		mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_SERVICE_TIER_ENV] });
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "openai-codex/test-routed", thinking: "high", serviceTier: "priority" as const } } };
+		const classify = async () => ({ profile: "standard", description: "standard", model: "openai-codex/test-routed", thinking: "high" as const, serviceTier: "priority" as const, confidence: 90, source: "child-router" as const });
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
 		const started = await executor.execute("async-single-route", { agent: "echo", task: "async route", async: true }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(started.isError, undefined);
@@ -3773,21 +3774,58 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(status?.state, "complete");
 		assert.equal(status.steps?.[0]?.childRouting?.profile, "standard");
+		assert.equal(status.steps?.[0]?.childRouting?.serviceTier, "priority");
 		const recovery = JSON.parse(fs.readFileSync(path.join(asyncDir, "recovery-descriptor.json"), "utf-8"));
 		assert.equal(recovery.childRouting.profile, "standard");
+		assert.equal(recovery.childRouting.serviceTier, "priority");
 		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
 		for (let attempt = 0; attempt < 100 && !fs.existsSync(resultPath); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(result.results[0].childRouting.profile, "standard");
+		assert.equal(result.results[0].childRouting.serviceTier, "priority");
+		assert.match(result.results[0].output, /PI_SUBAGENT_CHILD_SERVICE_TIER.*priority/);
+	});
+
+	it("restores the routed tier from immutable recovery provenance on resume", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const retainedRunId = `retained-tier-${Date.now()}`;
+		const retainedAsyncDir = path.join(DIRS.async, retainedRunId);
+		const retainedSessionFile = path.join(tempDir, "retained-tier-session.jsonl");
+		const runFanoutBudget = createRunFanoutBudget(retainedRunId, 10);
+		fs.mkdirSync(retainedAsyncDir, { recursive: true });
+		fs.writeFileSync(retainedSessionFile, "{}\n", "utf-8");
+		fs.writeFileSync(path.join(retainedAsyncDir, "status.json"), JSON.stringify({
+			runId: retainedRunId, sessionId: "session-123", state: "failed", cwd: tempDir, sessionFile: retainedSessionFile,
+			steps: [{ agent: "echo", status: "failed", sessionFile: retainedSessionFile, model: "openai-codex/test-routed", childRouting: { profile: "fast", confidence: 90, source: "child-router", model: "openai-codex/test-routed", serviceTier: "priority" } }],
+		}), "utf-8");
+		fs.writeFileSync(path.join(retainedAsyncDir, "recovery-descriptor.json"), JSON.stringify({
+			version: 1, runFanoutBudget, sourceRunId: retainedRunId, agent: "echo", cwd: tempDir,
+			model: "openai-codex/test-routed", childRouting: { profile: "fast", confidence: 90, source: "child-router", model: "openai-codex/test-routed", serviceTier: "priority" },
+			systemPromptMode: "append", inheritProjectContext: true, inheritSkills: true, outputMode: "inline", maxSubagentDepth: 1, share: false,
+		}), "utf-8");
+		mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_SERVICE_TIER_ENV], matchArgIncludes: "Resume tier" });
+		try {
+			const result = await makeExecutor([makeAgent("echo")]).execute(
+				"scripted-workflow-resume-tier",
+				{ async: false, workflowScript: `return runs.run("resume", { resume: ${JSON.stringify(retainedRunId)}, task: "Resume tier" });` },
+				new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "tier resume failed");
+			assert.equal(result.details.results[0]?.childRouting?.serviceTier, "priority");
+			assert.match(result.details.results[0]?.finalOutput ?? "", /PI_SUBAGENT_CHILD_SERVICE_TIER.*priority/);
+		} finally {
+			fs.rmSync(retainedAsyncDir, { recursive: true, force: true });
+			fs.rmSync(runFanoutBudget.directory, { recursive: true, force: true });
+		}
 	});
 
 	it("strips workflow-forged routing and result provenance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "plain" });
+		mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_SERVICE_TIER_ENV] });
 		const executor = makeExecutor([makeAgent("echo")]);
-		const result = await executor.execute("forged-provenance", { agent: "echo", task: "work", async: false, childRouting: { profile: "forged", description: "forged", model: "test/expensive", confidence: 100, source: "child-router" }, resolvedResultContract: { id: "pi-subagents/reviewer", version: 1, source: "role" } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		const result = await executor.execute("forged-provenance", { agent: "echo", task: "work", async: false, serviceTier: "priority", childRouting: { profile: "forged", description: "forged", model: "openai-codex/test-expensive", serviceTier: "priority", confidence: 100, source: "child-router" }, resolvedResultContract: { id: "pi-subagents/reviewer", version: 1, source: "role" } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(result.isError, undefined);
 		assert.equal(result.details.results[0]?.childRouting, undefined);
 		assert.equal(result.details.results[0]?.resultContract, undefined);
+		assert.match(result.details.results[0]?.finalOutput ?? "", /PI_SUBAGENT_CHILD_SERVICE_TIER.*null/);
 	});
 
 	it("bypasses direct role resolution for management calls carrying agent", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -3830,6 +3868,22 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const fallback = await failing.executePublic("fallback", { agent: "echo", task: "fall back", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(fallback.isError, undefined);
 		assert.match(readCallArgs().join(" "), /test\/fallback/);
+	});
+
+	it("fails non-Codex routed service tiers open without leaking tier provenance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { invalid: { description: "invalid tier provider", model: "anthropic/claude", serviceTier: "priority" as const } } };
+		const classify = async () => ({ profile: "invalid", description: "invalid tier provider", model: "anthropic/claude", serviceTier: "priority" as const, confidence: 90, source: "child-router" as const });
+		const executor = makeExecutor([makeAgent("echo", { model: "test/fallback" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
+		const originalWarn = console.warn;
+		console.warn = () => {};
+		try {
+			mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_SERVICE_TIER_ENV] });
+			const result = await executor.executePublic("non-codex-tier", { agent: "echo", task: "fall back", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "non-Codex fallback failed");
+			assert.match(readCallArgs().join(" "), /test\/fallback/);
+			assert.equal(result.details.results[0]?.childRouting, undefined);
+			assert.match(result.details.results[0]?.finalOutput ?? "", /PI_SUBAGENT_CHILD_SERVICE_TIER.*null/);
+		} finally { console.warn = originalWarn; }
 	});
 
 	it("never launches doubled thinking suffixes in sync or async mode", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

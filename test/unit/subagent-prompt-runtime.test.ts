@@ -7,6 +7,7 @@ import { consumeSteerAcks, writeSteerRequestToDir } from "../../src/runs/backgro
 import {
 	SUBAGENT_CHILD_AGENT_ENV,
 	SUBAGENT_CHILD_INDEX_ENV,
+	SUBAGENT_CHILD_SERVICE_TIER_ENV,
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
 	SUBAGENT_ORCHESTRATOR_TARGET_ENV,
@@ -27,6 +28,7 @@ import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
 	SUBAGENT_INTERCOM_SESSION_NAME_ENV,
+	registerChildServiceTier,
 	registerPermissionGate,
 	registerSteeringInbox,
 	rewriteSubagentPrompt,
@@ -58,6 +60,7 @@ const envSnapshot = {
 	PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
 	PI_SUBAGENT_CHILD_AGENT: process.env.PI_SUBAGENT_CHILD_AGENT,
 	PI_SUBAGENT_CHILD_INDEX: process.env.PI_SUBAGENT_CHILD_INDEX,
+	[SUBAGENT_CHILD_SERVICE_TIER_ENV]: process.env[SUBAGENT_CHILD_SERVICE_TIER_ENV],
 	PI_SUBAGENT_WATCHDOG_CHILD_CONFIG: process.env.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG,
 };
 
@@ -123,6 +126,8 @@ afterEach(() => {
 	else process.env[SUBAGENT_CHILD_AGENT_ENV] = envSnapshot.PI_SUBAGENT_CHILD_AGENT;
 	if (envSnapshot.PI_SUBAGENT_CHILD_INDEX === undefined) delete process.env[SUBAGENT_CHILD_INDEX_ENV];
 	else process.env[SUBAGENT_CHILD_INDEX_ENV] = envSnapshot.PI_SUBAGENT_CHILD_INDEX;
+	if (envSnapshot[SUBAGENT_CHILD_SERVICE_TIER_ENV] === undefined) delete process.env[SUBAGENT_CHILD_SERVICE_TIER_ENV];
+	else process.env[SUBAGENT_CHILD_SERVICE_TIER_ENV] = envSnapshot[SUBAGENT_CHILD_SERVICE_TIER_ENV];
 	if (envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
 	else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
 });
@@ -137,6 +142,21 @@ function setSupervisorEnv(): void {
 }
 
 describe("subagent prompt runtime", () => {
+	it("injects service_tier only into the selected Codex child's provider payload", () => {
+		const selectedHandlers = new Map<string, (event: { payload?: unknown }, ctx?: { model?: { provider?: string } }) => unknown>();
+		registerChildServiceTier({ on(event: string, handler: (event: { payload?: unknown }, ctx?: { model?: { provider?: string } }) => unknown) { selectedHandlers.set(event, handler); } } as never, "priority");
+		const inject = selectedHandlers.get("before_provider_request");
+		assert.ok(inject);
+		const payload = { model: "gpt-5.6", service_tier: "default" };
+		assert.deepEqual(inject({ payload }, { model: { provider: "openai-codex" } }), { model: "gpt-5.6", service_tier: "priority" });
+		assert.deepEqual(payload, { model: "gpt-5.6", service_tier: "default" }, "the hook must replace rather than mutate the payload");
+		assert.equal(inject({ payload }, { model: { provider: "anthropic" } }), undefined);
+
+		let siblingHooks = 0;
+		registerChildServiceTier({ on() { siblingHooks++; } } as never, undefined);
+		assert.equal(siblingHooks, 0);
+	});
+
 	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {
 		const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown> = [];
 		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown) { if (event === "tool_call") handlers.push(handler); } };

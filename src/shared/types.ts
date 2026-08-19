@@ -906,6 +906,7 @@ export interface ChildRoutingMetadata {
 	source: "child-router";
 	model: string;
 	thinking?: string;
+	serviceTier?: "default" | "priority";
 }
 
 export interface SingleResult {
@@ -1871,6 +1872,8 @@ export interface RunSyncOptions {
 	modelOverrideFromParent?: boolean;
 	/** LLM intent arbiter for the completion mutation guard (rescues read-only review runs). */
 	llmIntentArbiter?: import("../runs/shared/llm-intent-arbiter.ts").TaskMutationArbiter;
+	/** Host-owned child routing provenance used to scope request options to this process. */
+	childRouting?: ChildRoutingMetadata;
 	/** Override the agent's default thinking level for this run */
 	thinkingOverride?: AgentConfig["thinking"];
 	/** Registry models available for heuristic bare-model resolution */

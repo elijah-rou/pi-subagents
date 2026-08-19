@@ -205,8 +205,8 @@ The fork can route only child compute at launch time with `subagents.childRoutin
       "threshold": 75,
       "classifier": { "provider": "openai-codex", "model": "gpt-5.6-terra", "reasoningEffort": "none", "reasoningSummary": "auto", "textVerbosity": "low", "serviceTier": "default", "timeoutMs": 5000 },
       "profiles": {
-        "fast": { "description": "Bounded serial delegation on the critical path.", "model": "openai-codex/gpt-5.6-terra", "thinking": "high" },
-        "standard": { "description": "Outcome-critical implementation or synthesis.", "model": "openai-codex/gpt-5.6-sol", "thinking": "medium" },
+        "fast": { "description": "Bounded serial delegation on the critical path.", "model": "openai-codex/gpt-5.6-terra", "thinking": "high", "serviceTier": "priority" },
+        "standard": { "description": "Outcome-critical implementation or synthesis.", "model": "openai-codex/gpt-5.6-sol", "thinking": "medium", "serviceTier": "default" },
         "judge": { "description": "Correctness, security, architecture, or adversarial review.", "model": "openai-codex/gpt-5.6-sol", "thinking": "high" }
       }
     }
@@ -214,4 +214,8 @@ The fork can route only child compute at launch time with `subagents.childRoutin
 }
 ```
 
-Routing selects only model and thinking. The parent still owns agent role, topology, context, worktree, acceptance, tools, and permissions. `runs.run` is classified as serial and `runs.all` as parallel. Classifier `reasoningEffort` accepts `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`; `reasoningSummary`, `textVerbosity`, `serviceTier`, and `timeoutMs` are forwarded explicitly. The legacy `thinking` classifier field remains accepted as an alias when it does not conflict with `reasoningEffort`.
+Routing selects model, thinking, and an optional child-only `serviceTier`. The parent still owns agent role, topology, context, worktree, acceptance, tools, and permissions. `runs.run` is classified as serial and `runs.all` as parallel. A profile tier must be `default` or `priority` and is accepted only for an `openai-codex` routed model. Pi sends it as the request `service_tier` value from that child process, so it cannot change the parent or a sibling.
+
+`priority` enables OpenAI Codex Fast mode. For Codex GPT-5.6, Fast mode is approximately 1.5x faster and consumes 2.5x ChatGPT credits. `priority` is the request value used by Pi; omit `serviceTier` to preserve the child's ordinary provider behavior.
+
+Classifier `reasoningEffort` accepts `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`; classifier `reasoningSummary`, `textVerbosity`, `serviceTier`, and `timeoutMs` are forwarded explicitly to the separate classifier request. The legacy `thinking` classifier field remains accepted as an alias when it does not conflict with `reasoningEffort`.

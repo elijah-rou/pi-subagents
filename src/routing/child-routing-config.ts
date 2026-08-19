@@ -1,7 +1,8 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "../shared/model-info.ts";
 
-export interface ChildRoutingProfile { description: string; model: string; thinking?: ThinkingLevel }
+export type ChildServiceTier = "default" | "priority";
+export interface ChildRoutingProfile { description: string; model: string; thinking?: ThinkingLevel; serviceTier?: ChildServiceTier }
 export interface ChildRoutingClassifierConfig {
 	model: string;
 	thinking: ThinkingLevel;
@@ -32,7 +33,8 @@ const MAX_PROFILES = 16;
 const REASONING_EFFORTS = new Set<unknown>(["none", "minimal", "low", "medium", "high", "xhigh"]);
 const REASONING_SUMMARIES = new Set<unknown>([null, "auto", "concise", "detailed"]);
 const TEXT_VERBOSITIES = new Set<unknown>(["low", "medium", "high"]);
-const SERVICE_TIERS = new Set<unknown>(["auto", "default", "priority"]);
+const CLASSIFIER_SERVICE_TIERS = new Set<unknown>(["auto", "default", "priority"]);
+const CHILD_SERVICE_TIERS = new Set<unknown>(["default", "priority"]);
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 function exactKeys(record: Record<string, unknown>, allowed: readonly string[], label: string): void {
 	for (const key of Object.keys(record)) if (!allowed.includes(key)) throw new Error(`${label} has unsupported field '${key}'.`);
@@ -64,11 +66,12 @@ export function parseChildRoutingConfig(value: unknown, label = "subagents.child
 	for (const [name, raw] of entries) {
 		if (!PROFILE_NAME.test(name)) throw new Error(`${label}.profiles has invalid name '${name}'.`);
 		if (!isRecord(raw)) throw new Error(`${label}.profiles.${name} must be an object.`);
-		exactKeys(raw, ["description", "model", "thinking"], `${label}.profiles.${name}`);
+		exactKeys(raw, ["description", "model", "thinking", "serviceTier"], `${label}.profiles.${name}`);
 		const model = text(raw.model, `${label}.profiles.${name}.model`, 256);
 		const profileThinking = raw.thinking === undefined ? undefined : thinking(raw.thinking, `${label}.profiles.${name}.thinking`);
 		if (profileThinking !== undefined && splitKnownThinkingSuffix(model).thinkingSuffix) throw new Error(`${label}.profiles.${name}.model must not include a thinking suffix when profile.thinking is set.`);
-		profiles[name] = { description: text(raw.description, `${label}.profiles.${name}.description`, 240), model, ...(profileThinking === undefined ? {} : { thinking: profileThinking }) };
+		if (raw.serviceTier !== undefined && !CHILD_SERVICE_TIERS.has(raw.serviceTier)) throw new Error(`${label}.profiles.${name}.serviceTier must be 'default' or 'priority'.`);
+		profiles[name] = { description: text(raw.description, `${label}.profiles.${name}.description`, 240), model, ...(profileThinking === undefined ? {} : { thinking: profileThinking }), ...(raw.serviceTier === undefined ? {} : { serviceTier: raw.serviceTier as ChildServiceTier }) };
 	}
 	const provider = value.classifier.provider === undefined ? undefined : text(value.classifier.provider, `${label}.classifier.provider`, 128);
 	const rawClassifierModel = text(value.classifier.model, `${label}.classifier.model`, 256);
@@ -83,7 +86,7 @@ export function parseChildRoutingConfig(value: unknown, label = "subagents.child
 	const textVerbosity = value.classifier.textVerbosity ?? "low";
 	if (!TEXT_VERBOSITIES.has(textVerbosity)) throw new Error(`${label}.classifier.textVerbosity is unsupported.`);
 	const serviceTier = value.classifier.serviceTier;
-	if (serviceTier !== undefined && !SERVICE_TIERS.has(serviceTier)) throw new Error(`${label}.classifier.serviceTier is unsupported.`);
+	if (serviceTier !== undefined && !CLASSIFIER_SERVICE_TIERS.has(serviceTier)) throw new Error(`${label}.classifier.serviceTier is unsupported.`);
 	const classifierThinking = reasoningEffort === "none" ? "off" : thinking(reasoningEffort, `${label}.classifier.reasoningEffort`);
 	return { enabled: value.enabled !== false, threshold: Number(threshold), classifier: { model: classifierModel, thinking: classifierThinking, reasoningEffort: reasoningEffort as ChildRoutingClassifierConfig["reasoningEffort"], reasoningSummary: reasoningSummary as ChildRoutingClassifierConfig["reasoningSummary"], textVerbosity: textVerbosity as ChildRoutingClassifierConfig["textVerbosity"], ...(serviceTier ? { serviceTier: serviceTier as ChildRoutingClassifierConfig["serviceTier"] } : {}), timeoutMs: Number(timeoutMs) }, profiles };
 }

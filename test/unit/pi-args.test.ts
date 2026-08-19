@@ -22,6 +22,7 @@ import {
 	PERMISSION_POLICY_ENV,
 } from "../../src/runs/shared/permissions.ts";
 import {
+	SUBAGENT_CHILD_SERVICE_TIER_ENV,
 	SUBAGENT_FANOUT_CHILD_ENV,
 	SUBAGENT_PARENT_CHILD_INDEX_ENV,
 	SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV,
@@ -48,6 +49,7 @@ const originalEnv = {
 	USERPROFILE: process.env.USERPROFILE,
 	PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 	PI_SUBAGENT_FANOUT_CHILD: process.env.PI_SUBAGENT_FANOUT_CHILD,
+	[SUBAGENT_CHILD_SERVICE_TIER_ENV]: process.env[SUBAGENT_CHILD_SERVICE_TIER_ENV],
 	PI_SUBAGENT_PARENT_EVENT_SINK: process.env.PI_SUBAGENT_PARENT_EVENT_SINK,
 	PI_SUBAGENT_PARENT_CONTROL_INBOX:
 		process.env.PI_SUBAGENT_PARENT_CONTROL_INBOX,
@@ -345,6 +347,27 @@ describe("buildPiArgs session wiring", () => {
 });
 
 describe("buildPiArgs model wiring", () => {
+	it("scopes a routed service tier to only the selected Codex child", () => {
+		process.env[SUBAGENT_CHILD_SERVICE_TIER_ENV] = "priority";
+		const selected = buildPiArgs({
+			baseArgs: ["-p"], task: "fast", sessionEnabled: false,
+			model: "openai-codex/gpt-5.6", inheritProjectContext: false, inheritSkills: false,
+			childRouting: { profile: "fast", confidence: 90, source: "child-router", model: "openai-codex/gpt-5.6", serviceTier: "priority" },
+		});
+		const sibling = buildPiArgs({
+			baseArgs: ["-p"], task: "ordinary", sessionEnabled: false,
+			model: "openai-codex/gpt-5.6", inheritProjectContext: false, inheritSkills: false,
+		});
+		assert.equal(selected.env[SUBAGENT_CHILD_SERVICE_TIER_ENV], "priority");
+		assert.equal(sibling.env[SUBAGENT_CHILD_SERVICE_TIER_ENV], undefined);
+		assert.equal(process.env[SUBAGENT_CHILD_SERVICE_TIER_ENV], "priority", "building child env must not mutate the parent");
+		assert.throws(() => buildPiArgs({
+			baseArgs: ["-p"], task: "invalid", sessionEnabled: false,
+			model: "anthropic/claude", inheritProjectContext: false, inheritSkills: false,
+			childRouting: { profile: "fast", confidence: 90, source: "child-router", model: "anthropic/claude", serviceTier: "priority" },
+		}), /requires an openai-codex routed model/);
+	});
+
 	it("uses --model for provider-qualified model ids", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],

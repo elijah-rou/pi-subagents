@@ -1483,6 +1483,7 @@ export function executeAsyncSingle(
 		...(model ? { model } : {}),
 		modelCandidates,
 		...(resolveEffectiveThinking(model, effectiveThinking) ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
+		...(params.childRouting?.serviceTier ? { serviceTier: params.childRouting.serviceTier } : {}),
 		systemPrompt: effectiveSystemPrompt,
 		systemPromptMode: agentConfig.systemPromptMode,
 		inheritProjectContext: agentConfig.inheritProjectContext,

@@ -21,13 +21,15 @@ function exactKeys(value: Record<string, unknown>, allowed: readonly string[], l
 export function validateChildRoutingMetadata(value: unknown, label: string): ChildRoutingMetadata {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object.`);
 	const record = value as Record<string, unknown>;
-	exactKeys(record, ["profile", "confidence", "source", "model", "thinking"], label);
+	exactKeys(record, ["profile", "confidence", "source", "model", "thinking", "serviceTier"], label);
 	if (typeof record.profile !== "string" || !PROFILE_NAME.test(record.profile)) throw new Error(`${label}.profile is invalid.`);
 	if (!Number.isSafeInteger(record.confidence) || (record.confidence as number) < 0 || (record.confidence as number) > 100) throw new Error(`${label}.confidence must be an integer from 0 to 100.`);
 	if (record.source !== "child-router") throw new Error(`${label}.source must be 'child-router'.`);
 	if (typeof record.model !== "string" || !record.model.trim() || record.model.length > 256 || CONTROL.test(record.model)) throw new Error(`${label}.model must be a non-empty control-free string up to 256 characters.`);
 	if (record.thinking !== undefined && (typeof record.thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(record.thinking))) throw new Error(`${label}.thinking is unsupported.`);
-	return { profile: record.profile, confidence: record.confidence as number, source: "child-router", model: record.model.trim(), ...(record.thinking === undefined ? {} : { thinking: record.thinking as string }) };
+	if (record.serviceTier !== undefined && record.serviceTier !== "default" && record.serviceTier !== "priority") throw new Error(`${label}.serviceTier must be 'default' or 'priority'.`);
+	if (record.serviceTier !== undefined && !record.model.trim().startsWith("openai-codex/")) throw new Error(`${label}.serviceTier requires an openai-codex routed model.`);
+	return { profile: record.profile, confidence: record.confidence as number, source: "child-router", model: record.model.trim(), ...(record.thinking === undefined ? {} : { thinking: record.thinking as string }), ...(record.serviceTier === undefined ? {} : { serviceTier: record.serviceTier }) };
 }
 
 export function validateRoleResultContractMetadata(value: unknown, label: string): RoleResultContractMetadata {
