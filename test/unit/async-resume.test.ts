@@ -292,11 +292,15 @@ describe("async resume lookup", () => {
 				...descriptor,
 				launchContractDigest: "launch-contract-digest",
 				intercomBridge: { mode: "off" },
+				childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "test/routed", thinking: "high" },
+				resultContract: { id: "pi-subagents/worker", version: 1, source: "role" },
 			});
 			const valid = resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir });
 			assert.equal(valid.launchContractDigest, "launch-contract-digest");
 			assert.equal(valid.recoveryDescriptor?.launchContractDigest, "launch-contract-digest");
 			assert.deepEqual(valid.recoveryDescriptor?.intercomBridge, { mode: "off" });
+			assert.equal(valid.recoveryDescriptor?.childRouting?.profile, "standard");
+			assert.equal(valid.recoveryDescriptor?.resultContract?.id, "pi-subagents/worker");
 
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);

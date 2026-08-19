@@ -21,6 +21,8 @@ export interface PublicSubagentExecutionParams {
 	clarify?: unknown;
 	runFanoutBudget?: unknown;
 	runFanoutAdmitted?: unknown;
+	childRouting?: unknown;
+	resolvedResultContract?: unknown;
 }
 
 export type PublicSubagentExecutionMode = "workflow" | "management";
@@ -47,6 +49,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	}
 	if (params.runFanoutBudget !== undefined || params.runFanoutAdmitted !== undefined) {
 		return { ok: false, error: "Public execution does not accept internal run fan-out fields.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
+	}
+	if (params.childRouting !== undefined || params.resolvedResultContract !== undefined) {
+		return { ok: false, error: "Public execution does not accept host-owned provenance fields.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
 	}
 	const action = params.action;
 	if (action !== undefined && (typeof action !== "string" || !action.trim())) {

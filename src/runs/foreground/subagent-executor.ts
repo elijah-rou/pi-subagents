@@ -26,11 +26,13 @@ import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { normalizePublicSubagentExecution } from "../../extension/public-execution.ts";
 import { roleResultContractId, roleResultSchema, type DirectResultContract } from "../../contracts/role-contracts.ts";
-import { classifyChildProfile, type ChildRoutingConfig, type ChildRoutingSelection } from "../../routing/child-routing.ts";
+import { classifyChildProfile } from "../../routing/child-routing.ts";
+import type { ChildRoutingConfig, ChildRoutingSelection } from "../../routing/child-routing-config.ts";
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
-import { buildModelCandidates, inheritsParentModel, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, type ParentModel } from "../shared/model-fallback.ts";
+import { buildModelCandidates, inheritsParentModel, normalizeParentModel, resolveEffectiveSubagentModel, resolveModelCandidate, resolveSubagentModelOverride, type ParentModel } from "../shared/model-fallback.ts";
+import { checkModelScope } from "../shared/model-scope.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
@@ -378,6 +380,9 @@ function rememberParentModel(state: { currentSessionId?: string | null; lastPare
 	if (parentModel) state.lastParentModel = parentModel;
 	return parentModel ?? state.lastParentModel;
 }
+
+const HOST_RESULT_CONTRACT = Symbol("pi-subagents.host-result-contract");
+type HostOwnedParams = SubagentParamsLike & { [HOST_RESULT_CONTRACT]?: { id: string; version: 1; source: "role" } };
 
 interface ExecutorDeps {
 	pi: ExtensionAPI;
@@ -759,6 +764,8 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.sessionFile ? { sessionFile: input.result.sessionFile } : {}),
 		...(input.result.model ? { model: input.result.model } : {}),
 		...(input.result.thinking ? { thinking: input.result.thinking } : {}),
+		...(input.result.childRouting ? { childRouting: input.result.childRouting } : {}),
+		...(input.result.resultContract ? { resultContract: input.result.resultContract } : {}),
 		...(input.result.artifactPaths ? { artifactPaths: input.result.artifactPaths } : {}),
 		...(input.result.transcriptPath ? { transcriptPath: input.result.transcriptPath } : {}),
 		...(input.result.transcriptError ? { transcriptError: input.result.transcriptError } : {}),
@@ -1775,6 +1782,8 @@ async function resumeAsyncRun(input: {
 		},
 		modelOverride: recoveryDescriptor?.model ?? target.model,
 		modelOverrideFromParent: recoveryDescriptor?.modelOverrideFromParent,
+		childRouting: recoveryDescriptor?.childRouting,
+		resultContract: recoveryDescriptor?.resultContract,
 		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
@@ -2842,7 +2851,9 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			&& (a.model === undefined || (a.modelSource?.type === "subagents.defaultModel" && a.model === a.modelSource.model));
 		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
-			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
+			: params.childRouting
+				? resolveSubagentModelOverride(params.model, parentModel, availableModels, currentProvider, { source: "inherited" })
+				: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, currentProvider, data.modelScope === undefined ? {} : { scope: data.modelScope });
 		const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, a.model, parentModel);
 		return executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
@@ -2868,6 +2879,8 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): AgentTool
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
 			modelOverrideFromParent,
+			childRouting: params.childRouting,
+			resultContract: params.resolvedResultContract,
 			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
 			maxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,
@@ -3184,14 +3197,16 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const currentProvider = parentModel?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let task = params.task ?? "";
-	let modelOverride: string | undefined = resolveEffectiveSubagentModel(
-		params.model as string | undefined,
-		agentConfig.model,
-		parentModel,
-		availableModels,
-		currentProvider,
-		data.modelScope === undefined ? {} : { scope: data.modelScope },
-	);
+	let modelOverride: string | undefined = params.childRouting
+		? resolveSubagentModelOverride(params.model, parentModel, availableModels, currentProvider, { source: "inherited" })
+		: resolveEffectiveSubagentModel(
+			params.model as string | undefined,
+			agentConfig.model,
+			parentModel,
+			availableModels,
+			currentProvider,
+			data.modelScope === undefined ? {} : { scope: data.modelScope },
+		);
 	const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, agentConfig.model, parentModel);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
 	let readsOverride: string[] | false | undefined = params.reads;
@@ -3345,6 +3360,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			},
 			onDetachedExit: (result) => {
 				try {
+					if (params.childRouting) result.childRouting = { profile: params.childRouting.profile, confidence: params.childRouting.confidence, source: params.childRouting.source, model: params.childRouting.model, ...(params.childRouting.thinking ? { thinking: params.childRouting.thinking } : {}) };
+					if (params.resolvedResultContract) result.resultContract = params.resolvedResultContract;
 					try {
 						updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: true });
 					} catch {
@@ -3890,7 +3907,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.lastForegroundControlId ??= null;
 		const normalizedGate = normalizeGateParams(params);
 		if (!normalizedGate.ok) return buildRequestedModeError(params, normalizedGate.error);
-		const requestParams = normalizedGate.params;
+		const hostResultContract = (params as HostOwnedParams)[HOST_RESULT_CONTRACT];
+		const requestParams: HostOwnedParams = { ...normalizedGate.params };
+		delete requestParams.childRouting;
+		delete requestParams.resolvedResultContract;
+		if (hostResultContract) requestParams.resolvedResultContract = hostResultContract;
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
 			const parentCwd = ctx.cwd;
@@ -5152,25 +5173,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			canPreferFork(ctx.sessionManager),
 		);
 		effectiveParams = contextPolicy.params;
-		if (effectiveParams.agent && effectiveParams.resume === undefined && effectiveParams.model === undefined && effectiveParams.thinking === undefined && delegatedThinkingOverride === undefined && discovered.childRouting?.enabled) {
-			const routedAgent = discoveredAgents.find((agent) => agent.name === effectiveParams.agent);
-			if (routedAgent?.runner?.type !== "external-cli" && routedAgent?.runner?.type !== "external-job") {
-				try {
-					const selection = await (deps.classifyChildProfile ?? classifyChildProfile)(ctx, discovered.childRouting, {
-						agent: effectiveParams.agent,
-						task: effectiveParams.task ?? "",
-						cwd: effectiveCwd,
-						parallel: effectiveParams.workflowParallel === true,
-						...(effectiveParams.context ? { context: effectiveParams.context } : {}),
-						...(requestParentModel ? { parentModel: requestParentModel } : {}),
-					}, signal);
-					if (selection) effectiveParams = { ...effectiveParams, model: selection.thinking ? `${selection.model}:${selection.thinking}` : selection.model, childRouting: selection };
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
-				}
-			}
-		}
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
@@ -5212,6 +5214,43 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			requestedSpawns,
 		);
 		if (spawnPreflight.error) return spawnBudgetErrorResult(spawnPreflight.error, foregroundMode);
+
+		if (effectiveParams.agent && effectiveParams.resume === undefined && effectiveParams.model === undefined && effectiveParams.thinking === undefined && delegatedThinkingOverride === undefined && discovered.childRouting?.enabled) {
+			const routedAgent = discoveredAgents.find((agent) => agent.name === effectiveParams.agent);
+			if (routedAgent?.runner?.type !== "external-cli" && routedAgent?.runner?.type !== "external-job") {
+				let selection: ChildRoutingSelection | null = null;
+				try {
+					selection = await (deps.classifyChildProfile ?? classifyChildProfile)(ctx, discovered.childRouting, {
+						agent: effectiveParams.agent,
+						task: effectiveParams.task ?? "",
+						cwd: effectiveCwd,
+						parallel: effectiveParams.workflowParallel === true,
+						...(effectiveParams.context ? { context: effectiveParams.context } : {}),
+						...(requestParentModel ? { parentModel: requestParentModel } : {}),
+					}, signal);
+				} catch (error) {
+					if (signal.aborted) throw error;
+					const message = error instanceof Error ? error.message : String(error);
+					if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
+				}
+				if (selection) {
+					let canonicalModel: string | undefined;
+					try {
+						canonicalModel = resolveSubagentModelOverride(selection.model, undefined, ctx.modelRegistry.getAvailable().map(toModelInfo), requestParentModel?.provider, { source: "inherited" });
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
+					}
+					if (canonicalModel) {
+						const violation = checkModelScope(canonicalModel, modelScope, "inherited");
+						if (violation?.severity === "error") return buildRequestedModeError(effectiveParams, violation.message);
+						if (violation) console.warn(`[pi-subagents] ${violation.message}`);
+						const routedSelection = { ...selection, model: canonicalModel };
+						effectiveParams = { ...effectiveParams, model: routedSelection.thinking ? `${canonicalModel}:${routedSelection.thinking}` : canonicalModel, childRouting: routedSelection };
+					}
+				}
+			}
+		}
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;
@@ -5722,8 +5761,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
+		const directCwd = resolveRequestedCwd(ctx.cwd, params.cwd);
 		const directDiscovery = typeof params.agent === "string" && params.agent.trim()
-			? deps.discoverAgents(params.cwd ?? ctx.cwd, resolveExecutionAgentScope(params.agentScope))
+			? deps.discoverAgents(directCwd, resolveExecutionAgentScope(params.agentScope))
 			: undefined;
 		const directAgent = directDiscovery && typeof params.agent === "string"
 			? resolveAgentName(params.agent.trim(), directDiscovery.agents).agent
@@ -5740,7 +5780,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}
-		return executeWithSingleDispatchGuard(id, normalized.params, signal, onUpdate, ctx);
+		const normalizedParams: HostOwnedParams = { ...normalized.params };
+		const hostResultContract = normalizedParams.resolvedResultContract;
+		delete normalizedParams.resolvedResultContract;
+		if (hostResultContract) Object.defineProperty(normalizedParams, HOST_RESULT_CONTRACT, { value: hostResultContract, enumerable: true });
+		return executeWithSingleDispatchGuard(id, normalizedParams, signal, onUpdate, ctx);
 	};
 
 	const executeDelegated = async (

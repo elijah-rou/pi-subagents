@@ -39,6 +39,7 @@ import {
 	type AgentContract,
 	type AsyncStatus,
 	type ArtifactConfig,
+	type ChildRoutingMetadata,
 	type Details,
 	type IntercomBridgeConfig,
 	type JsonSchemaObject,
@@ -221,6 +222,8 @@ interface AsyncSingleParams {
 	structuredOutputSchema?: JsonSchemaObject;
 	modelOverride?: string;
 	modelOverrideFromParent?: boolean;
+	childRouting?: ChildRoutingMetadata;
+	resultContract?: { id: string; version: 1; source: "role" };
 	thinkingOverride?: AgentConfig["thinking"];
 	availableModels?: AvailableModelInfo[];
 	maxSubagentDepth: number;
@@ -1514,6 +1517,8 @@ export function executeAsyncSingle(
 		cwd: runnerCwd,
 		...(model ? { model } : {}),
 		...(params.modelOverrideFromParent ? { modelOverrideFromParent: true } : {}),
+		...(params.childRouting ? { childRouting: params.childRouting } : {}),
+		...(params.resultContract ? { resultContract: params.resultContract } : {}),
 		...(recoveryAgentConfig.fallbackModels ? { fallbackModels: [...recoveryAgentConfig.fallbackModels] } : {}),
 		...(effectiveThinking ? { thinking: resolveEffectiveThinking(model, effectiveThinking) } : {}),
 		...(recoveryAgentConfig.tools ? { tools: [...recoveryAgentConfig.tools] } : {}),
@@ -1571,6 +1576,8 @@ export function executeAsyncSingle(
 						model,
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
 						modelCandidates,
+						...(params.childRouting ? { childRouting: params.childRouting } : {}),
+						...(params.resultContract ? { resultContract: params.resultContract } : {}),
 						tools: agentConfig.tools,
 						extensions: agentConfig.extensions,
 						subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,

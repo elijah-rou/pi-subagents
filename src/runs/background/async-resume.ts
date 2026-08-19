@@ -318,7 +318,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': expected an object.`);
 	const parsed = value as Record<string, unknown>;
 	const allowedFields = new Set([
-		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelOverrideFromParent", "fallbackModels", "thinking", "tools", "extensions",
+		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelOverrideFromParent", "childRouting", "resultContract", "fallbackModels", "thinking", "tools", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
@@ -346,6 +346,20 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (parsed.systemPromptMode !== "append" && parsed.systemPromptMode !== "replace") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': systemPromptMode is invalid.`);
 	if (parsed.outputMode !== "inline" && parsed.outputMode !== "file-only") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': outputMode is invalid.`);
 	if (parsed.modelOverrideFromParent !== undefined && typeof parsed.modelOverrideFromParent !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': modelOverrideFromParent must be a boolean.`);
+	if (parsed.childRouting !== undefined) {
+		if (!parsed.childRouting || typeof parsed.childRouting !== "object" || Array.isArray(parsed.childRouting)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting must be an object.`);
+		const routing = parsed.childRouting as Record<string, unknown>;
+		if (Object.keys(routing).some((key) => !["profile", "confidence", "source", "model", "thinking"].includes(key))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting has unknown fields.`);
+		if (typeof routing.profile !== "string" || !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(routing.profile)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting.profile is invalid.`);
+		if (!Number.isSafeInteger(routing.confidence) || (routing.confidence as number) < 0 || (routing.confidence as number) > 100) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting.confidence is invalid.`);
+		if (routing.source !== "child-router" || typeof routing.model !== "string" || !routing.model.trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting source/model is invalid.`);
+		if (routing.thinking !== undefined && (typeof routing.thinking !== "string" || !routing.thinking.trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting.thinking is invalid.`);
+	}
+	if (parsed.resultContract !== undefined) {
+		if (!parsed.resultContract || typeof parsed.resultContract !== "object" || Array.isArray(parsed.resultContract)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': resultContract must be an object.`);
+		const contract = parsed.resultContract as Record<string, unknown>;
+		if (Object.keys(contract).sort().join(",") !== "id,source,version" || typeof contract.id !== "string" || !contract.id.startsWith("pi-subagents/") || contract.version !== 1 || contract.source !== "role") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': resultContract is invalid.`);
+	}
 	for (const field of ["inheritProjectContext", "inheritSkills", "share"] as const) {
 		if (typeof parsed[field] !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a boolean.`);
 	}

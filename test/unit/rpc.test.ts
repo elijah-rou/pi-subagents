@@ -435,24 +435,30 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
-	it("lowers structured single-child spawn requests onto the async workflow path", async () => {
+	it("forwards direct text and custom-schema contracts unchanged for one executor normalization", async () => {
 		const events = new FakeEvents();
-		let executedParams: any;
+		const executedParams: any[] = [];
 		const bridge = registerSubagentRpcBridge({
 			events,
 			getContext: () => ctx(),
 			execute: async (_id, params) => {
-				executedParams = params;
+				executedParams.push(params);
 				return { content: [{ type: "text", text: "Async: worker [run-1]" }], details: { mode: "workflow", results: [], asyncId: "run-1" } } as any;
 			},
 		});
 
-		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work" });
+		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work", resultContract: "text" });
 		assert.equal(reply.success, true);
-		assert.equal(executedParams.agent, undefined);
-		assert.equal(executedParams.task, undefined);
-		assert.equal(executedParams.async, true);
-		assert.match(executedParams.workflowScript, /runs\.run\("main", \{"agent":"worker","task":"Do work","output":true\}\)/);
+		assert.equal(executedParams[0].agent, "worker");
+		assert.equal(executedParams[0].task, "Do work");
+		assert.equal(executedParams[0].async, true);
+		assert.equal(executedParams[0].resultContract, "text");
+		assert.equal(executedParams[0].workflowScript, undefined);
+		const schema = { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] };
+		const customReply = await request(events, "spawn-custom", "spawn", { agent: "worker", task: "Do work", outputSchema: schema });
+		assert.equal(customReply.success, true);
+		assert.deepEqual(executedParams[1].outputSchema, schema);
+		assert.equal(executedParams[1].resultContract, undefined);
 		bridge.dispose();
 	});
 

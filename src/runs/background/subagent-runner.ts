@@ -234,6 +234,8 @@ interface StepResult {
 	sessionFile?: string;
 	intercomTarget?: string;
 	model?: string;
+	childRouting?: import("../../shared/types.ts").ChildRoutingMetadata;
+	resultContract?: { id: string; version: 1; source: "role" };
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	totalCost?: CostSummary;
@@ -2167,7 +2169,13 @@ async function runSingleStepWithTimeout(
 	ctx: SingleStepContext,
 	parentDeadlineAt?: number,
 ): Promise<SingleStepResult> {
-	if (step.timeoutMs === undefined) return runSingleStep(step, ctx);
+	const withProvenance = async (resultPromise: Promise<SingleStepResult>): Promise<SingleStepResult> => {
+		const result = await resultPromise;
+		if (step.childRouting) result.childRouting = step.childRouting;
+		if (step.resultContract) result.resultContract = step.resultContract;
+		return result;
+	};
+	if (step.timeoutMs === undefined) return withProvenance(runSingleStep(step, ctx));
 
 	const parentRemainingMs = parentDeadlineAt === undefined ? undefined : Math.max(0, parentDeadlineAt - Date.now());
 	const timeoutMs = parentRemainingMs === undefined ? step.timeoutMs : Math.min(step.timeoutMs, parentRemainingMs);
@@ -2191,13 +2199,13 @@ async function runSingleStepWithTimeout(
 	const timer = setTimeout(triggerTimeout, timeoutMs);
 	timer.unref?.();
 	try {
-		return await runSingleStep(step, {
+		return await withProvenance(runSingleStep(step, {
 			...ctx,
 			registerTimeout,
 			deadlineAt: Date.now() + timeoutMs,
 			timeoutSignal: combinedAbortSignal([ctx.timeoutSignal, timeoutController.signal]),
 			timeoutMessage,
-		});
+		}));
 	} finally {
 		clearTimeout(timer);
 		ctx.registerTimeout?.(undefined);
@@ -2311,6 +2319,8 @@ async function runSubagent(
 				outputName: step.outputName,
 				structured: step.structured,
 				...(step.agentContract ? { agentContract: step.agentContract } : {}),
+				...(step.childRouting ? { childRouting: step.childRouting } : {}),
+				...(step.resultContract ? { resultContract: step.resultContract } : {}),
 				...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
 				...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
@@ -3912,6 +3922,8 @@ async function runSubagent(
 					agent: pr.agent,
 					context: pr.context,
 					agentContract: pr.agentContract,
+					childRouting: pr.childRouting,
+					resultContract: pr.resultContract,
 					launchContractDigest: pr.launchContractDigest,
 					launchResolvedExtensions: pr.launchResolvedExtensions,
 					runtimeAcknowledgedExtensions: pr.runtimeAcknowledgedExtensions,
@@ -4341,6 +4353,8 @@ async function runSubagent(
 						agent: pr.agent,
 						context: pr.context,
 						agentContract: pr.agentContract,
+						childRouting: pr.childRouting,
+						resultContract: pr.resultContract,
 						launchContractDigest: pr.launchContractDigest,
 						launchResolvedExtensions: pr.launchResolvedExtensions,
 						output: pr.output,
@@ -4566,6 +4580,8 @@ async function runSubagent(
 				agent: singleResult.agent,
 				context: singleResult.context,
 				agentContract: singleResult.agentContract,
+				childRouting: singleResult.childRouting,
+				resultContract: singleResult.resultContract,
 				launchContractDigest: singleResult.launchContractDigest,
 				launchResolvedExtensions: singleResult.launchResolvedExtensions,
 				runtimeAcknowledgedExtensions: singleResult.runtimeAcknowledgedExtensions,
@@ -4930,6 +4946,8 @@ async function runSubagent(
 				sessionFile: r.sessionFile,
 				intercomTarget: r.intercomTarget,
 				model: r.model,
+				childRouting: r.childRouting,
+				resultContract: r.resultContract,
 				attemptedModels: r.attemptedModels,
 				modelAttempts: r.modelAttempts,
 				totalCost: r.totalCost,

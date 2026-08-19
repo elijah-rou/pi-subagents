@@ -52,7 +52,7 @@ describe("slash subagent bridge requester context", () => {
     await done;
   });
 
-  it("lowers structured single-child execution before executor dispatch", async () => {
+  it("forwards direct result contracts unchanged for one executor normalization", async () => {
     const events = eventBus();
     let executedParams: any;
     registerSlashSubagentBridge({
@@ -68,10 +68,11 @@ describe("slash subagent bridge requester context", () => {
       events.on(RESPONSE, (data: any) => {
         try {
           assert.equal(data.isError, false);
-          assert.equal(executedParams.agent, undefined);
-          assert.equal(executedParams.task, undefined);
+          assert.equal(executedParams.agent, "worker");
+          assert.equal(executedParams.task, "work");
           assert.equal(executedParams.async, false);
-          assert.match(executedParams.workflowScript, /runs\.run\("main", \{"agent":"worker","task":"work","output":true\}\)/);
+          assert.equal(executedParams.resultContract, "role");
+          assert.equal(executedParams.workflowScript, undefined);
           resolve();
         } catch (error) {
           reject(error);
@@ -79,19 +80,20 @@ describe("slash subagent bridge requester context", () => {
       });
     });
 
-    events.emit(REQUEST, { requestId: "structured-single", params: { agent: "worker", task: "work", async: false } });
+    events.emit(REQUEST, { requestId: "structured-single", params: { agent: "worker", task: "work", async: false, resultContract: "role" } });
     await done;
   });
 
-  it("rejects removed chain and parallel inputs before executor dispatch", async () => {
+  it("leaves invalid-shape rejection to the executor boundary", async () => {
     const events = eventBus();
     let executeCalls = 0;
     registerSlashSubagentBridge({
       events,
       getContext: () => ({ cwd: "/repo" }) as any,
-      execute: async () => {
+      execute: async (_id, params) => {
         executeCalls++;
-        return { content: [{ type: "text", text: "unexpected" }], details: { mode: "single", results: [] } } as any;
+        assert.deepEqual(params.tasks, [{ agent: "worker", task: "work" }]);
+        return { content: [{ type: "text", text: "tasks is not a public execution field" }], isError: true, details: { mode: "workflow", results: [] } } as any;
       },
     });
 
@@ -99,8 +101,8 @@ describe("slash subagent bridge requester context", () => {
       events.on(RESPONSE, (data: any) => {
         try {
           assert.equal(data.isError, true);
-          assert.match(data.errorText, /removed.*workflowScript/i);
-          assert.equal(executeCalls, 0);
+          assert.match(data.errorText, /not a public execution field/i);
+          assert.equal(executeCalls, 1);
           resolve();
         } catch (error) {
           reject(error);

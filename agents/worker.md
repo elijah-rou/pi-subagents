@@ -57,7 +57,3 @@ Changed files: Y.
 Validation: Z.
 Open risks/questions: R.
 Recommended next step: N.
-
-## Structured role results
-
-When the package-owned `structured_output` tool is available, return the requested schema by calling that tool as the final action. Do not substitute prose for a required structured result. When the tool is absent, use the normal textual output format above.

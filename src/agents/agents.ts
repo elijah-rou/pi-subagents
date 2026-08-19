@@ -21,7 +21,7 @@ import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
-import { parseChildRoutingConfig, type ChildRoutingConfig } from "../routing/child-routing.ts";
+import { parseChildRoutingConfig, type ChildRoutingConfig } from "../routing/child-routing-config.ts";
 import type { DirectResultContract } from "../contracts/role-contracts.ts";
 
 export type AgentScope = "user" | "project" | "both";

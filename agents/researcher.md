@@ -50,7 +50,3 @@ What could not be answered confidently. Suggested next steps.
 
 ## Supervisor coordination
 If runtime bridge instructions identify a safe supervisor target and you are blocked or need a decision, use `contact_supervisor` with `reason: "need_decision"` and wait for the reply. Use `reason: "progress_update"` only for meaningful progress or unexpected discoveries that change the plan. Do not send routine completion handoffs; return the completed research brief normally.
-
-## Structured role results
-
-When the package-owned `structured_output` tool is available, return the requested schema by calling that tool as the final action. Do not substitute prose for a required structured result. When the tool is absent, use the normal textual output format above.

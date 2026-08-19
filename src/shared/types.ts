@@ -509,6 +509,8 @@ export interface SteeringRecoveryDescriptor {
 	cwd: string;
 	model?: string;
 	modelOverrideFromParent?: boolean;
+	childRouting?: ChildRoutingMetadata;
+	resultContract?: { id: string; version: 1; source: "role" };
 	fallbackModels?: string[];
 	thinking?: string;
 	tools?: string[];

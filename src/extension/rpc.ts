@@ -19,7 +19,6 @@ import {
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
-import { normalizePublicSubagentExecution } from "./public-execution.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
@@ -414,15 +413,16 @@ async function executeChecked(
 
 function spawnParams(params: unknown): SubagentParamsLike {
 	const input = assertRecordParams(params, "spawn");
-	const normalized = normalizePublicSubagentExecution(input);
-	if (!normalized.ok) throw new SubagentRpcError("invalid_params", normalized.error);
-	if (normalized.params.action !== undefined) {
-		throw new SubagentRpcError("invalid_params", "RPC spawn does not accept management/control actions. Use status or interrupt RPC methods instead.");
+	if (input.action !== undefined) throw new SubagentRpcError("invalid_params", "RPC spawn does not accept management/control actions. Use status or interrupt RPC methods instead.");
+	if (input.async === false) throw new SubagentRpcError("invalid_params", "RPC spawn only supports detached async launches; omit async or set async: true.");
+	for (const field of ["step", "tasks", "chain", "parallel", "concurrency"] as const) {
+		if (input[field] !== undefined) throw new SubagentRpcError("invalid_params", `${field} is not a public spawn field; use workflowScript for orchestration.`);
 	}
-	if (input.async === false) {
-		throw new SubagentRpcError("invalid_params", "RPC spawn only supports detached async launches; omit async or set async: true.");
-	}
-	return { ...(normalized.params as SubagentParamsLike), async: true };
+	const hasWorkflow = typeof input.workflowScript === "string" && input.workflowScript.trim().length > 0;
+	const hasAgent = typeof input.agent === "string" && input.agent.trim().length > 0;
+	if (hasWorkflow && (input.agent !== undefined || input.task !== undefined)) throw new SubagentRpcError("invalid_params", "Direct single-child execution cannot be combined with workflowScript.");
+	if (!hasWorkflow && !hasAgent) throw new SubagentRpcError("invalid_params", "RPC spawn requires workflowScript or a direct agent.");
+	return { ...(input as SubagentParamsLike), async: true };
 }
 
 function steerParams(params: unknown): SubagentParamsLike {

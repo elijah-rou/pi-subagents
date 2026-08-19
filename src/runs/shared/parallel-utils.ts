@@ -23,6 +23,8 @@ export interface RunnerSubagentStep {
 	cwd?: string;
 	model?: string;
 	thinking?: string;
+	childRouting?: import("../../shared/types.ts").ChildRoutingMetadata;
+	resultContract?: { id: string; version: 1; source: "role" };
 	modelCandidates?: string[];
 	tools?: string[];
 	extensions?: string[];

@@ -497,6 +497,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			foregroundControls: new Map(),
 			lastForegroundControlId: null,
 		};
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed" } } };
 		const executor = createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state,
@@ -505,7 +506,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
 			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
+			discoverAgents: () => ({ agents: [makeAgent("echo")], childRouting: routing }),
+			classifyChildProfile: async () => ({ profile: "standard", description: "standard", model: "test/routed", confidence: 90, source: "child-router" }),
 			allowMutatingManagementActions: true,
 		});
 
@@ -539,6 +541,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 		assert.equal(terminalChild?.status, "completed", "detached child should reach its terminal callback before teardown");
 		assert.equal(terminalChild.finalOutput, "completed after user detach");
+		assert.equal(terminalChild.childRouting?.profile, "standard");
 	});
 
 	it("rejects action='single' with execution fields", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -3578,6 +3581,24 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(result.details.results[0]?.resultContract, { id: "pi-subagents/generic", version: 1, source: "role" });
 	});
 
+	it("resolves relative direct cwd before shadow and result-contract discovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const nested = path.join(tempDir, "nested");
+		fs.mkdirSync(nested);
+		const projectReviewer = makeAgent("reviewer", { source: "project", filePath: path.join(nested, ".pi/agents/reviewer.md") });
+		const discoveredCwds: string[] = [];
+		const value = { contract: { id: "pi-subagents/generic", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { deliverables: [], decisionsNeeded: [], nextSteps: [] } };
+		mockPi.onCall({ stdoutRaw: [
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+			{ type: "tool_execution_end", toolName: "structured_output" },
+		].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
+		const executor = makeExecutor([projectReviewer], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), (cwd) => { discoveredCwds.push(cwd); return [projectReviewer]; }, { directResultDefault: "role" });
+		const result = await executor.executePublic("relative-cwd", { agent: "reviewer", task: "review", cwd: "nested", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined);
+		assert.ok(discoveredCwds.every((cwd) => cwd === nested));
+		assert.equal(result.details.results[0]?.resultContract?.id, "pi-subagents/generic");
+	});
+
 	it("persists direct role and routing provenance for async workflow children", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const value = { contract: { id: "pi-subagents/generic", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { deliverables: [], decisionsNeeded: [], nextSteps: [] } };
 		mockPi.onCall({ stdoutRaw: [
@@ -3600,6 +3621,39 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(status.state, "complete");
 		assert.equal(status.steps?.[0]?.childRouting?.profile, "standard");
 		assert.equal(status.steps?.[0]?.resultContract?.id, "pi-subagents/generic");
+	});
+
+	it("persists immutable routing provenance for genuine async single runs and recovery", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "async routed" });
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed", thinking: "high" } } };
+		const classify = async () => ({ profile: "standard", description: "standard", model: "test/routed", thinking: "high" as const, confidence: 90, source: "child-router" as const });
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
+		const started = await executor.execute("async-single-route", { agent: "echo", task: "async route", async: true }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(started.isError, undefined);
+		const asyncDir = started.details.asyncDir!;
+		const statusPath = path.join(asyncDir, "status.json");
+		let status: AsyncStatus | undefined;
+		for (let attempt = 0; attempt < 150; attempt++) {
+			if (!fs.existsSync(statusPath)) { await new Promise((resolve) => setTimeout(resolve, 20)); continue; }
+			status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+			if (["complete", "failed"].includes(status.state)) break;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.equal(status?.state, "complete");
+		assert.equal(status.steps?.[0]?.childRouting?.profile, "standard");
+		const recovery = JSON.parse(fs.readFileSync(path.join(asyncDir, "recovery-descriptor.json"), "utf-8"));
+		assert.equal(recovery.childRouting.profile, "standard");
+		const result = JSON.parse(fs.readFileSync(path.join(DIRS.results, `${started.details.asyncId}.json`), "utf-8"));
+		assert.equal(result.results[0].childRouting.profile, "standard");
+	});
+
+	it("strips workflow-forged routing and result provenance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "plain" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute("forged-provenance", { agent: "echo", task: "work", async: false, childRouting: { profile: "forged", description: "forged", model: "test/expensive", confidence: 100, source: "child-router" }, resolvedResultContract: { id: "pi-subagents/reviewer", version: 1, source: "role" } }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.results[0]?.childRouting, undefined);
+		assert.equal(result.details.results[0]?.resultContract, undefined);
 	});
 
 	it("rejects role contracts for external runners before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -3634,6 +3688,77 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const fallback = await failing.executePublic("fallback", { agent: "echo", task: "fall back", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(fallback.isError, undefined);
 		assert.match(readCallArgs().join(" "), /test\/fallback/);
+	});
+
+	it("strictly canonicalizes advisory models and preserves inherited model-scope semantics", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed_alias", thinking: "high" } } };
+		const classify = async () => ({ profile: "standard", description: "standard", model: "test/routed_alias", thinking: "high" as const, confidence: 90, source: "child-router" as const });
+		const ctx = makeMinimalCtx(tempDir) as any;
+		ctx.model = { provider: "test", id: "fallback" };
+		ctx.modelRegistry.getAvailable = () => [{ provider: "test", id: "routed-alias" }, { provider: "test", id: "fallback" }];
+
+		mockPi.onCall({ output: "canonical" });
+		const canonical = makeExecutor([makeAgent("echo", { model: "test/fallback" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
+		const canonicalResult = await canonical.executePublic("canonical-route", { agent: "echo", task: "route", async: false }, new AbortController().signal, undefined, ctx);
+		assert.equal(canonicalResult.isError, undefined);
+		assert.match(readCallArgs().join(" "), /test\/routed-alias:high/);
+		assert.equal(canonicalResult.details.results[0]?.childRouting?.model, "test/routed-alias");
+
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => { warnings.push(String(message)); };
+		try {
+			mockPi.onCall({ output: "warned" });
+			const warned = makeExecutor([makeAgent("echo", { model: "test/fallback" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing, modelScope: { enforce: true, allow: ["anthropic/*"] } }, classify as never);
+			const warnedResult = await warned.executePublic("warn-route", { agent: "echo", task: "route", async: false }, new AbortController().signal, undefined, ctx);
+			assert.equal(warnedResult.isError, undefined);
+			assert.ok(warnings.some((message) => message.includes("outside the configured subagent model scope")));
+		} finally { console.warn = originalWarn; }
+
+		const beforeStrictCalls = mockPi.callCount();
+		const strict = makeExecutor([makeAgent("echo", { model: "test/fallback" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing, modelScope: { enforce: true, strict: true, allow: ["anthropic/*"] } }, classify as never);
+		const strictResult = await strict.executePublic("strict-route", { agent: "echo", task: "route", async: false }, new AbortController().signal, undefined, ctx);
+		assert.equal(strictResult.isError, true);
+		assert.match(strictResult.content[0]?.text ?? "", /outside the configured subagent model scope/);
+		assert.equal(mockPi.callCount(), beforeStrictCalls);
+
+		mockPi.onCall({ output: "fallback" });
+		const unavailable = makeExecutor([makeAgent("echo", { model: "test/fallback" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, (async () => ({ ...(await classify()), model: "test/missing" })) as never);
+		const unavailableResult = await unavailable.executePublic("unavailable-route", { agent: "echo", task: "route", async: false }, new AbortController().signal, undefined, ctx);
+		assert.equal(unavailableResult.isError, undefined);
+		assert.match(readCallArgs().join(" "), /test\/fallback/);
+		assert.equal(unavailableResult.details.results[0]?.childRouting, undefined);
+	});
+
+	it("does not classify invalid or exhausted launches and propagates caller cancellation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed" } } };
+		let calls = 0;
+		const classify = async () => { calls++; return { profile: "standard", description: "standard", model: "test/routed", confidence: 90, source: "child-router" as const }; };
+		const invalid = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
+		const invalidResult = await invalid.execute("invalid-before-route", { agent: "missing", task: "work", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(invalidResult.isError, true);
+		assert.equal(calls, 0);
+
+		const spawnState = { sessionId: "session-123", count: 1, configuredLimit: 1, granted: 0, grantHistory: [] };
+		const exhausted = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 1 }, false, spawnState, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
+		const exhaustedResult = await exhausted.execute("exhausted-before-route", { agent: "echo", task: "work", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(exhaustedResult.isError, true);
+		assert.equal(calls, 0);
+
+		const controller = new AbortController();
+		const cancellingClassifier = async (_ctx: unknown, _config: unknown, _request: unknown, signal?: AbortSignal) => {
+			calls++;
+			await new Promise<void>((_resolve, reject) => {
+				const abort = () => reject(new Error("classification cancelled"));
+				if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
+			});
+			return null;
+		};
+		const cancelling = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, cancellingClassifier as never);
+		const pending = cancelling.execute("cancel-route", { agent: "echo", task: "work", async: false }, controller.signal, undefined, makeMinimalCtx(tempDir));
+		setTimeout(() => controller.abort(), 10);
+		await assert.rejects(pending, /classification cancelled/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("accepts recovered tool errors before valid structured output but rejects later errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

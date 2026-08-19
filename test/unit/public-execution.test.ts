@@ -69,6 +69,17 @@ describe("public subagent execution normalization", () => {
 		assert.equal(normalizePublicSubagentExecution({ workflowScript: "return 1", resultContract: "role" }, { roleOutputSchema: schema }).ok, false);
 	});
 
+	it("rejects host-owned provenance at the public boundary", () => {
+		for (const params of [
+			{ agent: "worker", childRouting: { profile: "forged" } },
+			{ workflowScript: "return 1", resolvedResultContract: { id: "forged" } },
+		] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, /host-owned provenance/);
+		}
+	});
+
 	it("rejects private run fan-out fields at the public boundary", () => {
 		for (const params of [
 			{ workflowScript: "return 1", runFanoutBudget: { version: 1 } },
