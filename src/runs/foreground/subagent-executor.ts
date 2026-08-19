@@ -5215,43 +5215,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		);
 		if (spawnPreflight.error) return spawnBudgetErrorResult(spawnPreflight.error, foregroundMode);
 
-		if (effectiveParams.agent && effectiveParams.resume === undefined && effectiveParams.model === undefined && effectiveParams.thinking === undefined && delegatedThinkingOverride === undefined && discovered.childRouting?.enabled) {
-			const routedAgent = discoveredAgents.find((agent) => agent.name === effectiveParams.agent);
-			if (routedAgent?.runner?.type !== "external-cli" && routedAgent?.runner?.type !== "external-job") {
-				let selection: ChildRoutingSelection | null = null;
-				try {
-					selection = await (deps.classifyChildProfile ?? classifyChildProfile)(ctx, discovered.childRouting, {
-						agent: effectiveParams.agent,
-						task: effectiveParams.task ?? "",
-						cwd: effectiveCwd,
-						parallel: effectiveParams.workflowParallel === true,
-						...(effectiveParams.context ? { context: effectiveParams.context } : {}),
-						...(requestParentModel ? { parentModel: requestParentModel } : {}),
-					}, signal);
-				} catch (error) {
-					if (signal.aborted) throw error;
-					const message = error instanceof Error ? error.message : String(error);
-					if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
-				}
-				if (selection) {
-					let canonicalModel: string | undefined;
-					try {
-						canonicalModel = resolveSubagentModelOverride(selection.model, undefined, ctx.modelRegistry.getAvailable().map(toModelInfo), requestParentModel?.provider, { source: "inherited" });
-					} catch (error) {
-						const message = error instanceof Error ? error.message : String(error);
-						if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
-					}
-					if (canonicalModel) {
-						const violation = checkModelScope(canonicalModel, modelScope, "inherited");
-						if (violation?.severity === "error") return buildRequestedModeError(effectiveParams, violation.message);
-						if (violation) console.warn(`[pi-subagents] ${violation.message}`);
-						const routedSelection = { ...selection, model: canonicalModel };
-						effectiveParams = { ...effectiveParams, model: routedSelection.thinking ? `${canonicalModel}:${routedSelection.thinking}` : canonicalModel, childRouting: routedSelection };
-					}
-				}
-			}
-		}
-
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;
 		let forkThinkingOverrideForIndex: (idx?: number) => AgentConfig["thinking"] | undefined = () => undefined;
 		let prepareForkThinking = (_agentName: string, _index: number, _modelOverride?: string, _modelOverrideFromParent?: boolean): void => {};
@@ -5341,6 +5304,43 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text: error.message }], isError: true, details: { mode: foregroundMode, results: [], activeAsyncCapacity: error.snapshot } };
 				}
 				throw error;
+			}
+		}
+
+		if (effectiveParams.agent && effectiveParams.resume === undefined && effectiveParams.model === undefined && effectiveParams.thinking === undefined && delegatedThinkingOverride === undefined && discovered.childRouting?.enabled) {
+			const routedAgent = discoveredAgents.find((agent) => agent.name === effectiveParams.agent);
+			if (routedAgent?.runner?.type !== "external-cli" && routedAgent?.runner?.type !== "external-job") {
+				let selection: ChildRoutingSelection | null = null;
+				try {
+					selection = await (deps.classifyChildProfile ?? classifyChildProfile)(ctx, discovered.childRouting, {
+						agent: effectiveParams.agent,
+						task: effectiveParams.task ?? "",
+						cwd: effectiveCwd,
+						parallel: effectiveParams.workflowParallel === true,
+						...(effectiveParams.context ? { context: effectiveParams.context } : {}),
+						...(requestParentModel ? { parentModel: requestParentModel } : {}),
+					}, signal);
+				} catch (error) {
+					if (signal.aborted) { activeAsyncCapacity?.rollback(); throw error; }
+					const message = error instanceof Error ? error.message : String(error);
+					if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
+				}
+				if (selection) {
+					let canonicalModel: string | undefined;
+					try {
+						canonicalModel = resolveSubagentModelOverride(selection.model, undefined, ctx.modelRegistry.getAvailable().map(toModelInfo), requestParentModel?.provider, { source: "inherited" });
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
+					}
+					if (canonicalModel) {
+						const violation = checkModelScope(canonicalModel, modelScope, "inherited");
+						if (violation?.severity === "error") { activeAsyncCapacity?.rollback(); return buildRequestedModeError(effectiveParams, violation.message); }
+						if (violation) console.warn(`[pi-subagents] ${violation.message}`);
+						const routedSelection = { ...selection, model: canonicalModel };
+						effectiveParams = { ...effectiveParams, model: routedSelection.thinking ? `${canonicalModel}:${routedSelection.thinking}` : canonicalModel, childRouting: routedSelection };
+					}
+				}
 			}
 		}
 
