@@ -15,7 +15,6 @@ import {
 	parseAcceptanceReport,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
-	structuredOutputHasAcceptanceReport,
 	validateAcceptanceInput,
 	validateExecutionAcceptance,
 } from "../../src/runs/shared/acceptance.ts";
@@ -234,12 +233,8 @@ describe("acceptance gates", () => {
 		assert.match(acceptanceFailureMessage(ledger) ?? "", /Structured acceptance report not found/);
 	});
 
-	it("uses the structured acceptanceReport field when the output schema owns it", async () => {
+	it("uses the structured acceptanceReport field when the host selects it", async () => {
 		const resolved = resolveEffectiveAcceptance({ agentName: "reviewer", task: "Review the fix", explicit: "attested" });
-		const schema = { type: "object", properties: { acceptanceReport: { type: "object" } } };
-		assert.equal(structuredOutputHasAcceptanceReport(schema), true);
-		assert.equal(structuredOutputHasAcceptanceReport({ type: "object", properties: { result: { type: "string" } } }), false);
-
 		const prompt = formatAcceptancePrompt(resolved, { structuredReport: true });
 		assert.match(prompt, /top-level `acceptanceReport` field/);
 		assert.doesNotMatch(prompt, /```acceptance-report/);

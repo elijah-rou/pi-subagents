@@ -3351,6 +3351,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			modelScope: data.modelScope,
 			skills: effectiveSkills,
 			structuredOutput: structuredRuntime,
+			roleResultContract: params.resolvedResultContract,
 			agentContract: params.agentContract,
 			acceptance: params.acceptance,
 			acceptanceContext: { mode: "single" },

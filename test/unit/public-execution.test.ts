@@ -65,6 +65,13 @@ describe("public subagent execution normalization", () => {
 		const text = normalizePublicSubagentExecution({ agent: "worker", task: "work", resultContract: "text" }, { directResultDefault: "role", roleOutputSchema: schema });
 		assert.equal(text.ok, true);
 		if (text.ok) assert.equal(text.params.outputSchema, undefined);
+		const collisionSchema = { type: "object", properties: { acceptanceReport: { type: "string" } } };
+		const custom = normalizePublicSubagentExecution({ agent: "worker", task: "work", outputSchema: collisionSchema }, { directResultDefault: "role", roleOutputSchema: schema });
+		assert.equal(custom.ok, true);
+		if (custom.ok) {
+			assert.deepEqual(custom.params.outputSchema, collisionSchema);
+			assert.equal(custom.params.resolvedResultContract, undefined);
+		}
 		assert.equal(normalizePublicSubagentExecution({ agent: "worker", resultContract: "role", outputSchema: schema }, { roleOutputSchema: schema }).ok, false);
 		assert.equal(normalizePublicSubagentExecution({ workflowScript: "return 1", resultContract: "role" }, { roleOutputSchema: schema }).ok, false);
 	});

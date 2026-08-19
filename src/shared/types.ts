@@ -1886,6 +1886,8 @@ export interface RunSyncOptions {
 		schemaPath: string;
 		outputPath: string;
 	};
+	/** Host-owned package role capability. Caller output schemas must not set this. */
+	roleResultContract?: { id: string; version: 1; source: "role" };
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
 	acceptanceContext?: {

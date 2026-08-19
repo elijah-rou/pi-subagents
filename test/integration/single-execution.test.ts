@@ -29,7 +29,6 @@ import {
 import registerSubagentExtension from "../../src/extension/index.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
-import { roleResultSchema } from "../../src/contracts/role-contracts.ts";
 import {
 	SUBAGENT_DELEGATION_REQUEST_EVENT,
 	SUBAGENT_DELEGATION_RESPONSE_EVENT,
@@ -3565,6 +3564,35 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
 	});
 
+	it("keeps prose acceptance for a foreground custom-schema acceptanceReport collision", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const acceptanceReport = {
+			criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+			changedFiles: [], testsAddedOrUpdated: [],
+			commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+			residualRisks: [], noStagedFiles: true,
+		};
+		const value = { ok: true, acceptanceReport: "domain metadata" };
+		const prose = `done\n\`\`\`acceptance-report\n${JSON.stringify(acceptanceReport)}\n\`\`\``;
+		mockPi.onCall({ stdoutRaw: [
+			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: prose }], model: "mock/test-model", stopReason: "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+			{ type: "tool_execution_end", toolName: "structured_output" },
+		].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
+		const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
+		const result = await executor.execute("foreground-custom-collision", {
+			agent: "worker",
+			task: "Implement typed data",
+			async: false,
+			outputSchema: { type: "object", required: ["ok", "acceptanceReport"], properties: { ok: { type: "boolean" }, acceptanceReport: { type: "string" } }, additionalProperties: false },
+		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined);
+		assert.deepEqual(result.details.results[0]?.structuredOutput, value);
+		assert.deepEqual(result.details.results[0]?.acceptance?.childReport, acceptanceReport);
+		assert.match(readCallArgs().join(" "), /```acceptance-report/);
+		assert.doesNotMatch(readCallArgs().join(" "), /top-level `acceptanceReport` field/);
+	});
+
 	it("applies the configured generic role contract only to public direct calls", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const value = { contract: { id: "pi-subagents/generic", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { deliverables: [], decisionsNeeded: [], nextSteps: [] } };
 		mockPi.onCall({
@@ -3684,9 +3712,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const workflowResult = (status as unknown as { workflow?: { value?: { results?: Array<{ acceptance?: { childReport?: unknown; childReportParseError?: string } }> } } }).workflow?.value?.results?.[0];
 		assert.deepEqual(workflowResult?.acceptance?.childReport, acceptanceReport);
 		assert.equal(workflowResult?.acceptance?.childReportParseError, undefined);
+		assert.match(readCallArgs().join(" "), /top-level `acceptanceReport` field/);
+		assert.doesNotMatch(readCallArgs().join(" "), /```acceptance-report/);
 	});
 
-	it("evaluates a package role acceptance report in a genuine async worker run", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("keeps prose acceptance authoritative for a genuine async custom-schema collision", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const acceptanceReport = {
 			criteriaSatisfied: [
 				{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
@@ -3696,26 +3726,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
 			residualRisks: [], noStagedFiles: true,
 		};
-		const value = { contract: { id: "pi-subagents/worker", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { changedFiles: [], validation: [], decisionsNeeded: [] }, acceptanceReport };
+		const value = { ok: true, acceptanceReport: "domain metadata" };
+		const prose = `done\n\`\`\`acceptance-report\n${JSON.stringify(acceptanceReport)}\n\`\`\``;
 		mockPi.onCall({ stdoutRaw: [
+			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: prose }], model: "mock/test-model", stopReason: "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
 			{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
 			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
 			{ type: "tool_execution_end", toolName: "structured_output" },
 		].map((entry) => JSON.stringify(entry)).join("\n") + "\n", structuredOutputCapture: value });
-		const worker = makeAgent("worker", { source: "builtin", completionGuard: false });
-		const executor = makeExecutor([worker]);
-		const started = await executor.execute("genuine-async-worker-role", {
-			agent: "worker", task: "Implement typed async", async: true, outputSchema: roleResultSchema(worker),
+		const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
+		const started = await executor.execute("genuine-async-custom-collision", {
+			agent: "worker",
+			task: "Implement typed async",
+			async: true,
+			outputSchema: { type: "object", required: ["ok", "acceptanceReport"], properties: { ok: { type: "boolean" }, acceptanceReport: { type: "string" } }, additionalProperties: false },
 		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(started.isError, undefined);
 		const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
-		let persisted: { state?: string; results?: Array<{ acceptance?: { childReport?: unknown; childReportParseError?: string } }> } = {};
+		let persisted: { state?: string; results?: Array<{ acceptance?: { childReport?: unknown; childReportParseError?: string }; structuredOutput?: unknown }> } = {};
 		for (let attempt = 0; attempt < 150; attempt++) {
 			if (fs.existsSync(resultPath)) persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 			if (["complete", "failed"].includes(persisted.state ?? "")) break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
 		assert.equal(persisted.state, "complete");
+		assert.deepEqual(persisted.results?.[0]?.structuredOutput, value);
 		assert.deepEqual(persisted.results?.[0]?.acceptance?.childReport, acceptanceReport);
 		assert.equal(persisted.results?.[0]?.acceptance?.childReportParseError, undefined);
 	});

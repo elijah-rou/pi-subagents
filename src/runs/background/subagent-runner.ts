@@ -126,7 +126,8 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceFailureMessage, acceptanceReportFromStructuredOutput, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, structuredOutputHasAcceptanceReport } from "../shared/acceptance.ts";
+import { validateRoleResultContractMetadata } from "../../routing/child-routing-provenance.ts";
+import { acceptanceFailureMessage, acceptanceReportFromStructuredOutput, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
@@ -1278,7 +1279,10 @@ async function runSingleStepInner(
 	let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
 	if (ctx.outputs) task = resolveOutputReferences(task, ctx.outputs);
 	const taskForCompletionGuard = task;
-	const structuredAcceptanceReport = structuredOutputHasAcceptanceReport(effectiveStructuredOutput?.schema);
+	const validatedRoleResultContract = step.resultContract === undefined
+		? undefined
+		: validateRoleResultContractMetadata(step.resultContract, "Host role result contract");
+	const structuredAcceptanceReport = validatedRoleResultContract !== undefined;
 	if (step.effectiveAcceptance) {
 		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, {
 			reportOptional: isAgentContractV1(step.agentContract),

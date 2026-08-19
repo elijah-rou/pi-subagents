@@ -21,7 +21,6 @@ import type {
 	ResolvedAcceptanceGate,
 	SingleResult,
 	SubagentRunMode,
-	JsonSchemaObject,
 } from "../../shared/types.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";
@@ -403,12 +402,6 @@ export function resolveEffectiveAcceptance(input: {
 
 function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): boolean {
 	return acceptance.criteria.length > 0 || acceptance.evidence.length > 0;
-}
-
-export function structuredOutputHasAcceptanceReport(schema: JsonSchemaObject | undefined): boolean {
-	if (!schema || typeof schema !== "object" || Array.isArray(schema)) return false;
-	const properties = (schema as { properties?: unknown }).properties;
-	return Boolean(properties && typeof properties === "object" && !Array.isArray(properties) && Object.hasOwn(properties, "acceptanceReport"));
 }
 
 export function acceptanceReportFromStructuredOutput(output: unknown): unknown {
