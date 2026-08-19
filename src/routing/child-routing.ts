@@ -55,7 +55,7 @@ export function parseChildRoutingSuggestion(value: string, profiles: Record<stri
 	try {
 		const parsed = JSON.parse(value.trim()) as unknown;
 		if (!isRecord(parsed) || Object.keys(parsed).sort().join(",") !== "confidence,profile") return null;
-		if (typeof parsed.profile !== "string" || profiles[parsed.profile] === undefined) return null;
+		if (typeof parsed.profile !== "string" || !Object.hasOwn(profiles, parsed.profile)) return null;
 		if (!Number.isSafeInteger(parsed.confidence) || Number(parsed.confidence) < 0 || Number(parsed.confidence) > 100) return null;
 		return { profile: parsed.profile, confidence: Number(parsed.confidence) };
 	} catch { return null; }

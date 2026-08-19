@@ -30,6 +30,7 @@ describe("child routing", () => {
 		assert.deepEqual(parseChildRoutingSuggestion('{"profile":"fast","confidence":80}', profiles), { profile: "fast", confidence: 80 });
 		assert.equal(parseChildRoutingSuggestion('{"profile":"fast","confidence":80,"reason":"x"}', profiles), null);
 		assert.equal(parseChildRoutingSuggestion('{"profile":"missing","confidence":80}', profiles), null);
+		assert.equal(parseChildRoutingSuggestion('{"profile":"constructor","confidence":80}', profiles), null);
 	});
 
 	it("bounds task and context input", () => {
