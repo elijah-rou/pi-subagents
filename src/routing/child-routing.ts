@@ -22,32 +22,43 @@ export function buildChildRoutingSystemPrompt(): string {
 }
 
 const MAX_CLASSIFIER_INPUT_BYTES = 16_384;
+const encodedBytes = (value: string) => new TextEncoder().encode(value).byteLength;
+function boundedJsonText(value: string, maxEncodedBytes: number): string {
+	const compact = value.replace(/\s+/g, " ").trim();
+	if (encodedBytes(JSON.stringify(compact)) <= maxEncodedBytes) return compact;
+	let low = 0;
+	let high = compact.length;
+	while (low < high) {
+		const middle = Math.ceil((low + high) / 2);
+		if (encodedBytes(JSON.stringify(compact.slice(0, middle))) <= maxEncodedBytes) low = middle;
+		else high = middle - 1;
+	}
+	return compact.slice(0, low);
+}
 function serializedInput(request: ChildRoutingRequest, config: ChildRoutingConfig, taskChars: number): string {
-	const compact = (value: string, max: number) => value.replace(/\s+/g, " ").trim().slice(0, max);
 	return JSON.stringify({
-		agent: compact(request.agent, 128),
-		task: compact(request.task, taskChars),
-		cwd: compact(request.cwd, 240),
+		agent: boundedJsonText(request.agent, 512),
+		task: request.task.replace(/\s+/g, " ").trim().slice(0, taskChars),
+		cwd: boundedJsonText(request.cwd, 960),
 		parallel: request.parallel,
 		context: request.context ?? null,
-		parentModel: request.parentModel ? `${request.parentModel.provider}/${request.parentModel.id}` : null,
-		profiles: Object.fromEntries(Object.entries(config.profiles).map(([name, profile]) => [name, { description: profile.description }])),
+		parentModel: request.parentModel ? boundedJsonText(`${request.parentModel.provider}/${request.parentModel.id}`, 1_024) : null,
+		profiles: Object.fromEntries(Object.entries(config.profiles).map(([name, profile]) => [name, { description: boundedJsonText(profile.description, 640) }])),
 	});
 }
 
 export function buildChildRoutingInput(request: ChildRoutingRequest, config: ChildRoutingConfig): string {
 	let result = serializedInput(request, config, 12_000);
-	const bytes = (value: string) => new TextEncoder().encode(value).byteLength;
-	if (bytes(result) <= MAX_CLASSIFIER_INPUT_BYTES) return result;
+	if (encodedBytes(result) <= MAX_CLASSIFIER_INPUT_BYTES) return result;
 	let low = 0;
 	let high = 11_999;
 	while (low < high) {
 		const middle = Math.ceil((low + high) / 2);
-		if (bytes(serializedInput(request, config, middle)) <= MAX_CLASSIFIER_INPUT_BYTES) low = middle;
+		if (encodedBytes(serializedInput(request, config, middle)) <= MAX_CLASSIFIER_INPUT_BYTES) low = middle;
 		else high = middle - 1;
 	}
 	result = serializedInput(request, config, low);
-	if (bytes(result) > MAX_CLASSIFIER_INPUT_BYTES) throw new Error("Child routing classifier input exceeds 16384 bytes before task data.");
+	if (encodedBytes(result) > MAX_CLASSIFIER_INPUT_BYTES) throw new Error("Child routing classifier input exceeds 16384 bytes before task data.");
 	return result;
 }
 
@@ -61,11 +72,12 @@ export function parseChildRoutingSuggestion(value: string, profiles: Record<stri
 	} catch { return null; }
 }
 
-function assistantText(agent: Agent): string {
-	for (let index = agent.state.messages.length - 1; index >= 0; index--) {
-		const message = agent.state.messages[index] as { role?: string; content?: Array<{ type?: string; text?: string }> } | undefined;
+export function latestAssistantText(messages: readonly unknown[]): string {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index] as { role?: string; content?: Array<{ type?: string; text?: string }> } | undefined;
 		if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-		return message.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
+		const text = message.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
+		if (text) return text;
 	}
 	return "";
 }
@@ -122,7 +134,7 @@ export async function classifyChildProfile(ctx: ExtensionContext, config: ChildR
 		agent = new Agent({ initialState: { systemPrompt: buildChildRoutingSystemPrompt(), model, thinkingLevel: config.classifier.thinking, tools: [] }, convertToLlm, ...agentStreamOptions(streamFn), getApiKey: async () => auth.apiKey, toolExecution: "sequential" });
 		controller.signal.addEventListener("abort", () => agent?.abort(), { once: true });
 		await raceWithAbort(agent.prompt(buildChildRoutingInput(request, config)), controller.signal);
-		const output = assistantText(agent);
+		const output = latestAssistantText(agent.state.messages);
 		const suggestion = parseChildRoutingSuggestion(output, config.profiles);
 		if (!suggestion) throw new Error(output ? "Child routing classifier returned malformed output." : "Child routing classifier returned no output.");
 		if (suggestion.confidence < config.threshold) return null;

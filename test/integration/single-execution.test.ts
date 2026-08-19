@@ -3698,6 +3698,36 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(readCallArgs().join(" "), /test\/fallback/);
 	});
 
+	it("never launches doubled thinking suffixes in sync or async mode", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "invalid", model: "test/routed:low", thinking: "high" } } };
+		const classify = async () => ({ profile: "standard", description: "invalid", model: "test/routed:low", thinking: "high" as const, confidence: 90, source: "child-router" as const });
+		const executor = makeExecutor([makeAgent("echo", { model: "test/fallback" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
+		const originalWarn = console.warn;
+		console.warn = () => {};
+		try {
+			mockPi.onCall({ output: "sync fallback" });
+			const syncResult = await executor.executePublic("invalid-sync-route", { agent: "echo", task: "sync", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(syncResult.isError, undefined);
+			assert.match(readCallArgs().join(" "), /test\/fallback/);
+			assert.doesNotMatch(readCallArgs().join(" "), /:low:high/);
+			assert.equal(syncResult.details.results[0]?.childRouting, undefined);
+
+			mockPi.onCall({ output: "async fallback" });
+			const asyncResult = await executor.executePublic("invalid-async-route", { agent: "echo", task: "async", async: true, mission: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(asyncResult.isError, undefined);
+			for (let attempt = 0; attempt < 100 && mockPi.callCount() < 2; attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+			assert.match(readCallArgs().join(" "), /test\/fallback/);
+			assert.doesNotMatch(readCallArgs().join(" "), /:low:high/);
+			let status: { state?: string } = {};
+			for (let attempt = 0; attempt < 100; attempt++) {
+				status = JSON.parse(fs.readFileSync(path.join(asyncResult.details.asyncDir!, "status.json"), "utf-8"));
+				if (["complete", "failed"].includes(status.state ?? "")) break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			assert.equal(status.state, "complete");
+		} finally { console.warn = originalWarn; }
+	});
+
 	it("strictly canonicalizes advisory models and preserves inherited model-scope semantics", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed_alias", thinking: "high" } } };
 		const classify = async () => ({ profile: "standard", description: "standard", model: "test/routed_alias", thinking: "high" as const, confidence: 90, source: "child-router" as const });

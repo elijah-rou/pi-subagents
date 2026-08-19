@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildChildRoutingInput, buildChildRoutingSystemPrompt, parseChildRoutingConfig, parseChildRoutingSuggestion } from "../../src/routing/child-routing.ts";
+import { buildChildRoutingInput, buildChildRoutingSystemPrompt, latestAssistantText, parseChildRoutingConfig, parseChildRoutingSuggestion } from "../../src/routing/child-routing.ts";
 
 const raw = {
 	enabled: true,
@@ -23,6 +23,11 @@ describe("child routing", () => {
 		assert.equal(transport.classifier.serviceTier, "priority");
 		assert.throws(() => parseChildRoutingConfig({ ...raw, surprise: true }), /unsupported field/);
 		assert.throws(() => parseChildRoutingConfig({ ...raw, threshold: 101 }), /0 to 100/);
+		assert.throws(
+			() => parseChildRoutingConfig({ ...raw, profiles: { invalid: { description: "conflicting thinking", model: "test/child:low", thinking: "high" } } }),
+			/must not include a thinking suffix when profile\.thinking is set/,
+		);
+		assert.equal(parseChildRoutingConfig({ ...raw, profiles: { valid: { description: "model-owned thinking", model: "test/child:low" } } })?.profiles.valid?.model, "test/child:low");
 	});
 
 	it("accepts only exact classifier output", () => {
@@ -33,12 +38,22 @@ describe("child routing", () => {
 		assert.equal(parseChildRoutingSuggestion('{"profile":"constructor","confidence":80}', profiles), null);
 	});
 
-	it("bounds task and context input", () => {
-		const config = parseChildRoutingConfig(raw)!;
-		const input = buildChildRoutingInput({ agent: "worker", task: "🧠".repeat(20_000), cwd: "/tmp", parallel: true }, config);
+	it("selects the latest non-empty text-bearing assistant message", () => {
+		const messages = [
+			{ role: "assistant", content: [{ type: "text", text: '{"profile":"fast","confidence":90}' }] },
+			{ role: "assistant", content: [{ type: "toolCall", name: "unused" }] },
+			{ role: "assistant", content: [{ type: "text", text: "   " }] },
+		];
+		assert.equal(latestAssistantText(messages), '{"profile":"fast","confidence":90}');
+	});
+
+	it("bounds maximum Unicode profile and model fields plus task and context input", () => {
+		const profiles = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`p${index}`, { description: "界".repeat(240), model: `test/${"界".repeat(240)}` }]));
+		const config = parseChildRoutingConfig({ ...raw, classifier: { ...raw.classifier, model: `test/${"界".repeat(240)}` }, profiles })!;
+		const input = buildChildRoutingInput({ agent: "🧠".repeat(1_000), task: "🧠".repeat(20_000), cwd: `/${"🧠".repeat(1_000)}`, parallel: true, parentModel: { provider: "🧠".repeat(1_000), id: "🧠".repeat(1_000) } }, config);
 		assert.ok(Buffer.byteLength(input) <= 16_384);
 		assert.equal(JSON.parse(input).parallel, true);
-		assert.deepEqual(Object.keys(JSON.parse(input).profiles), ["fast", "judge"]);
+		assert.deepEqual(Object.keys(JSON.parse(input).profiles), Object.keys(profiles));
 		assert.doesNotMatch(buildChildRoutingSystemPrompt(), /bounded fast work|high stakes judgment/);
 	});
 });

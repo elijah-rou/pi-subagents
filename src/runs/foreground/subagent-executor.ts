@@ -8,7 +8,7 @@ import { getArtifactsDir, getChainRunsDir, getProjectArtifactPackagingWarning, g
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
 import { isRetryableFileSystemError, isStorageCapacityError } from "../../shared/file-system-retry.ts";
-import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
+import { resolveEffectiveThinking, splitKnownThinkingSuffix, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
 import {
 	beginForegroundChild,
 	finishForegroundChild,
@@ -5342,6 +5342,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (selection) {
 					let canonicalModel: string | undefined;
 					try {
+						if (selection.thinking !== undefined && splitKnownThinkingSuffix(selection.model).thinkingSuffix) throw new Error("Child routing profile model must not include a thinking suffix when profile.thinking is set.");
 						canonicalModel = resolveSubagentModelOverride(selection.model, undefined, ctx.modelRegistry.getAvailable().map(toModelInfo), requestParentModel?.provider, { source: "inherited" });
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
