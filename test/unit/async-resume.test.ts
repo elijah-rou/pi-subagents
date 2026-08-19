@@ -302,6 +302,18 @@ describe("async resume lookup", () => {
 			assert.equal(valid.recoveryDescriptor?.childRouting?.profile, "standard");
 			assert.equal(valid.recoveryDescriptor?.resultContract?.id, "pi-subagents/worker");
 
+			for (const provenance of [
+				{ childRouting: { profile: "x".repeat(33), confidence: 90, source: "child-router", model: "test/model" } },
+				{ childRouting: { profile: "standard", confidence: 101, source: "child-router", model: "test/model" } },
+				{ childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "x".repeat(257) } },
+				{ childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "test/model", thinking: "turbo" } },
+				{ resultContract: { id: "pi-subagents/unknown", version: 1, source: "role" } },
+				{ resultContract: { id: "pi-subagents/worker", version: 2, source: "role" } },
+			] as const) {
+				writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, ...provenance });
+				assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /(childRouting|resultContract)/);
+			}
+
 			writeJson(path.join(asyncDir, "recovery-descriptor.json"), { ...descriptor, sourceRunId: "another-run" });
 			assert.throws(() => resolveAsyncResumeTarget({ id: "run-descriptor" }, { asyncDirRoot: asyncRoot, resultsDir }), /different source run/);
 
@@ -654,6 +666,8 @@ describe("async resume lookup", () => {
 				() => resolveAsyncResumeTarget({ id: "run-result-model" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }, { requireSessionFile: false }),
 				/results\[0\].thinking must be a string/,
 			);
+			writeJson(path.join(resultsDir, "run-result-model.json"), { id: "run-result-model", agent: "worker", success: true, state: "complete", results: [{ agent: "worker", childRouting: { profile: "standard", confidence: 90, source: "child-router", model: "test/model", thinking: "turbo" } }] });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-result-model" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }, { requireSessionFile: false }), /childRouting\.thinking/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -710,6 +724,8 @@ describe("async resume lookup", () => {
 				() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
 				/steps\[0\].thinking must be a string/,
 			);
+			writeJson(path.join(asyncRoot, "run-status-model", "status.json"), { runId: "run-status-model", mode: "single", state: "running", startedAt: 100, steps: [{ agent: "worker", status: "running", resultContract: { id: "pi-subagents/not-real", version: 1, source: "role" } }] });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-status-model" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }), /resultContract\.id/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

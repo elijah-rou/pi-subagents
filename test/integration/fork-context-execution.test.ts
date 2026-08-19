@@ -233,12 +233,12 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		return { manager, openedPaths, branchedLeafIds };
 	}
 
-	function writeAgent(projectRoot: string, name: string, model: string): void {
+	function writeAgent(projectRoot: string, name: string, model: string, thinking?: false): void {
 		const filePath = path.join(projectRoot, ".pi", "agents", `${name}.md`);
 		fs.mkdirSync(path.dirname(filePath), { recursive: true });
 		fs.writeFileSync(
 			filePath,
-			`---\nname: ${name}\ndescription: ${name} agent\nmodel: ${model}\n---\n\nUse ${model}.\n`,
+			`---\nname: ${name}\ndescription: ${name} agent\nmodel: ${model}\n${thinking === false ? "thinking: false\n" : ""}---\n\nUse ${model}.\n`,
 			"utf-8",
 		);
 	}
@@ -1183,8 +1183,8 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 	it("uses request cwd for execution-time agent discovery", async () => {
 		const worktreeDir = path.join(tempDir, "worktree");
-		writeAgent(tempDir, "echo", "openai/gpt-5-main");
-		writeAgent(worktreeDir, "echo", "anthropic/claude-haiku-4-5");
+		writeAgent(tempDir, "echo", "openai/gpt-5-main", false);
+		writeAgent(worktreeDir, "echo", "anthropic/claude-haiku-4-5", false);
 		const executor = makeExecutorWithDiscoverAgents(discoverAgents);
 		const task = `test ${path.basename(tempDir)}`;
 

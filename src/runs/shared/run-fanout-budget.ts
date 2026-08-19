@@ -225,15 +225,19 @@ function qualifyRunFanoutPaths(descriptor: RunFanoutBudgetDescriptor, paths: str
 	return paths.map((item) => prefix ? `${prefix}/${item}` : item);
 }
 
-function commitRunFanoutBatch<T>(descriptor: RunFanoutBudgetDescriptor, paths: string[], commit: (snapshot: RunFanoutBudgetSnapshot) => T): T {
+export interface RunFanoutReservation {
+	snapshot: RunFanoutBudgetSnapshot;
+	commit(): void;
+	rollback(): void;
+}
+
+export function reserveRunFanoutBatch(descriptor: RunFanoutBudgetDescriptor, paths: string[]): RunFanoutReservation {
 	const valid = validateRunFanoutBudgetDescriptor(descriptor);
-	if (paths.length === 0) return commit(getRunFanoutBudgetSnapshot(valid));
+	if (paths.length === 0) return { snapshot: getRunFanoutBudgetSnapshot(valid), commit() {}, rollback() {} };
 	const qualified = qualifyRunFanoutPaths(valid, paths);
 	return withAdmissionLock(valid.directory, () => {
 		const before = getRunFanoutBudgetSnapshot(valid);
-		if (qualified.length > before.remaining) {
-			throw new RunFanoutLimitError({ code: "RUN_FANOUT_LIMIT", path: qualified[before.remaining] ?? qualified[0]!, requested: qualified.length, ...before });
-		}
+		if (qualified.length > before.remaining) throw new RunFanoutLimitError({ code: "RUN_FANOUT_LIMIT", path: qualified[before.remaining] ?? qualified[0]!, requested: qualified.length, ...before });
 		const created: string[] = [];
 		try {
 			for (const claimPath of qualified) {
@@ -253,14 +257,33 @@ function commitRunFanoutBatch<T>(descriptor: RunFanoutBudgetDescriptor, paths: s
 					}
 				}
 			}
-			return commit(getRunFanoutBudgetSnapshot(valid));
 		} catch (error) {
-			for (const slotPath of created) {
-				try { fs.unlinkSync(slotPath); } catch {}
-			}
+			for (const slotPath of created) { try { fs.unlinkSync(slotPath); } catch {} }
 			throw error;
 		}
+		let settled = false;
+		return {
+			snapshot: getRunFanoutBudgetSnapshot(valid),
+			commit() { settled = true; },
+			rollback() {
+				if (settled) return;
+				settled = true;
+				for (const slotPath of created) { try { fs.unlinkSync(slotPath); } catch {} }
+			},
+		};
 	});
+}
+
+function commitRunFanoutBatch<T>(descriptor: RunFanoutBudgetDescriptor, paths: string[], commit: (snapshot: RunFanoutBudgetSnapshot) => T): T {
+	const reservation = reserveRunFanoutBatch(descriptor, paths);
+	try {
+		const result = commit(reservation.snapshot);
+		reservation.commit();
+		return result;
+	} catch (error) {
+		reservation.rollback();
+		throw error;
+	}
 }
 
 export function claimRunFanoutBatch(descriptor: RunFanoutBudgetDescriptor, paths: string[]): RunFanoutBudgetSnapshot {

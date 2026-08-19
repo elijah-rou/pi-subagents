@@ -42,7 +42,7 @@ import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
-import { createRunFanoutBudget, encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "../../src/runs/shared/run-fanout-budget.ts";
+import { claimRunFanoutBatch, createRunFanoutBudget, encodeRunFanoutBudgetDescriptor, getRunFanoutBudgetSnapshot, RUN_FANOUT_BUDGET_ENV } from "../../src/runs/shared/run-fanout-budget.ts";
 import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
@@ -3656,6 +3656,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.results[0]?.resultContract, undefined);
 	});
 
+	it("bypasses direct role resolution for management calls carrying agent", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const external = makeAgent("external", { runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('unreachable')"] } });
+		const executor = makeExecutor([external], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role" });
+		const result = await executor.executePublic("management-agent", { action: "status", id: "missing-run", agent: "external" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.doesNotMatch(result.content[0]?.text ?? "", /does not support role structured results/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("rejects role contracts for external runners before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const external = makeAgent("external", { runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('unreachable')"] } });
 		const executor = makeExecutor([external], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role" });
@@ -3745,6 +3753,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(exhaustedResult.isError, true);
 		assert.equal(calls, 0);
 
+		const fanoutBudget = createRunFanoutBudget("exhausted-route-budget", 1);
+		claimRunFanoutBatch(fanoutBudget, ["already-used"]);
+		const fanoutExhausted = await invalid.execute("fanout-exhausted-before-route", { agent: "echo", task: "work", async: false, runFanoutBudget: fanoutBudget }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(fanoutExhausted.isError, true);
+		assert.equal(calls, 0);
+
 		const controller = new AbortController();
 		const cancellingClassifier = async (_ctx: unknown, _config: unknown, _request: unknown, signal?: AbortSignal) => {
 			calls++;
@@ -3755,9 +3769,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			return null;
 		};
 		const cancelling = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, cancellingClassifier as never);
-		const pending = cancelling.execute("cancel-route", { agent: "echo", task: "work", async: false }, controller.signal, undefined, makeMinimalCtx(tempDir));
+		const cancellationBudget = createRunFanoutBudget("cancelled-route-budget", 1);
+		const pending = cancelling.execute("cancel-route", { agent: "echo", task: "work", async: false, runFanoutBudget: cancellationBudget }, controller.signal, undefined, makeMinimalCtx(tempDir));
 		setTimeout(() => controller.abort(), 10);
 		await assert.rejects(pending, /classification cancelled/);
+		assert.equal(getRunFanoutBudgetSnapshot(cancellationBudget).used, 0);
 		assert.equal(mockPi.callCount(), 0);
 	});
 

@@ -72,7 +72,7 @@ import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBrid
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent } from "../shared/subagent-control.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
-import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, RUN_FANOUT_BUDGET_ENV, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
+import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, reserveRunFanoutBatch, RunFanoutLimitError, RUN_FANOUT_BUDGET_ENV, writeRunFanoutBudgetDescriptor, type RunFanoutReservation } from "../shared/run-fanout-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
@@ -5307,6 +5307,20 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			}
 		}
 
+		let runFanoutBudget: RunFanoutBudgetDescriptor;
+		let runFanoutReservation: RunFanoutReservation | undefined;
+		try {
+			const inheritedRunFanoutBudget = effectiveParams.runFanoutBudget ? undefined : decodeRunFanoutBudgetDescriptor(process.env[RUN_FANOUT_BUDGET_ENV]);
+			runFanoutBudget = effectiveParams.runFanoutBudget
+				?? (inheritedRunFanoutBudget ? { ...inheritedRunFanoutBudget, parentPath: `${inheritedRunFanoutBudget.parentPath ? `${inheritedRunFanoutBudget.parentPath}/` : ""}${runId}` } : undefined)
+				?? createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun));
+			if (!effectiveParams.runFanoutAdmitted) runFanoutReservation = reserveRunFanoutBatch(runFanoutBudget, staticRunFanoutPaths(effectiveParams));
+		} catch (error) {
+			activeAsyncCapacity?.rollback();
+			if (error instanceof RunFanoutLimitError) return runFanoutErrorResult(error, foregroundMode);
+			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
+		}
+
 		if (effectiveParams.agent && effectiveParams.resume === undefined && effectiveParams.model === undefined && effectiveParams.thinking === undefined && delegatedThinkingOverride === undefined && discovered.childRouting?.enabled) {
 			const routedAgent = discoveredAgents.find((agent) => agent.name === effectiveParams.agent);
 			if (routedAgent?.runner?.type !== "external-cli" && routedAgent?.runner?.type !== "external-job") {
@@ -5321,7 +5335,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						...(requestParentModel ? { parentModel: requestParentModel } : {}),
 					}, signal);
 				} catch (error) {
-					if (signal.aborted) { activeAsyncCapacity?.rollback(); throw error; }
+					if (signal.aborted) { runFanoutReservation?.rollback(); activeAsyncCapacity?.rollback(); throw error; }
 					const message = error instanceof Error ? error.message : String(error);
 					if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
 				}
@@ -5335,7 +5349,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					}
 					if (canonicalModel) {
 						const violation = checkModelScope(canonicalModel, modelScope, "inherited");
-						if (violation?.severity === "error") { activeAsyncCapacity?.rollback(); return buildRequestedModeError(effectiveParams, violation.message); }
+						if (violation?.severity === "error") { runFanoutReservation?.rollback(); activeAsyncCapacity?.rollback(); return buildRequestedModeError(effectiveParams, violation.message); }
 						if (violation) console.warn(`[pi-subagents] ${violation.message}`);
 						const routedSelection = { ...selection, model: canonicalModel };
 						effectiveParams = { ...effectiveParams, model: routedSelection.thinking ? `${canonicalModel}:${routedSelection.thinking}` : canonicalModel, childRouting: routedSelection };
@@ -5343,19 +5357,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 		}
+		if (signal.aborted) { runFanoutReservation?.rollback(); activeAsyncCapacity?.rollback(); throw signal.reason ?? new Error("Subagent launch cancelled during child routing."); }
+		runFanoutReservation?.commit();
 
-		let runFanoutBudget: RunFanoutBudgetDescriptor;
-		try {
-			const inheritedRunFanoutBudget = effectiveParams.runFanoutBudget ? undefined : decodeRunFanoutBudgetDescriptor(process.env[RUN_FANOUT_BUDGET_ENV]);
-			runFanoutBudget = effectiveParams.runFanoutBudget
-				?? (inheritedRunFanoutBudget ? { ...inheritedRunFanoutBudget, parentPath: `${inheritedRunFanoutBudget.parentPath ? `${inheritedRunFanoutBudget.parentPath}/` : ""}${runId}` } : undefined)
-				?? createRunFanoutBudget(runId, resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun));
-			if (!effectiveParams.runFanoutAdmitted) claimRunFanoutBatch(runFanoutBudget, staticRunFanoutPaths(effectiveParams));
-		} catch (error) {
-			activeAsyncCapacity?.rollback();
-			if (error instanceof RunFanoutLimitError) return runFanoutErrorResult(error, foregroundMode);
-			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
-		}
 		const nestedRoute = inheritedNestedRoute ?? createNestedRoute(runId);
 
 		const artifactConfig: ArtifactConfig = omitUndefinedProperties({
@@ -5762,7 +5766,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
 		const directCwd = resolveRequestedCwd(ctx.cwd, params.cwd);
-		const directDiscovery = typeof params.agent === "string" && params.agent.trim()
+		const directDiscovery = params.action === undefined && typeof params.agent === "string" && params.agent.trim()
 			? deps.discoverAgents(directCwd, resolveExecutionAgentScope(params.agentScope))
 			: undefined;
 		const directAgent = directDiscovery && typeof params.agent === "string"

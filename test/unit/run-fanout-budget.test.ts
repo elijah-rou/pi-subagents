@@ -11,6 +11,7 @@ import {
 	decodeRunFanoutBudgetDescriptor,
 	encodeRunFanoutBudgetDescriptor,
 	getRunFanoutBudgetSnapshot,
+	reserveRunFanoutBatch,
 	RunFanoutLimitError,
 	validateRunFanoutBudgetDescriptor,
 } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -66,6 +67,18 @@ describe("run fan-out budget", () => {
 		claimRunFanoutBatch(descriptor, ["single"]);
 		assert.throws(() => claimRunFanoutBatch(descriptor, ["chain[0]", "chain[1]"]), RunFanoutLimitError);
 		assert.deepEqual(getRunFanoutBudgetSnapshot(descriptor), { used: 1, limit: 2, remaining: 1 });
+	});
+
+	it("supports explicit reservation rollback and commit", () => {
+		const descriptor = budget(2);
+		const rolledBack = reserveRunFanoutBatch(descriptor, ["first"]);
+		assert.equal(rolledBack.snapshot.used, 1);
+		rolledBack.rollback();
+		assert.equal(getRunFanoutBudgetSnapshot(descriptor).used, 0);
+		const committed = reserveRunFanoutBatch(descriptor, ["second"]);
+		committed.commit();
+		committed.rollback();
+		assert.equal(getRunFanoutBudgetSnapshot(descriptor).used, 1);
 	});
 
 	it("rolls back a batch when its commit fails", () => {

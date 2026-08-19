@@ -11,6 +11,7 @@ import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
 import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
+import { validateChildRoutingMetadata, validateRoleResultContractMetadata } from "../../routing/child-routing-provenance.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -62,7 +63,7 @@ interface AsyncResultFile {
 	thinking?: string;
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	results?: Array<{ agent?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling }>;
+	results?: Array<{ agent?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; childRouting?: import("../../shared/types.ts").ChildRoutingMetadata; resultContract?: { id: string; version: 1; source: "role" }; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling }>;
 }
 
 export interface AsyncRunLocation {
@@ -102,11 +103,13 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const intercomTarget = validateOptionalString(child, "intercomTarget", resultPath, `results[${index}].intercomTarget`);
 			const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
 			const thinking = validateOptionalString(child, "thinking", resultPath, `results[${index}].thinking`);
+			const childRouting = child.childRouting === undefined ? undefined : validateChildRoutingMetadata(child.childRouting, `Invalid async result file '${resultPath}': results[${index}].childRouting`);
+			const resultContract = child.resultContract === undefined ? undefined : validateRoleResultContractMetadata(child.resultContract, `Invalid async result file '${resultPath}': results[${index}].resultContract`);
 			const launchContractDigest = validateOptionalString(child, "launchContractDigest", resultPath, `results[${index}].launchContractDigest`);
 			const capabilityCeiling = child.capabilityCeiling === undefined ? undefined : parseSubagentCapabilityCeiling(child.capabilityCeiling, `async result file '${resultPath}' results[${index}].capabilityCeiling`);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
-			return { agent, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) };
+			return { agent, sessionFile, intercomTarget, model, thinking, ...(childRouting ? { childRouting } : {}), ...(resultContract ? { resultContract } : {}), launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) };
 		});
 	}
 	const success = data.success;
@@ -265,6 +268,8 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 			if (stepRecord.sessionFile !== undefined && typeof stepRecord.sessionFile !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
 			if (stepRecord.model !== undefined && typeof stepRecord.model !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
 			if (stepRecord.thinking !== undefined && typeof stepRecord.thinking !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].thinking must be a string.`);
+			if (stepRecord.childRouting !== undefined) stepRecord.childRouting = validateChildRoutingMetadata(stepRecord.childRouting, `Invalid async status '${source}': steps[${index}].childRouting`);
+			if (stepRecord.resultContract !== undefined) stepRecord.resultContract = validateRoleResultContractMetadata(stepRecord.resultContract, `Invalid async status '${source}': steps[${index}].resultContract`);
 			if (stepRecord.launchContractDigest !== undefined && typeof stepRecord.launchContractDigest !== "string") throw new Error(`Invalid async status '${source}': steps[${index}].launchContractDigest must be a string.`);
 			if (stepRecord.capabilityCeiling !== undefined) stepRecord.capabilityCeiling = parseSubagentCapabilityCeiling(stepRecord.capabilityCeiling, `async status '${source}' steps[${index}].capabilityCeiling`);
 		});
@@ -346,20 +351,8 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (parsed.systemPromptMode !== "append" && parsed.systemPromptMode !== "replace") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': systemPromptMode is invalid.`);
 	if (parsed.outputMode !== "inline" && parsed.outputMode !== "file-only") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': outputMode is invalid.`);
 	if (parsed.modelOverrideFromParent !== undefined && typeof parsed.modelOverrideFromParent !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': modelOverrideFromParent must be a boolean.`);
-	if (parsed.childRouting !== undefined) {
-		if (!parsed.childRouting || typeof parsed.childRouting !== "object" || Array.isArray(parsed.childRouting)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting must be an object.`);
-		const routing = parsed.childRouting as Record<string, unknown>;
-		if (Object.keys(routing).some((key) => !["profile", "confidence", "source", "model", "thinking"].includes(key))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting has unknown fields.`);
-		if (typeof routing.profile !== "string" || !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(routing.profile)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting.profile is invalid.`);
-		if (!Number.isSafeInteger(routing.confidence) || (routing.confidence as number) < 0 || (routing.confidence as number) > 100) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting.confidence is invalid.`);
-		if (routing.source !== "child-router" || typeof routing.model !== "string" || !routing.model.trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting source/model is invalid.`);
-		if (routing.thinking !== undefined && (typeof routing.thinking !== "string" || !routing.thinking.trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': childRouting.thinking is invalid.`);
-	}
-	if (parsed.resultContract !== undefined) {
-		if (!parsed.resultContract || typeof parsed.resultContract !== "object" || Array.isArray(parsed.resultContract)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': resultContract must be an object.`);
-		const contract = parsed.resultContract as Record<string, unknown>;
-		if (Object.keys(contract).sort().join(",") !== "id,source,version" || typeof contract.id !== "string" || !contract.id.startsWith("pi-subagents/") || contract.version !== 1 || contract.source !== "role") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': resultContract is invalid.`);
-	}
+	if (parsed.childRouting !== undefined) parsed.childRouting = validateChildRoutingMetadata(parsed.childRouting, `Invalid async recovery descriptor '${descriptorPath}': childRouting`);
+	if (parsed.resultContract !== undefined) parsed.resultContract = validateRoleResultContractMetadata(parsed.resultContract, `Invalid async recovery descriptor '${descriptorPath}': resultContract`);
 	for (const field of ["inheritProjectContext", "inheritSkills", "share"] as const) {
 		if (typeof parsed[field] !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a boolean.`);
 	}
