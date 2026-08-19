@@ -120,3 +120,7 @@ The full reference lives in `docs/`:
 | [Missions and schedules](https://github.com/nicobailon/pi-subagents/blob/main/docs/missions.md) | Durable mission records, delivery receipts, timed and recurring runs. |
 | [Configuration](https://github.com/nicobailon/pi-subagents/blob/main/docs/configuration.md) | Every `config.json` key and environment variable. |
 | [Extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md) | The RPC, delegation API, preflight, capability ceilings, background-work providers, Herdr integration. |
+
+## Typed direct delegation and child compute routing
+
+This fork supports package-owned typed role results for direct `{agent, task}` calls and optional task-aware child model/thinking routing. Enable typed direct results with `subagents.directResultDefault: "role"`; use `resultContract: "text"` for a one-call prose escape or explicit `outputSchema` for a custom schema. Child routing never mutates the parent profile or chooses role, tools, permissions, isolation, context, acceptance, or workflow topology. See [Agents](docs/agents.md#direct-role-result-contracts) and [Models](docs/models.md#task-aware-child-routing).

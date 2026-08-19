@@ -357,3 +357,7 @@ Pass `share: true` to export a full session to HTML, upload it to a secret GitHu
 ```
 
 This is disabled by default. Session data may contain source code, paths, environment variables, credentials, or other sensitive output. You need `gh` installed and authenticated.
+
+## Direct result contracts
+
+Direct `{agent,task}` execution accepts `resultContract:"role"|"text"`. `role` selects the bounded package-owned contract for bundled roles and the generic contract for custom agents; `text` preserves prose. `outputSchema` is the caller-owned structured escape and cannot be combined with `resultContract`. `subagents.directResultDefault` chooses the omitted behavior and defaults to `text` for compatibility. These defaults never apply to handwritten `workflowScript` children.

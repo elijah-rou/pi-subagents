@@ -898,6 +898,14 @@ export interface UsageBudgetState {
 	reason?: "tokens" | "costUsd";
 }
 
+export interface ChildRoutingMetadata {
+	profile: string;
+	confidence: number;
+	source: "child-router";
+	model: string;
+	thinking?: string;
+}
+
 export interface SingleResult {
 	/**
 	 * Stable child identity within the foreground run. Pair with Details.runId for
@@ -927,6 +935,8 @@ export interface SingleResult {
 	model?: string;
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
+	/** Bounded parent-side provenance for automatic child compute selection. */
+	childRouting?: ChildRoutingMetadata;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	controlEvents?: ControlEvent[];

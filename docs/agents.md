@@ -381,3 +381,9 @@ What it covers:
 - **Control and diagnostics**: attention signals, soft interrupts, status, and the `doctor` action.
 
 If you are writing an agent that orchestrates subagents, the bundled skill helps it behave correctly without guessing the patterns. If you are a human user, you do not need to read it; the README and prompt shortcuts encode the same workflows in user-facing form.
+
+## Direct role result contracts
+
+Direct `{ agent, task }` calls accept `resultContract: "role" | "text"`. With `role`, bundled scout, worker, reviewer, researcher, and advisor roles use bounded versioned JSON schemas; delegate and custom agents use the generic contract. Contracts are attached to bundled identity, not names, so a project agent shadowing `reviewer` receives the generic contract. Explicit `outputSchema` remains the custom structured escape and cannot be combined with `resultContract`.
+
+Set `subagents.directResultDefault` to `role` or `text` in Pi settings. The package-compatible default is `text`. This default applies only to direct calls; handwritten `workflowScript` children remain text unless they explicitly set `outputSchema`.

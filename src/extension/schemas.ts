@@ -343,6 +343,7 @@ const SubagentParamProperties = {
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Default child model override (e.g. 'anthropic/claude-sonnet-4')" })),
 	outputSchema: Type.Optional(JsonSchemaObject),
+	resultContract: Type.Optional(Type.String({ enum: ["role", "text"], description: "Direct {agent,task} only: use the package-owned role result schema or plain text. Cannot be combined with outputSchema or workflowScript." })),
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
 	gate: Type.Optional(Type.String({ minLength: 1, description: "Host gate command. Cannot be combined with acceptance." })),

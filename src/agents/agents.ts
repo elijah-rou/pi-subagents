@@ -21,6 +21,8 @@ import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
+import { parseChildRoutingConfig, type ChildRoutingConfig } from "../routing/child-routing.ts";
+import type { DirectResultContract } from "../contracts/role-contracts.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -165,6 +167,8 @@ interface SubagentSettings {
 	defaultModel?: string;
 	defaultThinking?: string;
 	defaultExtensions?: string[];
+	directResultDefault?: DirectResultContract;
+	childRouting?: ChildRoutingConfig;
 	disableBuiltins?: boolean;
 	disableThinking?: boolean;
 	modelScope?: ModelScopeConfig;
@@ -254,6 +258,8 @@ interface AgentDiscoveryResult {
 	agentDiagnostics?: AgentDiscoveryDiagnostic[];
 	projectAgentsDir: string | null;
 	modelScope?: ModelScopeConfig;
+	directResultDefault?: DirectResultContract;
+	childRouting?: ChildRoutingConfig;
 }
 
 function getUserChainDir(): string {
@@ -955,6 +961,12 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		defaultExtensions = subagentsObject.defaultExtensions.map((item) => item.trim());
 	}
 	const modelScope = parseModelScopeConfig(subagentsObject.modelScope, { filePath });
+	let directResultDefault: DirectResultContract | undefined;
+	if (subagentsObject.directResultDefault !== undefined) {
+		if (subagentsObject.directResultDefault !== "role" && subagentsObject.directResultDefault !== "text") throw new Error(`Subagent settings in '${filePath}' have invalid 'directResultDefault'; expected 'role' or 'text'.`);
+		directResultDefault = subagentsObject.directResultDefault;
+	}
+	const childRouting = parseChildRoutingConfig(subagentsObject.childRouting, `Subagent settings in '${filePath}' childRouting`);
 
 	const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
 	const agentOverrides = subagentsObject.agentOverrides;
@@ -966,6 +978,8 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
 		...(disableBuiltins !== undefined ? { disableBuiltins } : {}),
 		...(disableThinking !== undefined ? { disableThinking } : {}),
 		...(modelScope !== undefined ? { modelScope } : {}),
+		...(directResultDefault !== undefined ? { directResultDefault } : {}),
+		...(childRouting !== undefined ? { childRouting } : {}),
 	};
 	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
 		return parsedSettings;
@@ -1876,6 +1890,8 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const defaultThinking = resolveSubagentDefaultThinking(userSettings, projectSettings, projectSettingsPath);
 	const defaultExtensions = resolveSubagentDefaultExtensions(userSettings, projectSettings, projectSettingsPath);
 	const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
+	const directResultDefault = projectSettings.directResultDefault ?? userSettings.directResultDefault;
+	const childRouting = projectSettings.childRouting ?? userSettings.childRouting;
 	const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
 		includeUser: scope !== "project",
 		includeProject: scope !== "user",
@@ -1931,7 +1947,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 		...projectLoaded.flatMap((loaded) => loaded.diagnostics),
 		...packageLoaded.flatMap((loaded) => loaded.diagnostics),
 	];
-	return { agents, agentDiagnostics, projectAgentsDir, ...(modelScope !== undefined ? { modelScope } : {}) };
+	return { agents, agentDiagnostics, projectAgentsDir, ...(modelScope !== undefined ? { modelScope } : {}), ...(directResultDefault !== undefined ? { directResultDefault } : {}), ...(childRouting !== undefined ? { childRouting } : {}) };
 }
 
 export function discoverAgentsAll(cwd: string): {

@@ -23,6 +23,16 @@ describe("scripted workflow runtime", () => {
 		assert.deepEqual(explicit.value, { answer: 42 });
 	});
 
+	it("marks runs.run serial and every runs.all lane parallel without replacing admission", async () => {
+		const seen: Array<{ key: string; admitted: boolean; parallel: boolean }> = [];
+		await runWorkflowScript({
+			script: `const one = await runs.run("one", {agent:"scout",task:"one"}); const two = await runs.all([{key:"two",agent:"scout",task:"two"}]); return [one.output,two[0].output];`,
+			async launch(key, _params, _signal, admission) { seen.push({ key, ...admission }); return { key, ok: true, output: key, artifactPaths: [] }; },
+			async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
+		});
+		assert.deepEqual(seen, [{ key: "one", admitted: true, parallel: false }, { key: "two", admitted: true, parallel: true }]);
+	});
+
 	it("resolves the workflow parser from pi-subagents outside the project cwd", async () => {
 		const originalCwd = process.cwd();
 		const emptyCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-no-acorn-"));

@@ -12,6 +12,11 @@
 
 ### Added
 - Add `/subagents-inspect-rpc`, a host-facing bridge command that answers on-demand async child inspection requests with a correlated, bounded `PI_SUBAGENT_INSPECT_JSON:` widget payload (task, transcript window, final output), so RPC hosts can inspect children without a model turn while the live status feed stays small. Thanks to [@yanqianglu](https://github.com/yanqianglu) for #1254.
+- Add bounded package-owned role result contracts for direct single-child calls, with explicit text and custom-schema escapes.
+- Add optional task-aware child-only model/thinking routing with strict configuration, confidence gating, serial/parallel topology input, and fail-open runtime behavior.
+
+### Changed
+- Keep workflow scripts text-compatible by applying role result defaults only to public direct `{ agent, task }` calls.
 
 ### Changed
 - Guide oracle plan and design advice through a short same-session consultation when a material tradeoff remains, while keeping the parent as final decision-maker (#1245).

@@ -88,6 +88,20 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer?.modelSource, undefined);
 	});
 
+	it("loads direct result and child routing policy with project replacement", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { directResultDefault: "text", childRouting: { enabled: true, classifier: { model: "test/classifier", thinking: "off" }, profiles: { fast: { description: "fast", model: "test/fast", thinking: "low" } } } } });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), { subagents: { directResultDefault: "role", childRouting: { enabled: true, threshold: 90, classifier: { model: "test/project", thinking: "low" }, profiles: { judge: { description: "judge", model: "test/judge", thinking: "high" } } } } });
+		const discovered = discoverAgents(tempProject, "both");
+		assert.equal(discovered.directResultDefault, "role");
+		assert.equal(discovered.childRouting?.threshold, 90);
+		assert.deepEqual(Object.keys(discovered.childRouting?.profiles ?? {}), ["judge"]);
+	});
+
+	it("rejects invalid child routing settings", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), { subagents: { childRouting: { enabled: true, classifier: { model: "test/classifier", thinking: "off" }, profiles: {} } } });
+		assert.throws(() => discoverAgents(tempProject, "both"), /profiles must contain/);
+	});
+
 	it("lets a builtin agent inherit Pi's normal tools from an override", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {

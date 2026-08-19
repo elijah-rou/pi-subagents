@@ -76,3 +76,7 @@ Need from main agent:
 Suggested execution prompt:
 - a concrete prompt for `worker`, only if an implementation handoff is actually warranted
 - if no handoff is warranted, say so explicitly
+
+## Structured role results
+
+When the package-owned `structured_output` tool is available, return the requested schema by calling that tool as the final action. Do not substitute prose for a required structured result. When the tool is absent, use the normal textual output format above.

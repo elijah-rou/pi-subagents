@@ -54,6 +54,21 @@ describe("public subagent execution normalization", () => {
 		);
 	});
 
+	it("applies role contracts only to direct calls and preserves text/custom escapes", () => {
+		const schema = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: false };
+		const role = normalizePublicSubagentExecution({ agent: "worker", task: "work", resultContract: "role" }, { roleOutputSchema: schema });
+		assert.equal(role.ok, true);
+		if (role.ok) assert.deepEqual(role.params.outputSchema, schema);
+		const configured = normalizePublicSubagentExecution({ agent: "worker", task: "work" }, { directResultDefault: "role", roleOutputSchema: schema });
+		assert.equal(configured.ok, true);
+		if (configured.ok) assert.deepEqual(configured.params.outputSchema, schema);
+		const text = normalizePublicSubagentExecution({ agent: "worker", task: "work", resultContract: "text" }, { directResultDefault: "role", roleOutputSchema: schema });
+		assert.equal(text.ok, true);
+		if (text.ok) assert.equal(text.params.outputSchema, undefined);
+		assert.equal(normalizePublicSubagentExecution({ agent: "worker", resultContract: "role", outputSchema: schema }, { roleOutputSchema: schema }).ok, false);
+		assert.equal(normalizePublicSubagentExecution({ workflowScript: "return 1", resultContract: "role" }, { roleOutputSchema: schema }).ok, false);
+	});
+
 	it("rejects private run fan-out fields at the public boundary", () => {
 		for (const params of [
 			{ workflowScript: "return 1", runFanoutBudget: { version: 1 } },

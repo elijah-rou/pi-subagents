@@ -41,3 +41,7 @@ For broad or uncertain requests, read more than one reference. For complex work,
 - Escalate unresolved product, architecture, authority, release, merge, or safety decisions upward instead of letting a child decide silently.
 - Treat receipts, CI, review bots, and external-run records as evidence, not authority to merge, close, comment, publish, or release.
 - As a conservative orchestration policy, do not pass `turnBudget`, a hard `toolBudget`, or a tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model. If a worker is interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
+
+## Typed direct calls
+
+When `subagents.directResultDefault` is `role`, direct `{agent,task}` launches return the bounded package role contract. Use `resultContract:"text"` only when prose is intentionally required, and use explicit `outputSchema` for caller-owned structured data. Workflow children remain text unless their `runs.run`/`runs.all` item supplies `outputSchema`. Child compute routing is advisory and never authorizes role, topology, tools, permissions, worktrees, or acceptance.

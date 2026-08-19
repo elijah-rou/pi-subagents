@@ -334,6 +334,9 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (!externalRunner && input.availableModels === undefined && (input.model || agent.model || input.parentModel)) {
 		diagnostics.push({ code: "host_required", severity: "host-required", message: "No availableModels snapshot was supplied; model resolution may differ from the active Pi host registry." });
 	}
+	if (!externalRunner && discovered.childRouting?.enabled && input.model === undefined && input.thinking === undefined) {
+		diagnostics.push({ code: "host_required", severity: "host-required", message: "Task-aware child routing is resolved by the active parent host at launch; static preflight preserves ordinary model resolution and may not predict the routed model." });
+	}
 	if (resolvedSkills.missing.length > 0) {
 		return { ok: false, code: "missing_skill", message: `Missing skills: ${resolvedSkills.missing.join(", ")}`, diagnostics };
 	}

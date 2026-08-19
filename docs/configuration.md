@@ -455,3 +455,7 @@ PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS=1000
 ```
 
 Unset by default, so behaviour is unchanged unless you opt in. Opting in trades lock-wait tolerance for responsiveness: entries clamped to `0` return immediately, so contention that would previously have been waited out surfaces as an error sooner. Values that are not a non-negative integer fail instead of being coerced.
+
+### Typed direct results and child routing
+
+Pi settings under `subagents` support `directResultDefault: "role" | "text"` and the strict `childRouting` block documented in [Models](models.md#task-aware-child-routing). Project values replace the corresponding user value. Unknown routing fields, invalid bounds, empty profiles, unsupported thinking levels, and invalid timeouts are configuration errors. Runtime classifier failures fail open to normal child model resolution.

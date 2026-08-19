@@ -25,6 +25,8 @@ import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { normalizePublicSubagentExecution } from "../../extension/public-execution.ts";
+import { roleResultSchema, type DirectResultContract } from "../../contracts/role-contracts.ts";
+import { classifyChildProfile, type ChildRoutingConfig, type ChildRoutingSelection } from "../../routing/child-routing.ts";
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
@@ -341,6 +343,10 @@ export interface SubagentParamsLike {
 	reads?: string[] | false;
 	outputMode?: "inline" | "file-only";
 	outputSchema?: JsonSchemaObject;
+	resultContract?: DirectResultContract;
+	/** Internal workflow topology and resolved child-routing provenance. */
+	workflowParallel?: boolean;
+	childRouting?: ChildRoutingSelection;
 	agentScope?: unknown;
 	chainDir?: string;
 	acceptance?: AcceptanceInput;
@@ -383,7 +389,8 @@ interface ExecutorDeps {
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
-	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig };
+	discoverAgents: (cwd: string, scope: AgentScope) => { agents: AgentConfig[]; agentDiagnostics?: AgentDiscoveryDiagnostic[]; modelScope?: ModelScopeConfig; directResultDefault?: DirectResultContract; childRouting?: ChildRoutingConfig };
+	classifyChildProfile?: typeof classifyChildProfile;
 	allowMutatingManagementActions?: boolean;
 	activateSupervisorTransport?: () => void;
 	refreshResultDelivery?: () => void;
@@ -3388,6 +3395,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			if (foregroundControl) finishForegroundChild(foregroundControl, 0);
 		}
 	}
+	if (params.childRouting) {
+		r.childRouting = { profile: params.childRouting.profile, confidence: params.childRouting.confidence, source: params.childRouting.source, model: params.childRouting.model, ...(params.childRouting.thinking ? { thinking: params.childRouting.thinking } : {}) };
+	}
 	if (!r.detached) {
 		recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0);
 	}
@@ -3855,6 +3865,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const delegatedExecutions = new WeakSet<object>();
 	const warnedArtifactPackageDirs = new Set<string>();
+	const warnedChildRoutingFailures = new Set<string>();
 	const scheduledOwnerExecutors = new Map<string, ReturnType<typeof createSubagentExecutor>>();
 	const execute = async (
 		_id: string,
@@ -4262,7 +4273,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								});
 								const result = await runMissionWorkflowChild(missionBinding, workflowRunId, key, childPhase, () => {
 									const childRequest = bindMissionWorkflowChildAsyncLaunch(
-										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
+										{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: workflowRunId, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted, workflowParallel: admission.parallel },
 										missionBinding,
 										deps.asyncByDefault,
 									);
@@ -4440,7 +4451,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 						const result = await runMissionWorkflowChild(missionBinding, _id, key, childPhase, () => {
 							const childRequest = bindMissionWorkflowChildAsyncLaunch(
-								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted },
+								{ ...prepareWorkflowChildLaunchParams({ workflowDefaults: workflowChildDefaults, childParams, parentWorkflowRunId: _id, workflowKey: key, ctxCwd: ctx.cwd, workflowCwd, artifactsDir: workflowArtifactsDir, aggregateOutputPath: workflowAggregateOutputPath, configuredOutputBaseDir, discoverAgents: deps.discoverAgents, workflowAgentScope: workflowChildDefaults.agentScope, outputOverride: childOutputOverrides.get(key), options: { missionDetached: detachWorkflowChildMissions, suppressRoutineResultIntercom: chatProgress.mode === "live-card", runFanoutBudget: workflowFanoutBudget, parentDeadlineAt: workflowDeadlineAt } }), runFanoutAdmitted: admission.admitted, workflowParallel: admission.parallel },
 								missionBinding,
 								deps.asyncByDefault,
 							);
@@ -5134,6 +5145,25 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			canPreferFork(ctx.sessionManager),
 		);
 		effectiveParams = contextPolicy.params;
+		if (effectiveParams.agent && effectiveParams.resume === undefined && effectiveParams.model === undefined && effectiveParams.thinking === undefined && delegatedThinkingOverride === undefined && discovered.childRouting?.enabled) {
+			const routedAgent = discoveredAgents.find((agent) => agent.name === effectiveParams.agent);
+			if (routedAgent?.runner?.type !== "external-cli" && routedAgent?.runner?.type !== "external-job") {
+				try {
+					const selection = await (deps.classifyChildProfile ?? classifyChildProfile)(ctx, discovered.childRouting, {
+						agent: effectiveParams.agent,
+						task: effectiveParams.task ?? "",
+						cwd: effectiveCwd,
+						parallel: effectiveParams.workflowParallel === true,
+						...(effectiveParams.context ? { context: effectiveParams.context } : {}),
+						...(requestParentModel ? { parentModel: requestParentModel } : {}),
+					}, signal);
+					if (selection) effectiveParams = { ...effectiveParams, model: selection.thinking ? `${selection.model}:${selection.thinking}` : selection.model, childRouting: selection };
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					if (!warnedChildRoutingFailures.has(message)) { warnedChildRoutingFailures.add(message); console.warn(`[pi-subagents] Child routing failed open: ${message}`); }
+				}
+			}
+		}
 		const sessionName = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
 		const intercomBridge = resolveIntercomBridge({
 			config: deps.config.intercomBridge,
@@ -5685,7 +5715,21 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
-		const normalized = normalizePublicSubagentExecution(params, { asyncByDefault: deps.asyncByDefault });
+		const directDiscovery = typeof params.agent === "string" && params.agent.trim()
+			? deps.discoverAgents(params.cwd ?? ctx.cwd, resolveExecutionAgentScope(params.agentScope))
+			: undefined;
+		const directAgent = directDiscovery && typeof params.agent === "string"
+			? resolveAgentName(params.agent.trim(), directDiscovery.agents).agent
+			: undefined;
+		const requestedDirectContract = params.outputSchema !== undefined ? "custom" : (params.resultContract ?? directDiscovery?.directResultDefault ?? "text");
+		if ((directAgent?.runner?.type === "external-cli" || directAgent?.runner?.type === "external-job") && requestedDirectContract === "role") {
+			return Promise.resolve({ content: [{ type: "text", text: `Agent '${directAgent.name}' uses runner.type='${directAgent.runner.type}', which does not support role structured results. Pass resultContract:'text'.` }], isError: true, details: { mode: "workflow", results: [] } });
+		}
+		const normalized = normalizePublicSubagentExecution(params, {
+			asyncByDefault: deps.asyncByDefault,
+			directResultDefault: directDiscovery?.directResultDefault,
+			...(directDiscovery ? { roleOutputSchema: roleResultSchema(directAgent) } : {}),
+		});
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}

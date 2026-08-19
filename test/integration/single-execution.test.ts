@@ -362,6 +362,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		handleScheduledRunAction?: Parameters<typeof createSubagentExecutor>[0]["handleScheduledRunAction"],
 		piEvents = createEventBus(),
 		discoverAgentsForCwd?: (cwd: string) => typeof agents,
+		discoveryExtras: Record<string, unknown> = {},
+		classifyChildProfileForTest?: Parameters<typeof createSubagentExecutor>[0]["classifyChildProfile"],
 	) {
 		return createSubagentExecutor!({
 			pi: { events: piEvents, getSessionName: () => undefined },
@@ -379,9 +381,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
 			expandTilde: (value: string) => value,
-			discoverAgents: (cwd: string) => ({ agents: discoverAgentsForCwd ? discoverAgentsForCwd(cwd) : agents }),
+			discoverAgents: (cwd: string) => ({ agents: discoverAgentsForCwd ? discoverAgentsForCwd(cwd) : agents, ...discoveryExtras }),
 			allowMutatingManagementActions,
 			...(handleScheduledRunAction ? { handleScheduledRunAction } : {}),
+			...(classifyChildProfileForTest ? { classifyChildProfile: classifyChildProfileForTest } : {}),
 		});
 	}
 
@@ -3556,6 +3559,56 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(child?.structuredOutput, { ok: true, note: "captured" });
 		assert.match(child?.finalOutput ?? "", /"ok": true/);
 		if (child?.artifactPaths?.outputPath) assert.match(fs.readFileSync(child.artifactPaths.outputPath, "utf-8"), /"note": "captured"/);
+	});
+
+	it("applies the configured generic role contract only to public direct calls", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const value = { contract: { id: "pi-subagents/generic", version: 1 }, outcome: "completed", summary: "done", evidence: [], risks: [], data: { deliverables: [], decisionsNeeded: [], nextSteps: [] } };
+		mockPi.onCall({
+			stdoutRaw: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+			structuredOutputCapture: value,
+		});
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role" });
+		const result = await executor.executePublic("direct-role", { agent: "echo", task: "Return typed data", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "direct role failed");
+		assert.deepEqual(result.details.results[0]?.structuredOutput, value);
+	});
+
+	it("rejects role contracts for external runners before spawn", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const external = makeAgent("external", { runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('unreachable')"] } });
+		const executor = makeExecutor([external], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { directResultDefault: "role" });
+		const result = await executor.executePublic("external-role", { agent: "external", task: "run" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /resultContract:'text'/);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("routes only child compute and preserves explicit model precedence", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		let calls = 0;
+		const requests: Array<{ parallel: boolean }> = [];
+		const classify = async (_ctx: unknown, _config: unknown, request: { parallel: boolean }) => { calls += 1; requests.push(request); return { profile: "standard", description: "standard", model: "test/routed", thinking: "high" as const, confidence: 90, source: "child-router" as const }; };
+		const routing = { enabled: true, threshold: 75, classifier: { model: "test/classifier", thinking: "off", timeoutMs: 5000 }, profiles: { standard: { description: "standard", model: "test/routed", thinking: "high" } } };
+		mockPi.onCall({ output: "routed" });
+		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, classify as never);
+		const routed = await executor.executePublic("routed", { agent: "echo", task: "route me", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(routed.isError, undefined);
+		assert.match(readCallArgs().join(" "), /test\/routed:high/);
+		assert.deepEqual(requests.map((request) => request.parallel), [false]);
+		assert.equal(routed.details.results[0]?.childRouting?.profile, "standard");
+
+		mockPi.onCall({ output: "explicit" });
+		await executor.executePublic("explicit", { agent: "echo", task: "do not route", model: "test/explicit", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(calls, 1);
+		assert.match(readCallArgs().join(" "), /test\/explicit/);
+
+		mockPi.onCall({ output: "fallback" });
+		const failing = makeExecutor([makeAgent("echo", { model: "test/fallback" })], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, { childRouting: routing }, (async () => { throw new Error("classifier unavailable"); }) as never);
+		const fallback = await failing.executePublic("fallback", { agent: "echo", task: "fall back", async: false }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(fallback.isError, undefined);
+		assert.match(readCallArgs().join(" "), /test\/fallback/);
 	});
 
 	it("accepts recovered tool errors before valid structured output but rejects later errors", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

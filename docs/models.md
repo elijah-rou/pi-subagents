@@ -192,3 +192,26 @@ The workflow:
 - `/subagents-refresh-provider-models` writes a serialized provider model catalog with observed registry data, simple role-oriented classification, and live probe results from tiny one-shot `pi -p --model ... --no-tools` checks. The cache refreshes when missing or stale; use `--force` to ignore freshness and probe again immediately.
 - `/subagents-generate-profiles` uses the provider catalog to produce quota and quality profiles.
 - `/subagents-check-profile` re-checks each assigned model in a saved profile against the current registry and a live probe, so you can detect model removals, auth problems, or stale assignments.
+
+## Task-aware child routing
+
+The fork can route only child compute at launch time with `subagents.childRouting` in user or project Pi settings. The parent model, thinking level, tools, service tier, and system prompt are never changed. Explicit child or workflow model defaults win; retained resumes keep their stored compute contract. Classifier failures, low confidence, and unavailable advisory models fall back to normal agent/default/parent model resolution.
+
+```json
+{
+  "subagents": {
+    "childRouting": {
+      "enabled": true,
+      "threshold": 75,
+      "classifier": { "model": "openai-codex/gpt-5.6-terra", "thinking": "off", "timeoutMs": 5000 },
+      "profiles": {
+        "fast": { "description": "Bounded serial delegation on the critical path.", "model": "openai-codex/gpt-5.6-terra", "thinking": "high" },
+        "standard": { "description": "Outcome-critical implementation or synthesis.", "model": "openai-codex/gpt-5.6-sol", "thinking": "medium" },
+        "judge": { "description": "Correctness, security, architecture, or adversarial review.", "model": "openai-codex/gpt-5.6-sol", "thinking": "high" }
+      }
+    }
+  }
+}
+```
+
+Routing selects only model and thinking. The parent still owns agent role, topology, context, worktree, acceptance, tools, and permissions. `runs.run` is classified as serial and `runs.all` as parallel.

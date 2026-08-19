@@ -595,7 +595,7 @@ export interface RunWorkflowScriptOptions {
 	timeoutMs?: number;
 	signal?: AbortSignal;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
-	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean }) => Promise<WorkflowScriptChildResult>;
+	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean; parallel: boolean }) => Promise<WorkflowScriptChildResult>;
 	status: (keyOrRunId: string, signal: AbortSignal) => Promise<WorkflowScriptChildResult>;
 	steer?: (key: string, message: string, options: WorkflowSteerOptions, signal: AbortSignal) => Promise<WorkflowSteerResult>;
 	state?: {
@@ -1039,7 +1039,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 					const text = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "Workflow script aborted.";
 					return { key, ok: false, output: text, error: text, artifactPaths: [] };
 				}
-				return options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true });
+				return options.launch(key, { ...params, async: params.async ?? false }, childController.signal, { admitted: true, parallel: batch !== undefined });
 			}).then((result) => {
 				const normalized = !result.ok && !result.error ? { ...result, error: result.output } : result;
 				if (stoppedLaunches.has(key)) return normalized;

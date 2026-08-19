@@ -15,6 +15,8 @@ export interface PublicSubagentExecutionParams {
 	worktree?: unknown;
 	async?: unknown;
 	output?: unknown;
+	outputSchema?: unknown;
+	resultContract?: unknown;
 	resume?: unknown;
 	clarify?: unknown;
 	runFanoutBudget?: unknown;
@@ -31,7 +33,7 @@ export type PublicSubagentExecutionNormalization<T> =
  * Enforce the public execution cutover before requests reach the executor.
  * Internal runs.run children and structured owned delegation bypass this boundary.
  */
-export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, options: { asyncByDefault?: boolean } = {}): PublicSubagentExecutionNormalization<T> {
+export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, options: { asyncByDefault?: boolean; directResultDefault?: "role" | "text"; roleOutputSchema?: Record<string, unknown> } = {}): PublicSubagentExecutionNormalization<T> {
 	if (params.isolation !== undefined) {
 		if (params.isolation !== "none" && params.isolation !== "worktree") {
 			return { ok: false, error: "isolation must be 'none' or 'worktree'.", mode: params.workflowScript !== undefined ? "workflow" : "management" };
@@ -101,6 +103,15 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	if (params.step !== undefined) {
 		return { ok: false, error: "step is not a public execution field; use workflowScript for orchestration.", mode: "workflow" };
 	}
+	if (params.resultContract !== undefined && params.resultContract !== "role" && params.resultContract !== "text") {
+		return { ok: false, error: "resultContract must be 'role' or 'text'.", mode: "workflow" };
+	}
+	if (params.resultContract !== undefined && params.outputSchema !== undefined) {
+		return { ok: false, error: "resultContract cannot be combined with outputSchema.", mode: "workflow" };
+	}
+	if (params.resultContract !== undefined && (normalizedAction !== undefined || params.workflowScript !== undefined)) {
+		return { ok: false, error: "resultContract is available only for direct { agent, task } execution.", mode: normalizedAction ? "management" : "workflow" };
+	}
 	if (params.workflowScript !== undefined && (params.agent !== undefined || params.task !== undefined)) {
 		return { ok: false, error: "Structured single-child execution cannot be combined with workflowScript.", mode: "workflow" };
 	}
@@ -111,7 +122,9 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		if (params.task !== undefined && typeof params.task !== "string") {
 			return { ok: false, error: "Structured single-child task must be a string when provided.", mode: "workflow" };
 		}
-		const { agent: _agent, task: _task, output, ...workflowDefaults } = params;
+		const { agent: _agent, task: _task, output, resultContract: _resultContract, ...workflowDefaults } = params;
+		const effectiveContract = params.outputSchema !== undefined ? "custom" : (params.resultContract ?? options.directResultDefault ?? "text");
+		if (effectiveContract === "role" && options.roleOutputSchema === undefined) return { ok: false, error: "Role result contract could not be resolved for the requested agent.", mode: "workflow" };
 		const child = {
 			agent: params.agent.trim(),
 			...(params.task !== undefined ? { task: params.task } : {}),
@@ -121,6 +134,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			ok: true,
 			params: {
 				...workflowDefaults,
+				...(effectiveContract === "role" ? { outputSchema: options.roleOutputSchema } : {}),
 				...(params.async === undefined && options.asyncByDefault === false ? { async: false } : {}),
 				workflowScript: `console.info("Converted structured single-child request to workflow runs.run('main', ...)."); return runs.run("main", ${JSON.stringify(child)})`,
 			} as T,
