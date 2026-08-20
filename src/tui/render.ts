@@ -11,6 +11,7 @@ import {
 	type AsyncJobState,
 	type AsyncJobStep,
 	type AsyncParallelGroupStatus,
+	type ChildRoutingMetadata,
 	type Details,
 	type NestedRunSummary,
 	type NestedStepSummary,
@@ -27,7 +28,8 @@ import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
-import { buildWorkflowChatProgressRows, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
+import { buildWorkflowChatProgressProjection, formatWorkflowTopologyMermaid, type WorkflowChatProgressRow } from "../workflows/chat-progress.ts";
+import { renderMermaidTerminal } from "../workflows/mermaid-terminal.ts";
 import { encodeAsyncStatusSnapshotWidget } from "../runs/background/async-status-snapshot.ts";
 
 type Theme = ExtensionContext["ui"]["theme"];
@@ -709,7 +711,7 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 		const marker = index === job.steps.length - 1 ? "└" : "├";
 		const activity = widgetStepActivity(step, job.updatedAt);
 		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
-		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking, step.childRouting);
 		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 6)) lines.push(`    ${nestedLine}`);
 	}
@@ -1002,8 +1004,8 @@ function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>
 	]);
 }
 
-function modelThinkingBadge(theme: Theme, model?: string, thinking?: string): string {
-	const label = formatModelThinking(model, thinking);
+function modelThinkingBadge(theme: Theme, model?: string, thinking?: string, childRouting?: ChildRoutingMetadata): string {
+	const label = formatModelThinking(model, thinking, childRouting);
 	return label ? theme.fg("dim", ` (${label})`) : "";
 }
 
@@ -1098,7 +1100,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			leaves++;
 			const state = "status" in step ? step.status : step.state;
-			const modelThinking = formatModelThinking(step.model, step.thinking);
+			const modelThinking = formatModelThinking(step.model, step.thinking, step.childRouting);
 			const activity = nestedActivity(step, state, snapshotNow ?? fallback);
 			const timestamp = "status" in step ? nestedStepTimestamp(step, fallback) : formatClockTime(nestedRunEventTime(step));
 			const error = step.error ? ` · ${step.error}` : "";
@@ -1111,7 +1113,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 		for (const child of children) {
 			const steps = (child.mode === "parallel" || child.mode === "chain") ? child.steps ?? [] : [];
 			if (steps.length > 0) {
-				const ownerModelThinking = formatModelThinking(child.model, child.thinking);
+				const ownerModelThinking = formatModelThinking(child.model, child.thinking, child.childRouting);
 				const ownerActivity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate);
 				const ownerError = child.error ? ` · ${child.error}` : "";
 				rows.push({
@@ -1154,7 +1156,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate);
 			const error = child.error ? ` · ${child.error}` : "";
-			const modelThinking = formatModelThinking(child.model, child.thinking);
+			const modelThinking = formatModelThinking(child.model, child.thinking, child.childRouting);
 			lines.push(theme.fg("dim", `${prefix}↳ ${nestedTimestampPrefix(formatClockTime(nestedRunEventTime(child)))}${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state}${modelThinking ? ` · ${modelThinking}` : ""} · ${activity}${error}`));
 			if (depth === maxDepth) {
 				const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
@@ -1163,7 +1165,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			}
 			for (const step of child.steps ?? []) {
 				if (lines.length >= lineBudget) return;
-				const modelThinking = formatModelThinking(step.model, step.thinking);
+				const modelThinking = formatModelThinking(step.model, step.thinking, step.childRouting);
 				lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedTimestampPrefix(nestedStepTimestamp(step, child.lastUpdate))}${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status}${modelThinking ? ` · ${modelThinking}` : ""} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate)}`));
 				append(step.children, depth + 1, `${prefix}    `);
 			}
@@ -1187,7 +1189,7 @@ function foregroundStyleWidgetStepLines(
 ): string[] {
 	const status = widgetStepStatus(step.status, theme);
 	const stats = widgetStepStats(theme, step);
-	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking, step.childRouting);
 	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1), frame)} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
 	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
 	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
@@ -1258,7 +1260,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 		const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
 		const stepStats = widgetStepStats(theme, step);
 		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
-		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking, step.childRouting);
 		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index), frame)} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt, 6)) lines.push(`    ${nestedLine}`);
 	}
@@ -1629,7 +1631,7 @@ function renderSingleCompact(
 	const width = getTermWidth() - 4;
 	const detailIndent = mainWindowIndent(layout, 1);
 	const continuationIndent = mainWindowIndent(layout, 2) + (layout.horizontalSpacing > 0 ? " " : "");
-	const modelDisplay = modelThinkingBadge(theme, r.model ?? r.progress?.model, r.thinking ?? r.progress?.thinking);
+	const modelDisplay = modelThinkingBadge(theme, r.model ?? r.progress?.model, r.thinking ?? r.progress?.thinking, r.childRouting ?? r.progress?.childRouting);
 	c.addChild(new Text(truncLine(`${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(r.agent))}${modelDisplay}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`, width), 0, 0));
 
 	if (isRunning && r.progress) {
@@ -1682,9 +1684,10 @@ function workflowOverallState(rows: WorkflowChatProgressRow[], hasTerminalValue:
 	return "running";
 }
 
-function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, frame?: number): Component {
+function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>, theme: Theme, layout: MainWindowRenderLayout, expanded: boolean, frame?: number): Component {
 	const workflow = d.workflow;
-	const rows = workflow ? buildWorkflowChatProgressRows(workflow.trace) : [];
+	const projection = workflow ? buildWorkflowChatProgressProjection(workflow.trace, workflow.children) : { rows: [], omittedRows: 0, omittedTraceEntries: 0 };
+	const rows = projection.rows;
 	const state = workflowOverallState(rows, workflow?.value !== undefined, result.isError);
 	const glyph = state === "running" ? theme.fg("accent", runningGlyph(frame)) : state === "complete" ? theme.fg("success", "✓") : state === "paused" ? theme.fg("warning", "■") : theme.fg("error", "✗");
 	const width = getTermWidth() - 4;
@@ -1696,6 +1699,8 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 	c.addChild(new Text(truncLine(`${glyph} ${theme.fg("toolTitle", theme.bold("workflow"))} ${runId} ${theme.fg("dim", "·")} ${d.chatProgress?.repoRelation === "same" ? "same repo" : "other repo"} ${theme.fg("dim", "·")} ${state}`, width), 0, 0));
 	c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Repo   ${repoLabel}`), width), 0, 0));
 	if (phase) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Phase  ${phase}`), width), 0, 0));
+	if (projection.omittedTraceEntries > 0) c.addChild(new Text(truncLine(theme.fg("warning", `${rowIndent}… ${projection.omittedTraceEntries} earlier trace events not processed`), width), 0, 0));
+	if (projection.omittedRows > 0) c.addChild(new Text(truncLine(theme.fg("warning", `${rowIndent}… ${projection.omittedRows} workflow rows omitted`), width), 0, 0));
 	if (rows.length === 0) {
 		c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}◦ waiting for workflow child launches`), width), 0, 0));
 		return c;
@@ -1708,9 +1713,18 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		const duration = row.durationMs !== undefined ? ` ${theme.fg("dim", `· ${formatDuration(row.durationMs)}`)}` : "";
 		const run = row.runId ? ` ${theme.fg("dim", `[${row.runId.slice(0, 8)}]`)}` : "";
 		const error = row.error ? ` ${theme.fg(row.state === "detached" ? "warning" : "error", `· ${compactWorkflowError(row.error)}`)}` : "";
-		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${error}`, width), 0, 0));
+		const modelRouting = formatModelThinking(row.model, row.thinking, row.childRouting);
+		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${modelRouting ? ` ${theme.fg("dim", `· ${modelRouting}`)}` : ""}${error}`, width), 0, 0));
 	}
 	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Emits  ${workflow.emits.length}`), width), 0, 0));
+	if (expanded && workflow) {
+		const topology = renderMermaidTerminal(formatWorkflowTopologyMermaid(workflow.trace), width);
+		c.addChild(new Spacer(1));
+		c.addChild(new Text(theme.bold(topology.kind === "diagram" ? "Workflow topology" : "Workflow topology (Mermaid source)"), 0, 0));
+		if (topology.reason === "too-wide") c.addChild(new Text(theme.fg("dim", "Diagram is too wide for this terminal; showing source."), 0, 0));
+		if (topology.reason === "unsupported") c.addChild(new Text(theme.fg("dim", "Diagram could not be rendered; showing source."), 0, 0));
+		for (const line of topology.lines) c.addChild(new Text(line, 0, 0));
+	}
 	return c;
 }
 
@@ -1798,7 +1812,7 @@ function renderMultiCompact(d: Details, theme: Theme, layout: MainWindowRenderLa
 		const pendingLabel = rPending ? ` ${theme.fg("dim", "· pending")}` : "";
 		const stepLabel = entry.rowLabel ?? resultRowLabel(multiLabel, i, stepNumber);
 		const rowProgressModel = rProg && "status" in rProg ? rProg : undefined;
-		const rowModelDisplay = modelThinkingBadge(theme, r.model ?? rowProgressModel?.model, r.thinking ?? rowProgressModel?.thinking);
+		const rowModelDisplay = modelThinkingBadge(theme, r.model ?? rowProgressModel?.model, r.thinking ?? rowProgressModel?.thinking, r.childRouting ?? rowProgressModel?.childRouting);
 		const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${contextModeBadge(theme, r.context)}${rowModelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}${pendingLabel}`;
 		c.addChild(new Text(truncLine(`${rowIndent}${line}`, width), 0, 0));
 		if (rRunning && rProg && "status" in rProg) {
@@ -1879,7 +1893,7 @@ export function renderSubagentResult(
 	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
 	const d = result.details;
 	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && !result.isError && d.workflow?.value === undefined) {
-		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, frame));
+		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, options.expanded, frame));
 	}
 	if (!d || !d.results.length) {
 		const t = result.content[0];
@@ -2134,7 +2148,7 @@ export function renderSubagentResult(
 		const resultOutput = getSingleResultOutput(r);
 		const rowPresentation = styledResultPresentation(resultPresentation(r, resultOutput, rRunning, progressRunningSeed(rProg), frame), theme);
 		const stats = rProg ? ` | ${rProg.toolCount} tools, ${formatDuration(rProg.durationMs)}` : "";
-		const modelDisplay = modelThinkingBadge(theme, r.model ?? rProg?.model, r.thinking ?? rProg?.thinking);
+		const modelDisplay = modelThinkingBadge(theme, r.model ?? rProg?.model, r.thinking ?? rProg?.thinking, r.childRouting ?? rProg?.childRouting);
 		const stepLabel = entry.rowLabel ?? resultRowLabel(multiLabel, i, stepNumber);
 		const contextBadge = contextModeBadge(theme, r.context);
 		const stepHeader = rRunning

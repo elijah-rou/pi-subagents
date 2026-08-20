@@ -530,6 +530,7 @@ export interface SteeringRecoveryDescriptor {
 	outputMode: "inline" | "file-only";
 	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
+	acceptanceReportOptional?: boolean;
 	controlConfig?: ResolvedControlConfig;
 	/** Raw per-run bridge override. Omitted descriptors continue to use global config. */
 	intercomBridge?: IntercomBridgeConfig;
@@ -548,7 +549,7 @@ export interface SteeringRecoveryDescriptor {
 
 export type PublicNestedStepSummary = Pick<
 	NestedStepSummary,
-	"agent" | "status" | "model" | "thinking" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut" | "stopped"
+	"agent" | "status" | "model" | "thinking" | "childRouting" | "sessionFile" | "transcriptPath" | "transcriptError" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "startedAt" | "endedAt" | "error" | "timedOut" | "stopped"
 > & {
 	children?: PublicNestedRunSummary[];
 };
@@ -561,7 +562,7 @@ export type CostSummary = {
 
 export type PublicNestedRunSummary = Pick<
 	NestedRunSummary,
-	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "model" | "thinking" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "stopped" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
+	"id" | "parentRunId" | "parentStepIndex" | "parentAgent" | "depth" | "path" | "asyncDir" | "sessionId" | "sessionFile" | "intercomTarget" | "ownerIntercomTarget" | "leafIntercomTarget" | "ownerState" | "mode" | "state" | "agent" | "agents" | "model" | "thinking" | "childRouting" | "currentStep" | "chainStepCount" | "parallelGroups" | "activityState" | "lastActivityAt" | "currentTool" | "currentToolStartedAt" | "currentPath" | "turnCount" | "toolCount" | "toolBudget" | "toolBudgetBlocked" | "totalTokens" | "totalCost" | "startedAt" | "endedAt" | "lastUpdate" | "error" | "timeoutMs" | "deadlineAt" | "timedOut" | "stopped" | "turnBudget" | "turnBudgetExceeded" | "wrapUpRequested"
 > & {
 	steps?: PublicNestedStepSummary[];
 	children?: PublicNestedRunSummary[];
@@ -634,6 +635,7 @@ export interface AgentProgress {
 	/** Resolved launch model/effort and split usage for public live projections. */
 	model?: string;
 	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 	inputTokens?: number;
 	outputTokens?: number;
 	durationMs: number;
@@ -663,6 +665,7 @@ interface ProgressSummary {
 	tokens: number;
 	model?: string;
 	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 	durationMs: number;
 }
 
@@ -1110,7 +1113,15 @@ export interface Details {
 			phase?: string;
 			label?: string;
 			durationMs?: number;
+			/** Bounded control-flow dependencies derived from the current trace. */
+			dependencies?: string[];
 			error?: string;
+		}>;
+		children?: Record<string, {
+			runId?: string;
+			model?: string;
+			thinking?: string;
+			childRouting?: ChildRoutingMetadata;
 		}>;
 		emits: unknown[];
 		console: Array<{ level: "log" | "info" | "warn" | "error"; text: string }>;
@@ -1184,6 +1195,7 @@ export interface NestedStepSummary {
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "paused" | "stopped" | "rejected";
 	model?: string;
 	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 	sessionFile?: string;
 	transcriptPath?: string;
 	transcriptError?: string;
@@ -1235,6 +1247,7 @@ export interface NestedRunSummary extends NestedRunAddress {
 	agents?: string[];
 	model?: string;
 	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 	currentStep?: number;
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
@@ -1586,6 +1599,7 @@ export interface ForegroundResumeChild {
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 	status: SubagentResultStatus;
 	activityState?: ActivityState;
 	lastActivityAt?: number;
@@ -1646,6 +1660,7 @@ export interface ForegroundChildControl {
 	outputTokens?: number;
 	model?: string;
 	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 	toolCount?: number;
 	interrupt?: () => boolean;
 	detach?: () => boolean;
@@ -1681,6 +1696,7 @@ export interface ForegroundRunControl {
 	outputTokens?: number;
 	model?: string;
 	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 	toolCount?: number;
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
 	activeChildren?: Map<number, ForegroundChildControl>;
@@ -1893,6 +1909,8 @@ export interface RunSyncOptions {
 	roleResultContract?: { id: string; version: 1; source: "role" };
 	agentContract?: AgentContract;
 	acceptance?: AcceptanceInput;
+	/** Host-owned gate shorthand: runtime verification is authoritative without a child report. */
+	acceptanceReportOptional?: boolean;
 	acceptanceContext?: {
 		mode?: SubagentRunMode;
 		async?: boolean;

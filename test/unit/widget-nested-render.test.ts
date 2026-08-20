@@ -39,13 +39,13 @@ function job(child: NestedRunSummary): AsyncJobState {
 
 describe("nested widget rendering", () => {
 	it("renders a bounded collapsed tree and full child rows when expanded", () => {
-		const child = nested("nested-reviewer", "root-run", "running", { currentTool: "read", model: "gpt-5.6-luna:medium", thinking: "medium" });
+		const child = nested("nested-reviewer", "root-run", "running", { currentTool: "read", model: "gpt-5.6-luna:medium", thinking: "medium", childRouting: { profile: "fast", confidence: 98, source: "child-router", model: "gpt-5.6-luna", thinking: "medium" } });
 		const collapsed = buildWidgetLines([job(child)], theme as any, 120, false).join("\n");
-		assert.match(collapsed, /↳ └─ \[\d{2}:\d{2}:\d{2}\] . nested-reviewer · running · gpt-5.6-luna · thinking medium · read/);
+		assert.match(collapsed, /↳ └─ \[\d{2}:\d{2}:\d{2}\] . nested-reviewer · running · gpt-5.6-luna · thinking medium · profile fast 98% · read/);
 		assert.equal((collapsed.match(/thinking medium/g) ?? []).length, 1);
 
 		const expanded = buildWidgetLines([job(child)], theme as any, 120, true).join("\n");
-		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . nested-reviewer · running · gpt-5.6-luna · thinking medium · read/);
+		assert.match(expanded, /↳ \[\d{2}:\d{2}:\d{2}\] . nested-reviewer · running · gpt-5.6-luna · thinking medium · profile fast 98% · read/);
 
 		const epoch = buildWidgetLines([job(nested("epoch", "root-run", "running", { lastUpdate: 0, startedAt: 0 }))], theme as any, 120, false).join("\n");
 		assert.match(epoch, /↳ └─ \[\d{2}:\d{2}:\d{2}\] . epoch · running/);

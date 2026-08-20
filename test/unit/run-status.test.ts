@@ -97,7 +97,7 @@ describe("async run status inspection", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
 				steps: [
-					{ agent: "reviewer", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high" },
+					{ agent: "reviewer", status: "running", startedAt: 100, model: "openai-codex/gpt-5.5:high", childRouting: { profile: "fast", confidence: 98, source: "child-router", model: "openai-codex/gpt-5.5", thinking: "high", serviceTier: "priority" } },
 					{ agent: "reviewer", status: "running", startedAt: 100, model: "anthropic/claude-haiku-4-5", thinking: "low" },
 					{ agent: "reviewer", status: "pending" },
 				],
@@ -115,7 +115,7 @@ describe("async run status inspection", () => {
 			assert.match(text, /Error: top-level async status error/);
 			assert.match(text, /Progress: 2 agents running · 0\/3 done/);
 			assert.match(text, new RegExp(`Output: ${runOutputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-			assert.match(text, /Agent 1\/3: reviewer running \(gpt-5\.5 · thinking high\)/);
+			assert.match(text, /Agent 1\/3: reviewer running \(gpt-5\.5 · thinking high · profile fast 98% · tier priority\)/);
 			assert.match(text, /Agent 2\/3: reviewer running \(claude-haiku-4-5 · thinking low\)/);
 			assert.match(text, /Agent 3\/3: reviewer pending/);
 			assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);

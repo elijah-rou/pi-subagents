@@ -214,7 +214,7 @@ The fork can route only child compute at launch time with `subagents.childRoutin
 }
 ```
 
-Routing selects model, thinking, and an optional child-only `serviceTier`. The parent still owns agent role, topology, context, worktree, acceptance, tools, and permissions. `runs.run` is classified as serial and `runs.all` as parallel. A profile tier must be `default` or `priority` and is accepted only for an `openai-codex` routed model. Pi sends it as the request `service_tier` value from that child process, so it cannot change the parent or a sibling.
+Routing selects model, thinking, and an optional child-only `serviceTier`. Live cards, async status, Fleet views, result rows, and nested rows show the selected profile, confidence, and tier beside model/thinking when routing metadata is available. The parent still owns agent role, topology, context, worktree, acceptance, tools, and permissions. `runs.run` is classified as serial and `runs.all` as parallel. A profile tier must be `default` or `priority` and is accepted only for an `openai-codex` routed model. Pi sends it as the request `service_tier` value from that child process, so it cannot change the parent or a sibling.
 
 `priority` enables OpenAI Codex Fast mode. For Codex GPT-5.6, Fast mode is approximately 1.5x faster and consumes 2.5x ChatGPT credits. `priority` is the request value used by Pi; omit `serviceTier` to preserve the child's ordinary provider behavior.
 

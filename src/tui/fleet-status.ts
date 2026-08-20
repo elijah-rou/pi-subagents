@@ -135,7 +135,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 						return false;
 					}
 					const step = steps[stepIndex]!;
-					const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+					const modelThinking = formatModelThinking(step.model, step.thinking, step.childRouting) || undefined;
 					const activity = nestedActivity(step);
 					rows.push({
 						name: step.agent,
@@ -157,7 +157,7 @@ function nestedFleetRows(children: NestedRunSummary[] | undefined, visibleLimit:
 					omitted += nestedDisplayCount(runs, runIndex);
 					return false;
 				}
-				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
+				const modelThinking = formatModelThinking(child.model, child.thinking, child.childRouting) || undefined;
 				const activity = nestedActivity(child);
 				rows.push({
 					name: nestedRunLabel(child),
@@ -238,7 +238,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		const linkedParentKey = parentKey && activeWorkflowKeys.has(parentKey) ? parentKey : undefined;
 		if (control.activeChildren) {
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
-				const modelThinking = formatModelThinking(child.model, child.thinking) || undefined;
+				const modelThinking = formatModelThinking(child.model, child.thinking, child.childRouting) || undefined;
 				entries.push({
 					key: `foreground-active:${control.runId}:${child.index}`,
 					...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
@@ -255,7 +255,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			}
 			continue;
 		}
-		const modelThinking = formatModelThinking(control.model, control.thinking) || undefined;
+		const modelThinking = formatModelThinking(control.model, control.thinking, control.childRouting) || undefined;
 		entries.push({
 			key: `foreground-active:${control.runId}:${control.currentIndex ?? 0}`,
 			...(linkedParentKey ? { parentKey: linkedParentKey } : {}),
@@ -309,7 +309,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 			if (!isActiveState(step.status)) continue;
 			const index = step.index ?? offset;
 			if (step.status === "pending" && job.mode === "chain" && !job.activeParallelGroup && index !== (job.currentStep ?? 0)) continue;
-			const modelThinking = formatModelThinking(step.model, step.thinking) || undefined;
+			const modelThinking = formatModelThinking(step.model, step.thinking, step.childRouting) || undefined;
 			entries.push({
 				key: `async:${job.asyncId}:${index}`,
 				agent: step.label ? `${step.label} (${step.agent})` : step.agent,

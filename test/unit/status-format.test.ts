@@ -17,6 +17,17 @@ describe("status format helpers", () => {
 		assert.equal(formatModelThinking("openai/gpt-5", "max"), "gpt-5 · thinking max");
 	});
 
+	it("formats bounded native child-routing provenance without duplicating the model", () => {
+		assert.equal(formatModelThinking("openai-codex/gpt-5.5", "high", {
+			profile: "fast",
+			confidence: 98,
+			source: "child-router",
+			model: "openai-codex/gpt-5.5",
+			thinking: "high",
+			serviceTier: "priority",
+		}), "gpt-5.5 · thinking high · profile fast 98% · tier priority");
+	});
+
 	it("aggregates step status and parallel outcomes", () => {
 		const steps = [{ status: "complete" }, { status: "running" }, { status: "failed" }] satisfies Array<Pick<AsyncJobStep, "status">>;
 		assert.equal(aggregateStepStatus(steps), "running");

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- Restore bounded Mermaid topology rendering in expanded workflow live cards, with readable source fallback when terminal art cannot fit.
+- Show native child-routing profile confidence and service tier beside model/thinking across live, result, async status, Fleet, and nested displays.
+
+### Fixed
+- Treat a passing gate-only host command as authoritative verification without requiring a child acceptance report, including workflow children with custom output schemas. Explicit acceptance contracts remain unchanged.
+
 ## [0.52.0] - 2026-08-19
 
 ### Highlights

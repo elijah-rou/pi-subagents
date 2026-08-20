@@ -30,6 +30,7 @@ import {
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { sanitizeProcessTerminal } from "../background/process-terminal.ts";
 import { THINKING_LEVELS } from "../../shared/model-info.ts";
+import { validateChildRoutingMetadata } from "../../routing/child-routing-provenance.ts";
 
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -289,6 +290,15 @@ function sanitizeState(value: unknown, fallback: NestedRunState): NestedRunState
 		: fallback;
 }
 
+function sanitizeChildRouting(input: unknown): import("../../shared/types.ts").ChildRoutingMetadata | undefined {
+	if (input === undefined) return undefined;
+	try {
+		return validateChildRoutingMetadata(input, "Nested child routing metadata");
+	} catch {
+		return undefined;
+	}
+}
+
 function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefined {
 	if (!input || typeof input !== "object") return undefined;
 	const raw = input as Record<string, unknown>;
@@ -299,11 +309,13 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		: "pending";
 	const model = stringValue(raw.model);
 	const thinking = THINKING_LEVELS.find((level) => level === raw.thinking);
+	const childRouting = sanitizeChildRouting(raw.childRouting);
 	return {
 		agent,
 		status,
 		...(model ? { model } : {}),
 		...(thinking ? { thinking } : {}),
+		...(childRouting ? { childRouting } : {}),
 		...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention" ? { activityState: raw.activityState } : {}),
 		...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
@@ -336,6 +348,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		: undefined;
 	const totalTokens = sanitizeTokenUsage(raw.totalTokens);
 	const totalCost = sanitizeCost(raw.totalCost);
+	const childRouting = sanitizeChildRouting(raw.childRouting);
 	return {
 		id: raw.id,
 		parentRunId: raw.parentRunId,
@@ -346,6 +359,7 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
 		state: sanitizeState(raw.state, "running"),
 		...(stringValue(raw.model) ? { model: stringValue(raw.model) } : {}),
 		...(THINKING_LEVELS.find((level) => level === raw.thinking) ? { thinking: THINKING_LEVELS.find((level) => level === raw.thinking) } : {}),
+		...(childRouting ? { childRouting } : {}),
 		...(stringValue(raw.asyncDir, 2048) ? { asyncDir: stringValue(raw.asyncDir, 2048) } : {}),
 		...(clampNumber(raw.pid) !== undefined && clampNumber(raw.pid)! > 0 && Number.isInteger(clampNumber(raw.pid)) ? { pid: clampNumber(raw.pid) } : {}),
 		...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
@@ -1003,6 +1017,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 		mode: status.mode ?? fallback.mode,
 		...(status.steps?.length === 1 && status.steps[0]?.model ? { model: status.steps[0].model } : {}),
 		...(status.steps?.length === 1 && status.steps[0]?.thinking ? { thinking: status.steps[0].thinking } : {}),
+		...(status.steps?.length === 1 && status.steps[0]?.childRouting ? { childRouting: status.steps[0].childRouting } : {}),
 		...(status.processTerminal ? { processTerminal: sanitizeProcessTerminal(status.processTerminal, { runId: status.runId || fallback.id, runnerProcessInstanceId: status.processTerminal.runnerProcessInstanceId }, `${asyncDir}/status.json`) } : {}),
 		...(status.launchResolvedExtensions ? { launchResolvedExtensions: status.launchResolvedExtensions } : {}),
 		...runtimeAcknowledgedEntry(status.runtimeAcknowledgedExtensions),
@@ -1036,6 +1051,7 @@ export function nestedSummaryFromAsyncStatus(status: AsyncStatus, asyncDir: stri
 			status: step.status,
 			...(step.model ? { model: step.model } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),
+			...(step.childRouting ? { childRouting: step.childRouting } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.activityState ? { activityState: step.activityState } : {}),
 			...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),

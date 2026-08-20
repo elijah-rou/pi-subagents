@@ -297,7 +297,8 @@ function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
 			...(control.tokens !== undefined ? { tokens: { total: control.tokens } } : {}),
 		});
 		const current = control.currentAgent ? ` | ${control.currentAgent}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}` : "";
-		lines.push(`- ${control.runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}`);
+		const modelThinking = formatModelThinking(control.model, control.thinking, control.childRouting);
+		lines.push(`- ${control.runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}${modelThinking ? ` | ${modelThinking}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${control.runId}" })`);
 		lines.push("  transcript: live in the expanded foreground result; persisted session transcript appears after completion when sessions are enabled.");
 		lines.push(...formatNestedRunStatusLines(control.nestedChildren, { indent: "  ", commandHints: true, maxLines: 12 }));
@@ -311,7 +312,10 @@ function formatDetachedForegroundFleetLines(runs: ForegroundRun[]): string[] {
 	const ordered = [...runs].sort((left, right) => right.updatedAt - left.updatedAt);
 	for (const run of ordered) {
 		const detachedChildren = run.children.filter((child) => child.status === "detached");
-		const childSummary = detachedChildren.map((child) => `${child.agent} #${child.index}`).join(", ");
+		const childSummary = detachedChildren.map((child) => {
+			const modelThinking = formatModelThinking(child.model, child.thinking, child.childRouting);
+			return `${child.agent} #${child.index}${modelThinking ? ` (${modelThinking})` : ""}`;
+		}).join(", ");
 		lines.push(`- ${run.runId} | detached | ${run.mode}${childSummary ? ` | ${childSummary}` : ""}`);
 		lines.push(`  status: subagent({ action: "status", id: "${run.runId}" })`);
 		lines.push(`  recovery: reply to the supervisor request first, then wait with subagent_wait({ id: "${run.runId}" }); do not resume or launch a replacement while any child remains detached.`);
@@ -336,7 +340,7 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
 			const stepContext = contextModeLabel(step.context);
 			const phase = step.phase ? `[${step.phase}] ` : "";
 			const stepActivity = formatActivityFacts(step);
-			const modelThinking = formatModelThinking(step.model, step.thinking);
+			const modelThinking = formatModelThinking(step.model, step.thinking, step.childRouting);
 			const parts = [`${step.index}. ${phase}${display}${stepContext ? ` ${stepContext}` : ""}`, step.status, stepActivity, modelThinking].filter(Boolean);
 			lines.push(`  ${parts.join(" | ")}`);
 			const output = path.join(run.asyncDir, `output-${step.index}.log`);
@@ -436,7 +440,7 @@ function selectTranscriptStep(status: AsyncStatus, options: TranscriptOptions): 
 
 function stepStateLine(mode: SubagentRunMode, index: number | undefined, step: AsyncJobStep | undefined): string | undefined {
 	if (index === undefined || !step) return undefined;
-	const modelThinking = formatModelThinking(step.model, step.thinking);
+	const modelThinking = formatModelThinking(step.model, step.thinking, step.childRouting);
 	const context = contextModeLabel(step.context);
 	const parts = [
 		`${mode === "parallel" ? "Agent" : "Step"}: ${index} (${step.agent})${context ? ` ${context}` : ""}`,

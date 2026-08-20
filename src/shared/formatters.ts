@@ -4,10 +4,10 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Usage, SingleResult } from "./types.ts";
+import type { ChildRoutingMetadata, Usage, SingleResult } from "./types.ts";
 import type { ChainStep } from "./settings.ts";
 import { isDynamicParallelStep, isParallelStep } from "./settings.ts";
-import { previewDisplayText, sanitizeDisplayText } from "./display-text.ts";
+import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
 
 /**
@@ -17,16 +17,29 @@ export function formatTokens(n: number): string {
 	return n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
 }
 
-export function formatModelThinking(model?: string, thinking?: string): string {
-	const parsed = model ? splitKnownThinkingSuffix(model) : undefined;
-	let displayModel = parsed?.baseModel ?? model;
-	const explicitThinking = THINKING_LEVELS.find((level) => level === thinking?.trim());
+export function formatChildRoutingBadge(routing?: ChildRoutingMetadata, maxLength = 80): string {
+	if (!routing || routing.source !== "child-router" || maxLength <= 0) return "";
+	const confidence = Number.isSafeInteger(routing.confidence) && routing.confidence >= 0 && routing.confidence <= 100
+		? ` ${routing.confidence}%`
+		: "";
+	const parts = [
+		`profile ${sanitizeDisplayText(routing.profile)}${confidence}`,
+		routing.serviceTier ? `tier ${routing.serviceTier}` : undefined,
+	].filter((part): part is string => Boolean(part));
+	return truncateDisplayText(parts.join(" · "), maxLength);
+}
+
+export function formatModelThinking(model?: string, thinking?: string, childRouting?: ChildRoutingMetadata): string {
+	const effectiveModel = model ?? childRouting?.model;
+	const parsed = effectiveModel ? splitKnownThinkingSuffix(effectiveModel) : undefined;
+	let displayModel = parsed?.baseModel ?? effectiveModel;
+	const explicitThinking = THINKING_LEVELS.find((level) => level === (thinking ?? childRouting?.thinking)?.trim());
 	const displayThinking = parsed?.thinkingSuffix ? parsed.thinkingSuffix.slice(1) : explicitThinking;
 	if (displayModel) {
 		const slashIdx = displayModel.lastIndexOf("/");
 		if (slashIdx !== -1) displayModel = displayModel.slice(slashIdx + 1);
 	}
-	return [displayModel, displayThinking ? `thinking ${displayThinking}` : undefined].filter(Boolean).join(" · ");
+	return [displayModel, displayThinking ? `thinking ${displayThinking}` : undefined, formatChildRoutingBadge(childRouting)].filter(Boolean).join(" · ");
 }
 
 /**

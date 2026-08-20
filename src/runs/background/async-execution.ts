@@ -238,6 +238,7 @@ interface AsyncSingleParams {
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	nestedRoute?: NestedRouteInfo;
 	acceptance?: AcceptanceInput;
+	acceptanceReportOptional?: boolean;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
 	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
@@ -1504,6 +1505,7 @@ export function executeAsyncSingle(
 		mode: "single",
 		async: true,
 		agentContract: params.agentContract,
+		hostGateOnly: params.acceptanceReportOptional === true,
 	});
 	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
@@ -1539,6 +1541,7 @@ export function executeAsyncSingle(
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
+		...(params.acceptanceReportOptional ? { acceptanceReportOptional: true } : {}),
 		...(controlConfig ? { controlConfig } : {}),
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
@@ -1600,6 +1603,7 @@ export function executeAsyncSingle(
 						launchContractDigest,
 						launchResolvedExtensions,
 						effectiveAcceptance: resolvedAcceptance,
+						...(params.acceptanceReportOptional ? { acceptanceReportOptional: true } : {}),
 						...(structuredOutput ? { structuredOutput } : {}),
 						...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),

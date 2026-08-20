@@ -137,7 +137,7 @@ describe("below-editor subagent FleetView", () => {
 				updatedAt: now,
 				currentAgent: `worker-${index}`,
 				description: index === 0 ? "Inspect\nmodule 0" : `Inspect module ${index}`,
-				...(index === 0 ? { model: "anthropic/fable-5", thinking: "low" } : {}),
+				...(index === 0 ? { model: "anthropic/fable-5", thinking: "low", childRouting: { profile: "fast", confidence: 98, source: "child-router" as const, model: "anthropic/fable-5", thinking: "low" } } : {}),
 				tokens: index === 0 ? 13_100 : 100,
 			});
 		}
@@ -181,7 +181,7 @@ describe("below-editor subagent FleetView", () => {
 			assert.ok(expandedLines.some((line) => line.includes("> main")));
 			assert.ok(expandedLines.some((line) => line.includes("  worker-0")), "unselected agents use blank focus space");
 			assert.ok(expandedLines.every((line) => !/[⏺◯]/u.test(line)), "selection avoids terminal-ambiguous circle glyphs");
-			assert.ok(expandedLines.some((line) => line.includes("worker-0 (fable-5 · thinking low)")));
+			assert.ok(expandedLines.some((line) => line.includes("worker-0 (fable-5 · thinking low · profile fast 98%)")));
 			assert.ok(expandedLines.some((line) => line.includes("11s · ↓ 13.1k tokens")));
 			assert.ok(expandedLines.some((line) => line.includes("↓ 1 more")));
 			for (const line of expandedLines) assert.ok(visibleWidth(line) <= 80, `line exceeded width: ${line}`);

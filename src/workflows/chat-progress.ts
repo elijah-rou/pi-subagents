@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Details } from "../shared/types.ts";
+import type { ChildRoutingMetadata, Details } from "../shared/types.ts";
 
 export const WORKFLOW_CHAT_PROGRESS_MODES = ["auto", "off", "live-card"] as const;
 export type WorkflowChatProgressMode = typeof WORKFLOW_CHAT_PROGRESS_MODES[number];
@@ -102,15 +102,31 @@ export interface WorkflowChatProgressRow {
 	runId?: string;
 	durationMs?: number;
 	error?: string;
+	model?: string;
+	thinking?: string;
+	childRouting?: ChildRoutingMetadata;
 }
 
 function cleanLabel(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-export function buildWorkflowChatProgressRows(trace: NonNullable<Details["workflow"]>["trace"]): WorkflowChatProgressRow[] {
+export const MAX_WORKFLOW_CHAT_ROWS = 16;
+export const MAX_WORKFLOW_CHAT_TRACE_ENTRIES = 512;
+
+export interface WorkflowChatProgressRowsProjection {
+	rows: WorkflowChatProgressRow[];
+	omittedRows: number;
+	omittedTraceEntries: number;
+}
+
+export function buildWorkflowChatProgressProjection(
+	trace: NonNullable<Details["workflow"]>["trace"],
+	children: NonNullable<Details["workflow"]>["children"] = {},
+): WorkflowChatProgressRowsProjection {
+	const boundedTrace = trace.slice(-MAX_WORKFLOW_CHAT_TRACE_ENTRIES);
 	const rows = new Map<string, WorkflowChatProgressRow>();
-	for (const entry of trace) {
+	for (const entry of boundedTrace) {
 		if (entry.operation !== "run") continue;
 		const existing = rows.get(entry.key);
 		if (entry.state === "reused") {
@@ -142,7 +158,141 @@ export function buildWorkflowChatProgressRows(trace: NonNullable<Details["workfl
 		else next.durationMs = entry.durationMs;
 		if (entry.error === undefined) delete next.error;
 		else next.error = entry.error;
+		const child = children?.[entry.key];
+		if (child?.runId && !next.runId) next.runId = child.runId;
+		if (child?.model) next.model = child.model;
+		if (child?.thinking) next.thinking = child.thinking;
+		if (child?.childRouting) next.childRouting = child.childRouting;
 		rows.set(entry.key, next);
 	}
-	return [...rows.values()];
+	const allRows = [...rows.values()];
+	return {
+		rows: allRows.slice(-MAX_WORKFLOW_CHAT_ROWS),
+		omittedRows: Math.max(0, allRows.length - MAX_WORKFLOW_CHAT_ROWS),
+		omittedTraceEntries: Math.max(0, trace.length - boundedTrace.length),
+	};
+}
+
+export function buildWorkflowChatProgressRows(
+	trace: NonNullable<Details["workflow"]>["trace"],
+	children: NonNullable<Details["workflow"]>["children"] = {},
+): WorkflowChatProgressRow[] {
+	return buildWorkflowChatProgressProjection(trace, children).rows;
+}
+
+const MAX_TOPOLOGY_TRACE_ENTRIES = 2_048;
+const MAX_TOPOLOGY_CHILDREN = 64;
+const MAX_TOPOLOGY_DEPENDENCIES = 128;
+const MAX_TOPOLOGY_DEPENDENCIES_PER_CHILD = 64;
+const MAX_TOPOLOGY_LABEL_CHARACTERS = 80;
+const MAX_TOPOLOGY_LABEL_INPUT_CHARACTERS = 512;
+
+function mermaidLabel(value: string): string {
+	let label = "";
+	let scanned = 0;
+	let previousWasSpace = true;
+	for (const character of value) {
+		scanned++;
+		if (scanned > MAX_TOPOLOGY_LABEL_INPUT_CHARACTERS || label.length >= MAX_TOPOLOGY_LABEL_CHARACTERS) break;
+		const unsafe = /[\s\[\]{}()<>|&"'`\\]/.test(character);
+		if (unsafe) {
+			if (!previousWasSpace && label.length < MAX_TOPOLOGY_LABEL_CHARACTERS) label += " ";
+			previousWasSpace = true;
+			continue;
+		}
+		label += character;
+		previousWasSpace = false;
+	}
+	return label.trim() || "child";
+}
+
+interface WorkflowControlDependencies {
+	keys: string[];
+	omitted: boolean;
+}
+
+function traceControlDependencies(trace: NonNullable<Details["workflow"]>["trace"]): Map<string, WorkflowControlDependencies> {
+	const dependencies = new Map<string, WorkflowControlDependencies>();
+	let frontier: string[] = [];
+	let waveDependencies: string[] | undefined;
+	for (const entry of trace.slice(0, MAX_TOPOLOGY_TRACE_ENTRIES)) {
+		if (entry.operation !== "run" || entry.state === "reused") continue;
+		if (entry.state === "started") {
+			waveDependencies ??= [...frontier];
+			const rawDeclared = entry.dependencies ?? [];
+			const boundedDeclared = rawDeclared.slice(0, MAX_TOPOLOGY_DEPENDENCIES_PER_CHILD);
+			const declared = boundedDeclared.filter((key, index, values) => key !== entry.key && values.indexOf(key) === index);
+			dependencies.set(entry.key, {
+				keys: declared.length ? declared : [...waveDependencies],
+				omitted: rawDeclared.length > boundedDeclared.length,
+			});
+			continue;
+		}
+		if (entry.state !== "completed" && entry.state !== "failed" && entry.state !== "detached" && entry.state !== "stopped") continue;
+		const consumed = new Set(dependencies.get(entry.key)?.keys ?? []);
+		frontier = frontier.filter((key) => !consumed.has(key) && key !== entry.key);
+		if (!frontier.includes(entry.key)) frontier.push(entry.key);
+		if (frontier.length > MAX_TOPOLOGY_CHILDREN) frontier = frontier.slice(-MAX_TOPOLOGY_CHILDREN);
+		waveDependencies = undefined;
+	}
+	return dependencies;
+}
+
+/** Pure bounded projection of the current workflow launch trace and control-flow dependency frontier. */
+export function formatWorkflowTopologyMermaid(trace: NonNullable<Details["workflow"]>["trace"]): string {
+	const boundedTrace = trace.slice(0, MAX_TOPOLOGY_TRACE_ENTRIES);
+	const starts: Array<NonNullable<Details["workflow"]>["trace"][number]> = [];
+	let omittedChildren = trace.length > boundedTrace.length;
+	for (const entry of boundedTrace) {
+		if (entry.operation !== "run" || entry.state !== "started") continue;
+		if (starts.length >= MAX_TOPOLOGY_CHILDREN) {
+			omittedChildren = true;
+			break;
+		}
+		starts.push(entry);
+	}
+	const controlDependencies = traceControlDependencies(boundedTrace);
+	const indexByKey = new Map(starts.map((entry, index) => [entry.key, index]));
+	const dependencySources: number[][] = starts.map(() => []);
+	const hasDeclaredDependency = starts.map(() => false);
+	const hasOmittedInput = starts.map(() => false);
+	let dependencyCount = 0;
+	for (let targetIndex = 0; targetIndex < starts.length; targetIndex++) {
+		const dependencyProjection = controlDependencies.get(starts[targetIndex]!.key);
+		const declared = dependencyProjection?.keys ?? [];
+		if (declared.length === 0 && !dependencyProjection?.omitted) continue;
+		hasDeclaredDependency[targetIndex] = true;
+		hasOmittedInput[targetIndex] = dependencyProjection?.omitted === true;
+		const scanLimit = Math.min(declared.length, MAX_TOPOLOGY_DEPENDENCIES_PER_CHILD);
+		for (let dependencyIndex = 0; dependencyIndex < scanLimit; dependencyIndex++) {
+			const sourceIndex = indexByKey.get(declared[dependencyIndex]!);
+			if (sourceIndex === undefined || sourceIndex === targetIndex || dependencySources[targetIndex]!.includes(sourceIndex)) {
+				hasOmittedInput[targetIndex] = sourceIndex === undefined || hasOmittedInput[targetIndex] === true;
+				continue;
+			}
+			if (dependencyCount >= MAX_TOPOLOGY_DEPENDENCIES) {
+				hasOmittedInput[targetIndex] = true;
+				continue;
+			}
+			dependencySources[targetIndex]!.push(sourceIndex);
+			dependencyCount++;
+		}
+		if (declared.length > scanLimit) hasOmittedInput[targetIndex] = true;
+	}
+
+	const lines = ["flowchart TD", "  start(( ))"];
+	for (let index = 0; index < starts.length; index++) lines.push(`  child_${index}["${mermaidLabel(starts[index]!.label || starts[index]!.key)}"]`);
+	for (let targetIndex = 0; targetIndex < starts.length; targetIndex++) {
+		if (!hasDeclaredDependency[targetIndex]) lines.push(`  start --> child_${targetIndex}`);
+		for (const sourceIndex of dependencySources[targetIndex]!) lines.push(`  child_${sourceIndex} --> child_${targetIndex}`);
+		if (hasOmittedInput[targetIndex]) {
+			lines.push(`  omitted_input_${targetIndex}["Additional input omitted"]`);
+			lines.push(`  omitted_input_${targetIndex} --> child_${targetIndex}`);
+		}
+	}
+	if (omittedChildren) {
+		lines.push(`  omitted_children["Additional children omitted"]`);
+		lines.push("  start --> omitted_children");
+	}
+	return lines.join("\n");
 }

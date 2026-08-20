@@ -325,7 +325,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	const allowedFields = new Set([
 		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelOverrideFromParent", "childRouting", "resultContract", "fallbackModels", "thinking", "tools", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritSkills", "skills",
-		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
+		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "acceptanceReportOptional", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
 		"launchResolvedExtensions", "runFanoutBudget",
 	]);
@@ -366,6 +366,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		if (parsed[field] !== undefined && (typeof parsed[field] !== "string" || !(parsed[field] as string).trim())) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${field} must be a non-empty string.`);
 	}
 	if (parsed.completionGuard !== undefined && typeof parsed.completionGuard !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': completionGuard must be a boolean.`);
+	if (parsed.acceptanceReportOptional !== undefined && typeof parsed.acceptanceReportOptional !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': acceptanceReportOptional must be a boolean.`);
 	if (parsed.structuredOutputSchema !== undefined && (!parsed.structuredOutputSchema || typeof parsed.structuredOutputSchema !== "object" || Array.isArray(parsed.structuredOutputSchema))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': structuredOutputSchema must be an object.`);
 	if (parsed.memory !== undefined) {
 		if (!parsed.memory || typeof parsed.memory !== "object" || Array.isArray(parsed.memory)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory must be an object.`);

@@ -417,6 +417,7 @@ async function runSingleAttempt(
 		usage: emptyUsage(),
 		model: modelArg,
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
+		...(options.childRouting ? { childRouting: options.childRouting } : {}),
 		artifactPaths: shared.artifactPaths,
 		transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
 		skills: shared.resolvedSkillNames,
@@ -459,6 +460,7 @@ async function runSingleAttempt(
 		tokens: 0,
 		...(modelArg ? { model: modelArg } : {}),
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
+		...(options.childRouting ? { childRouting: options.childRouting } : {}),
 		inputTokens: 0,
 		outputTokens: 0,
 		durationMs: 0,
@@ -1631,13 +1633,14 @@ async function runSyncCompletionInner(
 		dynamic: options.acceptanceContext?.dynamic,
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 		agentContract: options.agentContract,
+		hostGateOnly: options.acceptanceReportOptional === true,
 	});
 	const validatedRoleResultContract = options.roleResultContract === undefined
 		? undefined
 		: validateRoleResultContractMetadata(options.roleResultContract, "Host role result contract");
 	const structuredAcceptanceReport = validatedRoleResultContract !== undefined;
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, {
-		reportOptional: isAgentContractV1(options.agentContract),
+		reportOptional: isAgentContractV1(options.agentContract) || options.acceptanceReportOptional === true,
 		structuredReport: structuredAcceptanceReport,
 	});
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
@@ -1954,7 +1957,7 @@ async function runSyncCompletionInner(
 					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
 					: undefined,
 				cwd: options.cwd ?? runtimeCwd,
-				reportOptional: isAgentContractV1(options.agentContract),
+				reportOptional: isAgentContractV1(options.agentContract) || options.acceptanceReportOptional === true,
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,
 			});

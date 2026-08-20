@@ -1285,7 +1285,7 @@ async function runSingleStepInner(
 	const structuredAcceptanceReport = validatedRoleResultContract !== undefined;
 	if (step.effectiveAcceptance) {
 		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, {
-			reportOptional: isAgentContractV1(step.agentContract),
+			reportOptional: isAgentContractV1(step.agentContract) || step.acceptanceReportOptional === true,
 			structuredReport: structuredAcceptanceReport,
 		});
 		if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
@@ -1841,7 +1841,7 @@ async function runSingleStepInner(
 			cwd: step.cwd ?? ctx.cwd,
 			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
 			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",
-			reportOptional: isAgentContractV1(step.agentContract),
+			reportOptional: isAgentContractV1(step.agentContract) || step.acceptanceReportOptional === true,
 			artifactsDir: ctx.artifactsDir,
 			runId: ctx.id,
 		}))

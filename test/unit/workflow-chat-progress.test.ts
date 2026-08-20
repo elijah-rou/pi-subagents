@@ -4,7 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { buildWorkflowChatProgressRows, isSameGitRepository, resolveWorkflowChatProgress } from "../../src/workflows/chat-progress.ts";
+import { buildWorkflowChatProgressProjection, buildWorkflowChatProgressRows, formatWorkflowTopologyMermaid, isSameGitRepository, resolveWorkflowChatProgress } from "../../src/workflows/chat-progress.ts";
+import { renderMermaidTerminal } from "../../src/workflows/mermaid-terminal.ts";
 import { renderSubagentResult } from "../../src/tui/render.ts";
 import { bindMissionWorkflowChildAsyncLaunch, createSubagentExecutor, foregroundResultIntercomStatus, missionWorkflowChildStatus, runMissionWorkflowChild, shouldSuppressRoutineResultIntercom } from "../../src/runs/foreground/subagent-executor.ts";
 import { readMissionBinding } from "../../src/missions/lifecycle.ts";
@@ -106,6 +107,52 @@ describe("workflow chat progress policy", () => {
 			fs.rmSync(other, { recursive: true, force: true });
 			fs.rmSync(worktree, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("workflow Mermaid topology", () => {
+	it("projects sequential control dependencies and independent fanout from the bounded trace", () => {
+		const sequential = formatWorkflowTopologyMermaid([
+			{ operation: "run", key: "scan", state: "started" },
+			{ operation: "run", key: "scan", state: "completed" },
+			{ operation: "run", key: "implement", state: "started" },
+		]);
+		assert.match(sequential, /start --> child_0/);
+		assert.match(sequential, /child_0 --> child_1/);
+
+		const fanout = formatWorkflowTopologyMermaid([
+			{ operation: "run", key: "left", state: "started" },
+			{ operation: "run", key: "right", state: "started" },
+		]);
+		assert.match(fanout, /start --> child_0/);
+		assert.match(fanout, /start --> child_1/);
+		assert.doesNotMatch(fanout, /child_0 --> child_1/);
+	});
+
+	it("bounds labels, children, trace scanning, and terminal fallback source", () => {
+		const trace: NonNullable<Details["workflow"]>["trace"] = Array.from({ length: 70 }, (_, index) => ({
+			operation: "run" as const,
+			key: index === 0 ? `bad-[label]&${"x".repeat(200)}` : `child-${index}`,
+			state: "started" as const,
+		}));
+		const source = formatWorkflowTopologyMermaid(trace);
+		assert.equal((source.match(/child_\d+\["/g) ?? []).length, 64);
+		assert.match(source, /Additional children omitted/);
+		assert.doesNotMatch(source, /\[label\]|&/);
+		assert.ok(source.length < 10_000);
+		assert.equal(renderMermaidTerminal(source, 1).kind, "source");
+		assert.equal(renderMermaidTerminal("flowchart LR\n  A[Start] --> B[Done]", 80).kind, "diagram");
+	});
+
+	it("bounds live rows and retains child-routing metadata", () => {
+		const trace: NonNullable<Details["workflow"]>["trace"] = Array.from({ length: 700 }, (_, index) => ({ operation: "run", key: `child-${index}`, state: "started" }));
+		const projection = buildWorkflowChatProgressProjection(trace, {
+			"child-699": { childRouting: { profile: "fast", confidence: 98, source: "child-router", model: "test/routed", thinking: "high" } },
+		});
+		assert.equal(projection.rows.length, 16);
+		assert.equal(projection.omittedTraceEntries, 188);
+		assert.ok(projection.omittedRows > 0);
+		assert.equal(projection.rows.at(-1)?.childRouting?.profile, "fast");
 	});
 });
 
@@ -263,6 +310,38 @@ describe("workflow chat progress rendering", () => {
 		assert.match(text, /running\s+tests focused integration suite/);
 		assert.match(text, /failed\s+review fresh-context UX review .* needs fixes/);
 		assert.match(text, /stopped\s+stale superseded exact-head review .* Workflow stopped by user/);
+	});
+
+	it("shows routed profile badges and Mermaid topology only in expanded live cards", () => {
+		const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+		Object.defineProperty(process.stdout, "columns", { configurable: true, value: 120 });
+		try {
+			const result = {
+				content: [{ type: "text" as const, text: "Workflow running." }],
+				details: {
+					mode: "workflow" as const,
+					runId: "wf_topology",
+					results: [],
+					chatProgress: { mode: "live-card" as const, repoRelation: "same" as const, repoLabel: "pi-subagents" },
+					workflow: {
+						trace: [{ operation: "run" as const, key: "review", state: "started" as const }],
+						children: { review: { model: "openai-codex/gpt-5.5", thinking: "high", childRouting: { profile: "fast", confidence: 98, source: "child-router" as const, model: "openai-codex/gpt-5.5", thinking: "high", serviceTier: "priority" as const } } },
+						emits: [],
+						console: [],
+					},
+				},
+			};
+			const compact = componentText(renderSubagentResult(result, { expanded: false }, theme as any));
+			assert.match(compact, /gpt-5\.5 · thinking high · profile fast 98% · tier priority/);
+			assert.doesNotMatch(compact, /Workflow topology/);
+			const expanded = componentText(renderSubagentResult(result, { expanded: true }, theme as any));
+			assert.match(expanded, /Workflow topology/);
+			assert.match(expanded, /review/);
+			assert.doesNotMatch(expanded, /```mermaid/);
+		} finally {
+			if (originalColumns) Object.defineProperty(process.stdout, "columns", originalColumns);
+			else delete (process.stdout as { columns?: number }).columns;
+		}
 	});
 
 	it("renders detached workflow trace rows as paused attention", () => {

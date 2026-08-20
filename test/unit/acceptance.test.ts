@@ -1114,7 +1114,7 @@ describe("acceptance gates", () => {
 	it("normalizes one gate command and rejects acceptance combinations", () => {
 		assert.deepEqual(normalizeGateAcceptance(" npm run check ", undefined), {
 			ok: true,
-			acceptance: { level: "verified", verify: [{ id: "gate", command: "npm run check" }] },
+			acceptance: { level: "verified", criteria: [], evidence: [], verify: [{ id: "gate", command: "npm run check" }] },
 		});
 		const emptyGate = normalizeGateAcceptance("", undefined);
 		assert.equal(emptyGate.ok, false);

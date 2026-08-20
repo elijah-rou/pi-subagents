@@ -2081,6 +2081,51 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.details.results[0]?.acceptance?.verifyRuns[0]?.id, "gate");
 	});
 
+	it("treats passing and failing host gates as authoritative with a workflow custom output schema", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const schema = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false };
+		for (const value of [{ ok: true }, { ok: false }]) {
+			mockPi.onCall({
+				stdoutRaw: [
+					{ type: "tool_execution_start", toolName: "structured_output", args: { value } },
+					{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+					{ type: "tool_execution_end", toolName: "structured_output" },
+				].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+				structuredOutputCapture: value,
+			});
+		}
+		const executor = makeExecutor([makeAgent("worker", { source: "builtin", completionGuard: false })]);
+		const result = await executor.execute(
+			"scripted-workflow-custom-schema-gates",
+			{
+				async: false,
+				workflowScript: `
+					const children = await runs.all([
+						{ key: "passes", agent: "worker", task: "Return true", outputSchema: ${JSON.stringify(schema)}, gate: ${JSON.stringify(`${process.execPath} -e "process.exit(0)"`)} },
+						{ key: "fails", agent: "worker", task: "Return false", outputSchema: ${JSON.stringify(schema)}, gate: ${JSON.stringify(`${process.execPath} -e "process.exit(7)"`)} }
+					]);
+					return children.map(({ key, ok, structuredOutput }) => ({ key, ok, structuredOutput }));
+				`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		assert.equal(result.details.results[0]?.acceptance?.status, "verified", JSON.stringify(result.details.results[0]?.acceptance));
+		assert.deepEqual(result.details.workflow?.value, [
+			{ key: "passes", ok: true, structuredOutput: { ok: true } },
+			{ key: "fails", ok: false, structuredOutput: { ok: false } },
+		]);
+		assert.equal(result.details.results[0]?.acceptance?.childReport, undefined);
+		assert.equal(result.details.results[0]?.acceptance?.childReportParseError, "Structured acceptance report not found.");
+		assert.equal(result.details.results[0]?.acceptance?.status, "verified");
+		assert.equal(result.details.results[0]?.acceptance?.verifyRuns[0]?.status, "passed");
+		assert.equal(result.details.results[1]?.acceptance?.status, "rejected");
+		assert.equal(result.details.results[1]?.acceptance?.verifyRuns[0]?.status, "failed");
+		assert.doesNotMatch(readCallArgs().join(" "), /acceptance-report/);
+	});
+
 	it("lets runs.all siblings settle when one verified gate fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const acceptedReport = [
 			"done",

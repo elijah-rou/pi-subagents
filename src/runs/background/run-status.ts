@@ -186,6 +186,7 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 		const output = rememberedForegroundChildOutput(child).trim().split(/\r?\n/).find((line) => line.trim());
 		const parts = [
 			`${child.index + 1}. ${child.agent} ${child.status}`,
+			formatModelThinking(child.model, child.thinking, child.childRouting) || undefined,
 			child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
 			child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
 			child.acceptance ? `acceptance: ${child.acceptance.status}` : undefined,
@@ -226,10 +227,12 @@ function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options:
 	const child = run.children[index]!;
 	const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
 	const outputLines = rememberedForegroundChildOutput(child).split(/\r?\n/).filter((line) => line.trim()).slice(-lineLimit);
+	const modelThinking = formatModelThinking(child.model, child.thinking, child.childRouting);
 	const lines = [
 		`Run: ${run.runId}`,
 		`State: ${child.status}`,
 		`Child: ${index} (${child.agent})`,
+		modelThinking ? `Model: ${modelThinking}` : undefined,
 		child.sessionFile ? `Session: ${child.sessionFile}` : undefined,
 		child.transcriptPath ? `Transcript: ${child.transcriptPath}` : undefined,
 		child.artifactPaths?.outputPath ? `Output: ${child.artifactPaths.outputPath}` : undefined,
@@ -515,7 +518,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				: [];
 			for (const [index, step] of (status.steps ?? []).entries()) {
 				const stepActivityText = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
-				const modelThinking = formatModelThinking(step.model, step.thinking);
+				const modelThinking = formatModelThinking(step.model, step.thinking, step.childRouting);
 				const modelText = modelThinking ? ` (${modelThinking})` : "";
 				const steeringText = formatSteeringSummary(step);
 				const steeringSuffix = steeringText ? `, steering: ${steeringText}` : "";

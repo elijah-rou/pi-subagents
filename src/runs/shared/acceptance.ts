@@ -161,7 +161,7 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 	if (gate === undefined) return acceptance === undefined ? { ok: true } : { ok: true, acceptance };
 	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
 	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
-	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
+	return { ok: true, acceptance: { level: "verified", criteria: [], evidence: [], verify: [{ id: "gate", command: gate.trim() }] } };
 }
 
 function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
@@ -351,9 +351,23 @@ export function resolveEffectiveAcceptance(input: {
 	dynamic?: boolean;
 	dynamicGroup?: boolean;
 	agentContract?: AgentContract;
+	/** Host-owned provenance for the one-command gate shorthand. */
+	hostGateOnly?: boolean;
 }): ResolvedAcceptanceConfig {
 	const explicit = normalizeAcceptanceInput(input.explicit);
 	const explicitLevel = normalizeLevel(explicit.level);
+	if (input.hostGateOnly) {
+		const evidence = unique(explicit.evidence ?? []);
+		return {
+			level: explicitLevel === "auto" ? "verified" : explicitLevel,
+			explicit: true,
+			inferredReason: [],
+			criteria: normalizeCriteria(explicit.criteria as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence),
+			evidence,
+			verify: explicit.verify ?? [],
+			stopRules: explicit.stopRules ?? [],
+		};
+	}
 	if (isAgentContractV1(input.agentContract)) {
 		const level = explicitAcceptanceCanDisable(explicit) || explicitLevel === "auto"
 			? "none"

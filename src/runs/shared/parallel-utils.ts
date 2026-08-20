@@ -59,6 +59,8 @@ export interface RunnerSubagentStep {
 	launchResolvedExtensions?: import("../../shared/types.ts").LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: import("../../shared/types.ts").RuntimeAcknowledgedChildExtensionsV1;
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+	/** Host-owned gate shorthand; passing runtime verification does not need child attestation. */
+	acceptanceReportOptional?: boolean;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
 	gateOn?: import("../../shared/types.ts").ChainGateLayer;

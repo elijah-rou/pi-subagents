@@ -385,7 +385,7 @@ function promptAuditViewLabel(view: PromptAuditView): string {
 function foregroundActiveDetail(item: Extract<FleetItem, { kind: "foreground-active" }>, state: SubagentState): string[] {
 	const { control } = item;
 	const live = item.activeChild ?? control;
-	const modelThinking = formatModelThinking(live.model, live.thinking);
+	const modelThinking = formatModelThinking(live.model, live.thinking, live.childRouting);
 	const promptAuditCount = foregroundPromptAuditCount(item, state);
 	const promptSummary = foregroundAuthoredPromptSummary(item, state);
 	const lines = [
@@ -467,7 +467,7 @@ function foregroundRecentOutputLines(item: Extract<FleetItem, { kind: "foregroun
 function foregroundRecentDetail(item: Extract<FleetItem, { kind: "foreground-recent" }>, state: SubagentState): string[] {
 	const { child, run } = item;
 	const outputPath = child.artifactPaths?.outputPath ?? child.savedOutputPath;
-	const modelThinking = formatModelThinking(child.model, child.thinking);
+	const modelThinking = formatModelThinking(child.model, child.thinking, child.childRouting);
 	const lines = [
 		`Run: ${item.runId}`,
 		"Source: foreground",
@@ -505,12 +505,14 @@ function asyncDetail(item: Extract<FleetItem, { kind: "async" }>, state: Subagen
 		}).split("\n");
 	}
 	const outputPath = item.index !== undefined ? path.join(item.run.asyncDir, `output-${item.index}.log`) : undefined;
+	const modelThinking = item.step ? formatModelThinking(item.step.model, item.step.thinking, item.step.childRouting) : "";
 	return [
 		`Run: ${item.runId}`,
 		"Source: async",
 		`State: ${item.state}`,
 		`Mode: ${item.run.mode}${contextModeLabel(item.run.context) ? ` ${contextModeLabel(item.run.context)}` : ""}`,
 		item.index !== undefined ? `Child: ${item.index} (${item.agent})${contextModeLabel(item.step?.context) ? ` ${contextModeLabel(item.step?.context)}` : ""}` : `Agent: ${item.agent}${contextModeLabel(item.run.context) ? ` ${contextModeLabel(item.run.context)}` : ""}`,
+		modelThinking ? `Model: ${modelThinking}` : undefined,
 		outputPath ? `Output: ${outputPath}` : undefined,
 		item.step?.sessionFile ? `Session: ${item.step.sessionFile}` : item.run.sessionFile ? `Session: ${item.run.sessionFile}` : undefined,
 		"",
@@ -638,18 +640,18 @@ function itemStats(item: FleetItem): string[] {
 	let durationMs: number | undefined;
 	if (item.kind === "foreground-active") {
 		const live = item.activeChild ?? item.control;
-		model = formatModelThinking(live.model, live.thinking) || undefined;
+		model = formatModelThinking(live.model, live.thinking, live.childRouting) || undefined;
 		tokens = live.tokens;
 		tools = live.toolCount;
 		durationMs = Math.max(0, Date.now() - live.startedAt);
 	} else if (item.kind === "foreground-recent") {
-		model = formatModelThinking(item.child.model, item.child.thinking) || undefined;
+		model = formatModelThinking(item.child.model, item.child.thinking, item.child.childRouting) || undefined;
 		tokens = item.child.tokens;
 		tools = item.child.toolCount;
 	} else if (item.kind === "external") {
 		durationMs = Math.max(0, externalElapsedEnd(item.run) - item.run.startedAt);
 	} else {
-		model = formatModelThinking(item.step?.model, item.step?.thinking) || undefined;
+		model = formatModelThinking(item.step?.model, item.step?.thinking, item.step?.childRouting) || undefined;
 		tokens = item.step?.tokens?.total ?? (item.index === undefined ? item.run.totalTokens?.total : undefined);
 		tools = item.step?.toolCount ?? (item.index === undefined ? item.run.toolCount : undefined);
 		const terminalRun = item.state !== "queued" && item.state !== "running" && item.state !== "pending";
@@ -1179,7 +1181,7 @@ export class SubagentFleetComponent implements Component {
 			this.theme.fg("dim", "Retention: live memory only · no storage"),
 			selected?.kind === "foreground-active" ? `Run: ${selected.runId}${selected.index !== undefined ? ` · Child: ${selected.index}` : ""} · Agent: ${selected.agent}` : "Selected prompt unavailable",
 			live ? `Started: ${new Date(live.startedAt).toISOString()}` : undefined,
-			live ? `Model: ${formatModelThinking(live.model, live.thinking) || "default"}` : undefined,
+			live ? `Model: ${formatModelThinking(live.model, live.thinking, live.childRouting) || "default"}` : undefined,
 			prompt?.cwd ? `Cwd: ${prompt.cwd}` : undefined,
 			prompt?.outputPath ? `Output: ${prompt.outputPath}` : undefined,
 			this.theme.fg("dim", `Live children: ${items.map(({ item }) => item.agent).join(", ") || "none"}`),

@@ -91,7 +91,7 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 			}
 			const activity = child.state === "running" ? formatNestedActivity(child) : undefined;
 			const error = child.error ? ` | error: ${child.error}` : "";
-			const modelThinking = formatModelThinking(child.model, child.thinking);
+			const modelThinking = formatModelThinking(child.model, child.thinking, child.childRouting);
 			lines.push(`${indent}↳ ${nestedRunLabel(child)} [${child.id}] ${child.state}${modelThinking ? ` | ${modelThinking}` : ""}${activity ? ` | ${activity}` : ""}${error}`);
 			if (options.commandHints && lines.length < options.maxLines) lines.push(`${indent}  Status: subagent({ action: "status", id: "${child.id}" })`);
 			if (depth === options.maxDepth) {
@@ -102,7 +102,7 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 			for (const [stepIndex, step] of (child.steps ?? []).entries()) {
 				if (lines.length >= options.maxLines) return;
 				const stepActivity = step.status === "running" ? formatNestedActivity(step) : undefined;
-				const stepModelThinking = formatModelThinking(step.model, step.thinking);
+				const stepModelThinking = formatModelThinking(step.model, step.thinking, step.childRouting);
 				lines.push(`${indent}  ${stepIndex + 1}. ${step.agent} ${step.status}${stepModelThinking ? ` | ${stepModelThinking}` : ""}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${step.error}` : ""}`);
 				append(step.children, depth + 1, `${indent}    `);
 			}

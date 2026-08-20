@@ -275,7 +275,7 @@ When one host-run command is the entire verification contract, use the `gate` sh
 { workflowScript: `return runs.run("impl", { agent: "worker", task: "Implement the fix", gate: "npm test" })` }
 ```
 
-`gate` normalizes to verified acceptance with that single command, so the runtime executes it on the host and records the result as evidence. Verification results are memoized per tracked workspace state and effective environment, so an unchanged tree does not rerun the same command. Use explicit `acceptance.verify` when you need multiple commands, timeouts, or custom criteria. `gate` cannot be combined with `acceptance` and is rejected on retained `resume` items. With `worktree: true`, the gate runs inside the child's managed worktree.
+`gate` normalizes to verified acceptance with that single command, so the runtime executes it on the host and records the result as authoritative evidence. A gate-only child does not need to return an `acceptance-report`; this also applies when the child returns a caller-defined `outputSchema`. Explicit `acceptance` contracts keep their configured child-report requirements. Verification results are memoized per tracked workspace state and effective environment, so an unchanged tree does not rerun the same command. Use explicit `acceptance.verify` when you need multiple commands, timeouts, or custom criteria. `gate` cannot be combined with `acceptance` and is rejected on retained `resume` items. With `worktree: true`, the gate runs inside the child's managed worktree.
 
 ### Levels and inference
 
