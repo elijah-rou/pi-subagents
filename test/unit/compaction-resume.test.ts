@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -63,9 +65,14 @@ describe("async compaction resume", () => {
 			if (widgets.length !== 0) throw new Error("manual compaction changed widget state");
 			await handlers.get("session_shutdown")();
 		`;
-		const env = { ...process.env };
-		delete env.PI_SUBAGENT_CHILD;
-		execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
-		assert.ok(true);
+		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-compaction-"));
+		try {
+			const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+			delete env.PI_SUBAGENT_CHILD;
+			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
+			assert.ok(true);
+		} finally {
+			fs.rmSync(agentDir, { recursive: true, force: true });
+		}
 	});
 });
