@@ -1717,6 +1717,15 @@ function renderWorkflowChatProgress(d: Details, result: AgentToolResult<Details>
 		c.addChild(new Text(truncLine(`${rowIndent}${workflowRowGlyph(row, theme, frame)} ${status} ${theme.bold(row.key)}${label}${run}${duration}${modelRouting ? ` ${theme.fg("dim", `· ${modelRouting}`)}` : ""}${error}`, width), 0, 0));
 	}
 	if (workflow?.emits.length) c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Emits  ${workflow.emits.length}`), width), 0, 0));
+	if (workflow?.value !== undefined) {
+		let value: string;
+		try {
+			value = typeof workflow.value === "string" ? workflow.value : JSON.stringify(workflow.value);
+		} catch {
+			value = String(workflow.value);
+		}
+		c.addChild(new Text(truncLine(theme.fg("dim", `${rowIndent}Return ${oneLine(value)}`), width), 0, 0));
+	}
 	if (expanded && workflow) {
 		const topology = renderMermaidTerminal(formatWorkflowTopologyMermaid(workflow.trace), width);
 		c.addChild(new Spacer(1));
@@ -1892,7 +1901,9 @@ export function renderSubagentResult(
 	const layout = resolveMainWindowRenderLayout(rendererConfig);
 	const compact = (component: Component): Component => capCompactMainWindowResult(component, layout, theme, !options.expanded);
 	const d = result.details;
-	if (d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && !result.isError && d.workflow?.value === undefined) {
+	const liveWorkflowCard = d?.mode === "workflow" && d.chatProgress?.mode === "live-card" && d.workflow?.value === undefined;
+	const completedWorkflowTopology = d?.mode === "workflow" && options.expanded && d.workflow?.value !== undefined && Boolean(d.workflow.trace.length);
+	if (d?.workflow && !result.isError && (liveWorkflowCard || completedWorkflowTopology)) {
 		return compact(renderWorkflowChatProgress(d, result, theme, options.expanded ? resolveMainWindowRenderLayout() : layout, options.expanded, frame));
 	}
 	if (!d || !d.results.length) {

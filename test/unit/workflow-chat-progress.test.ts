@@ -473,14 +473,13 @@ describe("workflow chat progress rendering", () => {
 		assert.equal(foregroundResultIntercomStatus(rejected), "failed");
 	});
 
-	it("shows final workflow output after live-card progress completes", () => {
+	it("shows final output and Mermaid topology for expanded completed async workflows", () => {
 		const text = componentText(renderSubagentResult({
 			content: [{ type: "text", text: "Workflow completed.\n\nReturn:\nfinal answer" }],
 			details: {
 				mode: "workflow",
 				runId: "wf_done",
 				results: [],
-				chatProgress: { mode: "live-card", repoRelation: "same", repoLabel: "pi-subagents" },
 				workflow: {
 					value: "final answer",
 					trace: [{ operation: "run", key: "scout", state: "completed", runId: "run-scout" }],
@@ -490,8 +489,9 @@ describe("workflow chat progress rendering", () => {
 			},
 		}, { expanded: true }, theme as any));
 
-		assert.match(text, /Workflow completed/);
-		assert.match(text, /final answer/);
-		assert.doesNotMatch(text, /workflow wf_done/);
+		assert.match(text, /workflow wf_done/);
+		assert.match(text, /Return final answer/);
+		assert.match(text, /Workflow topology/);
+		assert.match(text, /scout/);
 	});
 });
