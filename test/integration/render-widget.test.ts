@@ -498,6 +498,38 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /gpt-5\.5:high/);
 	});
 
+	it("shows model, effort, and profile on top-level single async rows", () => {
+		const lines = buildWidgetLines([
+			{
+				asyncId: "review-1",
+				asyncDir: "/tmp/review-1",
+				status: "running",
+				mode: "single",
+				agents: ["reviewer"],
+				stepsTotal: 1,
+				steps: [{
+					agent: "reviewer",
+					status: "running",
+					model: "cursor/grok-4.6",
+					thinking: "xhigh",
+					childRouting: { profile: "judge", confidence: 99, source: "child-router", model: "cursor/grok-4.6", thinking: "xhigh" },
+				}],
+			},
+			{
+				asyncId: "review-2",
+				asyncDir: "/tmp/review-2",
+				status: "running",
+				mode: "single",
+				agents: ["reviewer"],
+				stepsTotal: 1,
+				steps: [{ agent: "reviewer", status: "running", model: "openai-codex/gpt-5.6-sol", thinking: "high", childRouting: { profile: "standard", confidence: 91, source: "child-router", model: "openai-codex/gpt-5.6-sol", thinking: "high" } }],
+			},
+		], theme, 180).join("\n");
+
+		assert.match(lines, /reviewer .*grok-4\.6 · thinking xhigh · profile judge 99%/);
+		assert.match(lines, /reviewer .*gpt-5\.6-sol · thinking high · profile standard 91%/);
+	});
+
 	it("keeps async row status visible before long model badges on narrow widgets", () => {
 		const lines = buildWidgetLines([
 			{

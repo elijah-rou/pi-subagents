@@ -580,6 +580,14 @@ function widgetJobName(job: AsyncJobState): string {
 	return job.mode ?? "subagent";
 }
 
+function widgetJobModelThinking(job: AsyncJobState): string {
+	if (job.mode !== "single") return "";
+	const step = job.steps?.find((candidate) => candidate.status === "running")
+		?? job.steps?.[job.currentStep ?? 0]
+		?? job.steps?.[0];
+	return step ? formatModelThinking(step.model, step.thinking, step.childRouting) : "";
+}
+
 function widgetActivity(job: AsyncJobState): string {
 	const facts: string[] = [];
 	if (job.currentTool && job.currentToolStartedAt !== undefined && job.updatedAt !== undefined) facts.push(`${job.currentTool} ${formatDuration(Math.max(0, job.updatedAt - job.currentToolStartedAt))}`);
@@ -1240,10 +1248,11 @@ function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number,
 	const stats = widgetStats(job, theme);
 	const count = job.mode === "chain" ? job.chainStepCount : job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
 	const mode = widgetJobName(job);
+	const modelThinking = widgetJobModelThinking(job);
 	const title = `async subagent ${mode}${count && count > 1 ? ` (${count})` : ""}`;
 	return [
 		`${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", "· background")}`,
-		`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, mode)}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+		`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, mode)}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}${modelThinking ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", modelThinking)}` : ""}`,
 		...foregroundStyleWidgetDetails(job, theme, expanded, width, frame),
 	].map((line) => truncLine(line, width));
 }
@@ -1545,8 +1554,9 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	for (const job of running) {
 		if (slots <= 0) { hiddenRunning++; continue; }
 		const stats = widgetStats(job, theme);
+		const modelThinking = widgetJobModelThinking(job);
 		items.push([
-			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}${modelThinking ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", modelThinking)}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
@@ -1562,8 +1572,9 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	for (const job of finished) {
 		if (slots <= 0) { hiddenFinished++; continue; }
 		const stats = widgetStats(job, theme);
+		const modelThinking = widgetJobModelThinking(job);
 		items.push([
-			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+			`${widgetStatusGlyph(job, theme, frame)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}${modelThinking ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", modelThinking)}` : ""}`,
 			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
 			...widgetParallelAgentDetails(job, theme, expanded, width, frame),
 		]);
