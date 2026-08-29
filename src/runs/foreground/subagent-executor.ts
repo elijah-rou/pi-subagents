@@ -60,6 +60,7 @@ import { formatControlIntercomMessage, formatControlNoticeMessage, resolveContro
 import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightSpawnBudget, preflightSpawnBudgetGrant, reserveSpawnBudget } from "../shared/spawn-budget.ts";
 import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, RUN_FANOUT_BUDGET_ENV, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+import { resolveDurationBudget } from "../shared/duration-budget.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
@@ -343,6 +344,7 @@ export interface SubagentParamsLike {
 	foregroundOnly?: boolean;
 	timeoutMs?: number;
 	maxRuntimeMs?: number;
+	checkpointAfterMs?: number;
 	/** Optional hard per-tool-call timeout (ms). Known-fast tools also have a default. */
 	toolTimeoutMs?: number;
 	toolBudget?: ToolBudgetConfig;
@@ -450,6 +452,8 @@ interface ExecutionContextData {
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	/** Raw global config.toolTimeoutMs, for per-step resolution in async runners. */
 	configToolTimeoutMs?: number;
 	toolBudget?: ResolvedToolBudget;
@@ -3242,6 +3246,8 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
@@ -3806,6 +3812,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			},
 			timeoutMs: data.timeoutMs,
 			deadlineAt,
+			checkpointAfterMs: data.checkpointAfterMs,
+			checkpointAt: data.checkpointAt,
 			toolTimeoutMs: params.toolTimeoutMs,
 			configToolTimeoutMs: data.configToolTimeoutMs,
 			toolBudget: effectiveToolBudget.toolBudget,
@@ -6297,6 +6305,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			resolveConfigDefaultTimeoutMs(deps.config.timeoutMs),
 		);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
+		let durationBudget: ReturnType<typeof resolveDurationBudget>;
+		try {
+			durationBudget = resolveDurationBudget({ timeoutMs: foregroundTimeout.timeoutMs, checkpointAfterMs: effectiveParams.checkpointAfterMs });
+		} catch (error) {
+			return buildRequestedModeError(effectiveParams, error instanceof Error ? error.message : String(error));
+		}
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 		const requestedWorkflowChildAsyncId = typeof effectiveParams.workflowChildAsyncId === "string" ? effectiveParams.workflowChildAsyncId.trim() : "";
 		const asyncRunId = requestedWorkflowChildAsyncId && path.basename(requestedWorkflowChildAsyncId) === requestedWorkflowChildAsyncId
@@ -6487,7 +6501,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			controlConfig,
 			intercomBridge,
 			nestedRoute,
-			timeoutMs: foregroundTimeout.timeoutMs,
+			timeoutMs: durationBudget.timeoutMs,
+			deadlineAt: durationBudget.deadlineAt,
+			checkpointAfterMs: durationBudget.checkpointAfterMs,
+			checkpointAt: durationBudget.checkpointAt,
 			toolBudget: runToolBudget.toolBudget,
 			usageBudget: usageBudget.budget,
 			allowZeroToolBudget,

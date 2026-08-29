@@ -109,6 +109,9 @@ export interface AsyncRunSummary {
 	endedAt?: number;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudget?: TurnBudgetState;

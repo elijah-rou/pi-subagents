@@ -254,6 +254,8 @@ interface AsyncSingleParams {
 	acceptance?: AcceptanceInput;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	/** Optional per-call hard toolTimeoutMs override (highest precedence). */
 	toolTimeoutMs?: number;
 	toolBudget?: ResolvedToolBudget | ToolBudgetConfig;
@@ -1620,7 +1622,9 @@ export function executeAsyncSingle(
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
-	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined);
+	const durationStartedAt = Date.now();
+	const deadlineAt = params.absoluteDeadlineAt ?? (params.timeoutMs !== undefined ? durationStartedAt + params.timeoutMs : undefined);
+	const checkpointAt = params.checkpointAt ?? (params.checkpointAfterMs !== undefined ? durationStartedAt + params.checkpointAfterMs : undefined);
 	const timeoutMs = params.absoluteDeadlineAt !== undefined && deadlineAt !== undefined
 		? deadlineAt - Date.now()
 		: params.timeoutMs;
@@ -1763,6 +1767,7 @@ export function executeAsyncSingle(
 		...(params.context ? { context: params.context } : {}),
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
 		...(deadlineAt !== undefined ? { absoluteDeadlineAt: deadlineAt } : {}),
+		...(params.checkpointAfterMs !== undefined ? { checkpointAfterMs: params.checkpointAfterMs, checkpointAt } : {}),
 		...(resolvedToolBudget.budget ? { initialToolBudget: resolvedToolBudget.budget } : {}),
 		maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, recoveryAgentConfig.maxSubagentDepth),
 		...(maxOutput ? { maxOutput } : {}),
@@ -1865,6 +1870,8 @@ export function executeAsyncSingle(
 				controlConfig,
 				timeoutMs,
 				deadlineAt,
+				checkpointAfterMs: params.checkpointAfterMs,
+				checkpointAt,
 				toolTimeoutMs,
 				toolBudget: params.toolBudget,
 				usageBudget: params.usageBudget,

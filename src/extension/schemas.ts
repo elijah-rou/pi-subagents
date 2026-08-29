@@ -413,6 +413,7 @@ const SubagentParamProperties = {
 	async: Type.Optional(Type.Boolean({ description: "Run in background unless asyncByDefault:false. Set false only when the parent must block until completion." })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline. Alias maxRuntimeMs." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline." })),
+	checkpointAfterMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483_647, description: "Request bounded wrap-up at a soft checkpoint before the hard timeout." })),
 	toolTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional hard per-tool-call timeout in milliseconds; known-fast built-in tools have a five-minute default." })),
 	toolBudget: Type.Optional(ToolBudgetOverride),
 	usageBudget: Type.Optional(UsageBudgetOverride),

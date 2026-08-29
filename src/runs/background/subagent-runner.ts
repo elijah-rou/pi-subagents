@@ -138,6 +138,7 @@ import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
@@ -196,6 +197,8 @@ interface SubagentRunConfig {
 	nestedSelf?: { parentRunId: string; parentStepIndex?: number; depth: number; path?: Array<{ runId: string; stepIndex?: number; agent?: string }> };
 	timeoutMs?: number;
 	deadlineAt?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	/** Resolved configured hard per-tool-call timeout (ms); fast tools still have a default when undefined. */
 	toolTimeoutMs?: number;
 	toolBudget?: ResolvedToolBudget;
@@ -2571,6 +2574,7 @@ async function runSubagent(
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
 	let timeoutTimer: NodeJS.Timeout | undefined;
+	let checkpointTimer: NodeJS.Timeout | undefined;
 	let timedOut = false;
 	let stopped = false;
 	let usageBudgetExceeded = false;
@@ -2714,6 +2718,7 @@ async function runSubagent(
 		lastUpdate: overallStartTime,
 		...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
 		...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+		...(config.checkpointAfterMs !== undefined ? { checkpointAfterMs: config.checkpointAfterMs, checkpointAt: config.checkpointAt, checkpointDelivered: false } : {}),
 		...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
 		...(config.usageBudget ? { usageBudget: usageBudgetState(config.usageBudget, undefined) } : {}),
 		pid: process.pid,
@@ -3892,6 +3897,21 @@ async function runSubagent(
 		const remainingMs = Math.max(0, config.deadlineAt - Date.now());
 		timeoutTimer = setTimeout(timeoutRunner, remainingMs);
 		timeoutTimer.unref?.();
+	}
+	if (config.checkpointAt !== undefined) {
+		checkpointTimer = setInterval(() => {
+			if (Date.now() < config.checkpointAt! || statusPayload.checkpointDelivered) return;
+			const index = statusPayload.steps.findIndex((step) => step.status === "running");
+			if (index < 0) return;
+			enqueueStepSteer(asyncDir, index, { type: "steer", id: `duration-checkpoint-${id}-${index}`, ts: Date.now(), message: SOFT_CHECKPOINT_MESSAGE, targetIndex: index, source: "duration-checkpoint" });
+			statusPayload.checkpointDelivered = true;
+			statusPayload.wrapUpRequested = true;
+			statusPayload.lastUpdate = Date.now();
+			writeStatusPayload();
+			if (checkpointTimer) clearInterval(checkpointTimer);
+			checkpointTimer = undefined;
+		}, 25);
+		checkpointTimer.unref?.();
 	}
 	appendJsonl(
 		eventsPath,
@@ -5295,6 +5315,10 @@ async function runSubagent(
 	if (timeoutTimer) {
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
+	}
+	if (checkpointTimer) {
+		clearInterval(checkpointTimer);
+		checkpointTimer = undefined;
 	}
 	if (!timedOut && !stopped && !interrupted && config.timeoutMs !== undefined && results.some((result) => result.timedOut === true && result.error === timeoutMessage)) {
 		timedOut = true;

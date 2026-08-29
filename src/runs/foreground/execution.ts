@@ -66,7 +66,9 @@ import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir } from "../background/control-channel.ts";
+import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
@@ -404,6 +406,13 @@ async function runSingleAttempt(
 		shared.launchWarnings.emitted = true;
 	}
 
+	const checkpointControlDir = options.checkpointAt !== undefined ? tempDir : undefined;
+	if (checkpointControlDir) {
+		sharedEnv[SUBAGENT_STEER_INBOX_ENV] = stepSteerInboxDir(checkpointControlDir, options.index ?? 0);
+		sharedEnv[SUBAGENT_STEER_CAPABILITY_ENV] = steerCapabilityPath(checkpointControlDir, options.index ?? 0);
+		sharedEnv[SUBAGENT_STEER_ACK_DIR_ENV] = steerAcksDir(checkpointControlDir, options.index ?? 0);
+	}
+
 	const effectiveSystemPrompt = shared.systemPrompt;
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agent.tools,
@@ -505,6 +514,8 @@ async function runSingleAttempt(
 		transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
 		skills: shared.resolvedSkillNames,
 		skillsWarning: shared.skillsWarning,
+		...(options.checkpointAfterMs !== undefined ? { checkpointAfterMs: options.checkpointAfterMs } : {}),
+		...(options.checkpointAt !== undefined ? { checkpointAt: options.checkpointAt, checkpointDelivered: false } : {}),
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
 		...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
@@ -615,6 +626,35 @@ async function runSingleAttempt(
 		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
 		let toolDiagnosticHardKillTimer: NodeJS.Timeout | undefined;
+		let checkpointTimer: NodeJS.Timeout | undefined;
+		let checkpointPending = false;
+		const deliverCheckpoint = () => {
+			if (!checkpointPending || result.checkpointDelivered || progress.currentTool || processClosed || lifecycleFinished || !checkpointControlDir) return;
+			checkpointPending = false;
+			result.checkpointDelivered = true;
+			result.wrapUpRequested = true;
+			enqueueStepSteer(checkpointControlDir, options.index ?? 0, {
+				type: "steer",
+				id: `duration-checkpoint-${options.runId}-${options.index ?? 0}`,
+				ts: Date.now(),
+				message: SOFT_CHECKPOINT_MESSAGE,
+				targetIndex: options.index ?? 0,
+				source: "duration-checkpoint",
+			});
+			appendRecentOutput(progress, ["Soft runtime checkpoint delivered; bounded wrap-up requested."]);
+		};
+		if (options.checkpointAt !== undefined) {
+			checkpointTimer = setInterval(() => {
+				if (Date.now() < options.checkpointAt!) return;
+				checkpointPending = true;
+				deliverCheckpoint();
+				if (result.checkpointDelivered && checkpointTimer) {
+					clearInterval(checkpointTimer);
+					checkpointTimer = undefined;
+				}
+			}, 25);
+			checkpointTimer.unref?.();
+		}
 		const toolDiagnosticWatcher = watchChildToolDiagnostic(toolDiagnosticPath, (error) => {
 			if (processClosed || lifecycleFinished) return;
 			toolAvailabilityError = error;
@@ -1333,6 +1373,7 @@ async function runSingleAttempt(
 			clearStdioGuard();
 			toolDiagnosticWatcher.dispose();
 			if (toolDiagnosticHardKillTimer) clearTimeout(toolDiagnosticHardKillTimer);
+			if (checkpointTimer) clearInterval(checkpointTimer);
 			void jsonlWriter.close().catch(() => {
 				// JSONL artifact flush is best effort.
 			});

@@ -1202,6 +1202,9 @@ export interface SingleResult {
 	interrupted?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
 	turnBudget?: TurnBudgetState;
 	turnBudgetExceeded?: boolean;
 	wrapUpRequested?: boolean;
@@ -1751,6 +1754,9 @@ export interface AsyncStatus {
 	lastUpdate?: number;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
+	checkpointDelivered?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudget?: TurnBudgetState;
@@ -2273,6 +2279,8 @@ export interface RunSyncOptions {
 	interruptSignal?: AbortSignal;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	/** Per-call per-tool timeout (ms), resolved with the agent/config/environment ladder at execution. */
 	toolTimeoutMs?: number;
 	/** Raw global config.toolTimeoutMs, used by the per-child resolver. */
