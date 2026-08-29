@@ -2589,6 +2589,62 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(status.steps?.slice(1).map((step) => step.thinking), ["off", "off"]);
 	});
 
+	it("uses configured criteria for non-empty dynamic aggregate acceptance", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
+		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
+		const id = `async-dynamic-custom-criteria-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, key: "/path", maxItems: 2 },
+					parallel: { agent: "reviewer", task: "Review {item.path}", outputSchema: { type: "object" }, acceptance: false },
+					collect: { as: "reviews" },
+					acceptance: { report: { criteria: [
+						{ id: "children-complete", must: "Every child completed" },
+						{ id: "scope-preserved", must: "The aggregate stayed scoped" },
+					] } },
+					concurrency: 1,
+				},
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-custom-criteria" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.workflowGraph?.nodes?.[1]?.acceptanceStatus, "checked");
+	});
+
+	it("keeps warn-only rejected empty dynamic aggregate non-blocking", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [] } });
+		const id = `async-empty-dynamic-warn-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce no targets", as: "targets", outputSchema: { type: "object" } },
+				{
+					expand: { from: { output: "targets", path: "/items" }, maxItems: 2, onEmpty: "skip" },
+					parallel: { agent: "reviewer", task: "Review {item}", acceptance: false },
+					collect: { as: "reviews" },
+					acceptance: { report: { criteria: [{ id: "has-child", must: "At least one child completed" }] }, onFailure: "warn" },
+				},
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-empty-dynamic-warn" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const payload = await readAsyncPayload(id);
+		assert.equal(payload.success, true);
+		assert.equal(payload.workflowGraph?.nodes?.[1]?.acceptanceStatus, "rejected");
+	});
+
 	it("keeps read-only async dynamic acceptance inference advisory", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		const readOnlyReport = [
