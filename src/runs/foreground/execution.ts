@@ -74,7 +74,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructuredOutputAcceptanceReport } from "../shared/structured-output.ts";
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
-import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
+import { classifyRequiredChildTools, formatDefinitelyMissingChildTools, readChildToolDiagnosticError, watchChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
@@ -423,8 +423,17 @@ async function runSingleAttempt(
 		permissionRules,
 		runtimeSnapshotHost: options.runtimeSnapshotHost,
 	});
+	const availability = classifyRequiredChildTools({
+		required: toolPlan.requiredChildTools,
+		internal: toolPlan.internalTools,
+		mcp: toolPlan.effectiveMcpTools,
+		ambientExtensionsEnabled: !toolPlan.disableAmbientExtensions || toolPlan.configuredExtensions.length > 0 || toolPlan.toolExtensionPaths.length > 0,
+	});
+	const availabilityError = availability.definiteMissing.length > 0
+		? formatDefinitelyMissingChildTools(agent.name, availability.definiteMissing)
+		: undefined;
 	const contractTools = toolPlan.explicitToolAllowlist ? toolPlan.effectiveToolAllowlist : undefined;
-	const contractError = validateImplementationToolContract({
+	const contractError = availabilityError ?? validateImplementationToolContract({
 		agent: agent.name,
 		task: shared.originalTask ?? task,
 		tools: contractTools,
@@ -605,6 +614,16 @@ async function runSingleAttempt(
 		let timeoutTerminationTimer: NodeJS.Timeout | undefined;
 		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
+		let toolDiagnosticHardKillTimer: NodeJS.Timeout | undefined;
+		const toolDiagnosticWatcher = watchChildToolDiagnostic(toolDiagnosticPath, (error) => {
+			if (processClosed || lifecycleFinished) return;
+			toolAvailabilityError = error;
+			trySignalChild(proc, "SIGTERM");
+			toolDiagnosticHardKillTimer = setTimeout(() => {
+				if (!processClosed) trySignalChild(proc, "SIGKILL");
+			}, 3_000);
+			toolDiagnosticHardKillTimer.unref?.();
+		});
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
 				clearTimeout(timeoutTimer);
@@ -1312,6 +1331,8 @@ async function runSingleAttempt(
 			processClosed = true;
 			clearFinalDrainTimers();
 			clearStdioGuard();
+			toolDiagnosticWatcher.dispose();
+			if (toolDiagnosticHardKillTimer) clearTimeout(toolDiagnosticHardKillTimer);
 			void jsonlWriter.close().catch(() => {
 				// JSONL artifact flush is best effort.
 			});

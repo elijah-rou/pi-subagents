@@ -13,6 +13,43 @@ export interface ChildToolDiagnostic {
 	missingMcpDirectTools?: string[];
 }
 
+const PI_CORE_CHILD_TOOLS = new Set(["bash", "edit", "find", "grep", "ls", "read", "write"]);
+
+export interface ChildToolAvailability {
+	available: string[];
+	deferred: string[];
+	definiteMissing: string[];
+}
+
+export function classifyRequiredChildTools(input: {
+	required: readonly string[];
+	internal?: readonly string[];
+	mcp?: readonly string[];
+	providerToolNames?: readonly string[];
+	ambientExtensionsEnabled: boolean;
+}): ChildToolAvailability {
+	const internal = new Set(input.internal ?? []);
+	const mcp = new Set(input.mcp ?? []);
+	const providerToolNames = new Set(input.providerToolNames ?? []);
+	const availability: ChildToolAvailability = { available: [], deferred: [], definiteMissing: [] };
+	for (const name of new Set(input.required)) {
+		if (PI_CORE_CHILD_TOOLS.has(name) || internal.has(name)) availability.available.push(name);
+		else if (mcp.has(name) || providerToolNames.has(name) || input.ambientExtensionsEnabled) availability.deferred.push(name);
+		else availability.definiteMissing.push(name);
+	}
+	return availability;
+}
+
+export function formatDefinitelyMissingChildTools(agent: string | undefined, missing: readonly string[]): string {
+	if (missing.length === 0) throw new Error("Cannot format an empty definitely-missing tool list.");
+	const subject = agent ? `Agent '${agent}'` : "Subagent";
+	return [
+		`${subject} requested definitely unavailable child tools: ${missing.join(", ")}.`,
+		"No configured or ambient child provider can register these names, so the child was not spawned.",
+		"For extension tools, configure a provider in subagentOnlyExtensions, extensions, or as a path-like tools entry.",
+	].join("\n");
+}
+
 export function writeChildToolDiagnostic(
 	filePath: string,
 	required: string[],
@@ -78,4 +115,33 @@ export function readChildToolDiagnosticError(filePath: string | undefined): stri
 	} catch (error) {
 		return `Failed to read child tool availability diagnostic: ${error instanceof Error ? error.message : String(error)}`;
 	}
+}
+
+export function watchChildToolDiagnostic(filePath: string | undefined, onMissing: (error: string) => void, options: { intervalMs?: number } = {}): { dispose(): void } {
+	if (!filePath) return { dispose() {} };
+	const intervalMs = options.intervalMs ?? 25;
+	if (!Number.isSafeInteger(intervalMs) || intervalMs < 1) throw new Error("Child tool diagnostic watch interval must be a positive safe integer.");
+	let disposed = false;
+	let timer: NodeJS.Timeout | undefined;
+	const dispose = () => {
+		if (disposed) return;
+		disposed = true;
+		if (timer) clearInterval(timer);
+		timer = undefined;
+	};
+	const inspect = () => {
+		if (disposed) return;
+		try {
+			const diagnostic = readChildToolDiagnostic(filePath);
+			if (!diagnostic) return;
+			dispose();
+			onMissing(formatChildToolDiagnostic(diagnostic));
+		} catch {
+			// Atomic and truncate/write producers can expose a transient incomplete file.
+		}
+	};
+	timer = setInterval(inspect, intervalMs);
+	timer.unref?.();
+	inspect();
+	return { dispose };
 }
