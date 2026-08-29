@@ -1169,7 +1169,7 @@ function reportEvidenceStatus(report: AcceptanceReport, kind: AcceptanceEvidence
 }
 
 function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
-	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8" });
+	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8", windowsHide: true });
 	if (result.status !== 0) {
 		return { id: "no-staged-files", status: "not-applicable", message: "git status unavailable; no staged-files check skipped" };
 	}
@@ -1281,6 +1281,21 @@ function redactVerifyEnv(value: string, env: Record<string, string> | undefined)
 	return redacted;
 }
 
+function redactBoundedVerifyOutput(output: BoundedVerifyOutput, env: Record<string, string> | undefined): string {
+	const redacted = redactVerifyEnv(decodeBoundedOutput(output), env);
+	if (!output.truncated) return redacted;
+
+	// A secret can straddle the byte cap. Drop any suffix that could be the
+	// beginning of a configured secret rather than persisting a leaked prefix.
+	let unsafeSuffixLength = 0;
+	for (const secret of new Set(Object.values(verifyRedactionEnv(env)))) {
+		for (let length = 1; length < secret.length; length++) {
+			if (redacted.endsWith(secret.slice(0, length))) unsafeSuffixLength = Math.max(unsafeSuffixLength, length);
+		}
+	}
+	return unsafeSuffixLength > 0 ? redacted.slice(0, -unsafeSuffixLength) : redacted;
+}
+
 function uniqueStrings(items: Array<string | undefined>): string[] {
 	return unique(items.map((item) => item?.trim()).filter((item): item is string => Boolean(item)));
 }
@@ -1346,11 +1361,11 @@ interface VerifyWorkspaceState {
 }
 
 function readVerifyWorkspaceState(cwd: string): VerifyWorkspaceState | undefined {
-	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8" });
+	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", windowsHide: true });
 	if (repo.status !== 0 || !repo.stdout.trim()) return undefined;
 	const repoRoot = fs.realpathSync(repo.stdout.trim());
-	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8" });
-	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
+	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8", windowsHide: true });
+	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, windowsHide: true });
 	if (head.status !== 0 || diff.status !== 0 || !head.stdout.trim()) return undefined;
 	return {
 		kind: "git-tracked",
@@ -1473,7 +1488,7 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		let timedOut = false;
 		let settled = false;
 		let hardKill: NodeJS.Timeout | undefined;
-		const child = spawn(command.command, {
+		const child = spawn(quoteExecutableForShell(command.command), {
 			cwd,
 			env: effectiveVerifyEnv(command.env),
 			shell: true,
@@ -1517,8 +1532,8 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 				finish({
 					exitCode: null,
 					status: "timed-out",
-					stdout: trimOutput(redactVerifyEnv(decodeBoundedOutput(stdout), command.env), stdout.truncated),
-					stderr: trimOutput(redactVerifyEnv(decodedStderr || options.abortMessage || "Acceptance verification timed out.", command.env), stderr.truncated),
+					stdout: trimOutput(redactBoundedVerifyOutput(stdout, command.env), stdout.truncated),
+					stderr: trimOutput(decodedStderr ? redactBoundedVerifyOutput(stderr, command.env) : redactVerifyEnv(options.abortMessage || "Acceptance verification timed out.", command.env), stderr.truncated),
 				});
 			}, 100);
 			hardKill.unref?.();
@@ -1535,8 +1550,8 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 			finish({
 				exitCode,
 				status: passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
-				stdout: trimOutput(redactVerifyEnv(decodeBoundedOutput(stdout), command.env), stdout.truncated),
-				stderr: trimOutput(redactVerifyEnv(decodeBoundedOutput(stderr), command.env), stderr.truncated),
+				stdout: trimOutput(redactBoundedVerifyOutput(stdout, command.env), stdout.truncated),
+				stderr: trimOutput(redactBoundedVerifyOutput(stderr, command.env), stderr.truncated),
 			});
 		});
 		child.on("error", (error) => {
@@ -1544,7 +1559,7 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 				exitCode: timedOut ? null : 1,
 				status: timedOut ? "timed-out" : command.allowFailure ? "allowed-failure" : "failed",
 				stderr: timedOut
-					? trimOutput(redactVerifyEnv(decodeBoundedOutput(stderr) || options.abortMessage || "Acceptance verification timed out.", command.env), stderr.truncated)
+					? trimOutput(decodeBoundedOutput(stderr) ? redactBoundedVerifyOutput(stderr, command.env) : redactVerifyEnv(options.abortMessage || "Acceptance verification timed out.", command.env), stderr.truncated)
 					: redactVerifyEnv(error instanceof Error ? error.message : String(error), command.env),
 			});
 		});

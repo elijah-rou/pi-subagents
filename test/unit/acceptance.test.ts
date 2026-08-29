@@ -15,6 +15,7 @@ import {
 	mergeAcceptanceInputs,
 	normalizeGateAcceptance,
 	parseAcceptanceReport,
+	quoteExecutableForShell,
 	resolveEffectiveAcceptance,
 	stripAcceptanceReport,
 	isPersistedMergedAcceptanceInput,
@@ -861,6 +862,30 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("redacts a secret that crosses the verification output byte cap", async () => {
+		const cwd = tempRepo();
+		try {
+			const secret = "abcdefghijklmnop";
+			fs.writeFileSync(path.join(cwd, "secret-boundary.cjs"), [
+				`process.stdout.write("x".repeat(11995) + process.env.GATE_SECRET + "tail");`,
+			].join("\n"), "utf-8");
+			const acceptance = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { verify: [{ id: "secret-boundary", command: "node secret-boundary.cjs", env: { GATE_SECRET: secret } }] },
+			});
+			const ledger = await evaluateAcceptance({ acceptance, output: "", cwd });
+			const stdout = ledger.verifyRuns[0]?.stdout ?? "";
+
+			assert.equal(ledger.status, "verified");
+			assert.match(stdout, /truncated/);
+			assert.doesNotMatch(stdout, /abcdefghijklmnop/);
+			assert.doesNotMatch(stdout, /abcde\n?\.\.\.\[truncated\]$/);
+			assert.equal(stdout, `${"x".repeat(11995)}\n...[truncated]`);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("does not decode partial UTF-8 code points at verification output caps", async () => {
 		const cwd = tempRepo();
 		try {
@@ -1334,6 +1359,16 @@ describe("acceptance gates", () => {
 			else process.env.GATE_INHERITED_SECRET = previousInheritedSecret;
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
+	});
+
+	it("quotes Windows verification executable paths without changing other platforms", () => {
+		assert.equal(
+			quoteExecutableForShell("C:\\Program Files\\vendor\\tool.exe --flag", "win32"),
+			'"C:\\Program Files\\vendor\\tool.exe" --flag',
+		);
+		assert.equal(quoteExecutableForShell('"C:\\Program Files\\vendor\\tool.exe" --flag', "win32"), '"C:\\Program Files\\vendor\\tool.exe" --flag');
+		assert.equal(quoteExecutableForShell("node script.js", "win32"), "node script.js");
+		assert.equal(quoteExecutableForShell("/opt/my tools/runner --flag", "linux"), "/opt/my tools/runner --flag");
 	});
 
 	it("validates invalid disable and verify shapes", () => {
