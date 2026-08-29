@@ -4288,7 +4288,7 @@ async function runSubagent(
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputPath", singleResult.structuredOutputPath);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
+				if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "watchdog", singleResult.watchdog);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
@@ -4694,7 +4694,7 @@ async function runSubagent(
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputPath", singleResult.structuredOutputPath);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
+				if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "watchdog", singleResult.watchdog);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
@@ -5134,7 +5134,7 @@ async function runSubagent(
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputPath", singleResult.structuredOutputPath);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptance", singleResult.acceptance);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptanceInput", singleResult.acceptanceInput);
+			if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptanceInput", singleResult.acceptanceInput);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timeoutRecovery", singleResult.timeoutRecovery);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "watchdog", singleResult.watchdog);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityCeiling", singleResult.capabilityCeiling);
@@ -5380,7 +5380,7 @@ async function runSubagent(
 			...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
 			...(statusPayload.usageBudget ? { usageBudget: statusPayload.usageBudget } : {}),
 			...(stopped ? { stopped: true, error: stopMessage } : timedOut ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." } : usageBudgetExceeded ? { error: statusPayload.error ?? "Usage budget exhausted." } : {}),
-			results: results.map((r) => omitUndefinedProperties({
+			results: results.map((r, resultIndex) => omitUndefinedProperties({
 				agent: r.agent,
 				...(r.sessionName ? { sessionName: r.sessionName } : {}),
 				context: r.context,
@@ -5424,7 +5424,7 @@ async function runSubagent(
 				structuredOutputPath: r.structuredOutputPath,
 				structuredOutputSchemaPath: r.structuredOutputSchemaPath,
 				acceptance: r.acceptance,
-				acceptanceInput: r.acceptanceInput,
+				acceptanceInput: r.acceptanceInput ?? flattenSteps(config.steps)[resultIndex]?.acceptanceInput,
 				watchdog: r.watchdog,
 				timeoutRecovery: r.timeoutRecovery,
 				capabilityCeiling: r.capabilityCeiling,

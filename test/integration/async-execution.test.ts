@@ -2241,7 +2241,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(result.results[0]?.acceptance?.evidenceStatus, "checked");
 		assert.ok(result.results[0]?.acceptance?.childReport);
 		assert.equal(result.results[0]?.acceptance?.reviewResult, undefined);
+		assert.deepEqual(result.results[0]?.acceptanceInput, { report: { criteria: ["Patch bug"], evidence: ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files"] } });
 		assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
+		assert.deepEqual(status.steps?.[0]?.acceptanceInput, result.results[0]?.acceptanceInput);
 	});
 
 

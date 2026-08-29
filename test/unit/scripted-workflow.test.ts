@@ -327,7 +327,7 @@ describe("scripted workflow runtime", () => {
 		let launchParams: Record<string, unknown> | undefined;
 		let resolvedReference: unknown;
 		const result = await runWorkflowScript({
-			script: `return runs.run("cross-review", { resume: { workflowRunId: "workflow-1", key: "advisor", latest: true }, task: "Continue" });`,
+			script: `return runs.run("cross-review", { resume: { workflowRunId: "workflow-1", key: "advisor", latest: true }, task: "Continue", acceptance: { verify: [], onFailure: "warn" } });`,
 			resolveResume(reference) {
 				resolvedReference = reference;
 				return { runId: "retained-run", runIds: ["ancestor-run", "retained-run"] };
@@ -340,7 +340,7 @@ describe("scripted workflow runtime", () => {
 		});
 
 		assert.deepEqual(resolvedReference, { workflowRunId: "workflow-1", key: "advisor", latest: true });
-		assert.deepEqual(launchParams, { resume: "retained-run", task: "Continue" });
+		assert.deepEqual(launchParams, { resume: "retained-run", task: "Continue", acceptance: { verify: [], onFailure: "warn" } });
 		assert.equal((result.value as { runId?: string }).runId, "continued-run");
 		assert.deepEqual((result.value as { continuation?: { runIds?: string[] } }).continuation?.runIds, ["ancestor-run", "retained-run", "continued-run"]);
 	});

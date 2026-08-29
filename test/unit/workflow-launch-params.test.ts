@@ -21,6 +21,25 @@ describe("workflow launch params", () => {
 		);
 	});
 
+	it("merges canonical acceptance defaults for new and retained workflow stages", () => {
+		const defaults = { acceptance: { report: { criteria: [{ id: "root", must: "Keep root scope" }] }, onFailure: "fail" as const } };
+		const override = { verify: [], onFailure: "warn" as const };
+		const expectedAcceptance = {
+			report: { criteria: [{ id: "root", must: "Keep root scope" }] },
+			verify: [],
+			onFailure: "warn",
+		};
+
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(defaults, { agent: "worker", task: "Run", acceptance: override }, "workflow-run", "lane.writer").acceptance,
+			expectedAcceptance,
+		);
+		assert.deepEqual(
+			prepareWorkflowLaunchParams(defaults, { resume: "retained-run", task: "Continue", acceptance: override }, "workflow-run", "lane.challenge").acceptance,
+			expectedAcceptance,
+		);
+	});
+
 	it("marks only new async workflow children to preserve live supervisor-detach awaits", () => {
 		// Retained workflow children already use the async result-file await path.
 		assert.equal(prepareWorkflowLaunchParams(
