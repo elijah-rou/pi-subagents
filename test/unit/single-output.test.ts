@@ -12,6 +12,7 @@ import {
 	injectOutputPathSystemPrompt,
 	injectSingleOutputInstruction,
 	normalizeSingleOutputOverride,
+	prepareManagedSingleOutput,
 	requestedOutputPathFromTask,
 	resolveSingleOutput,
 	resolveSingleOutputPath,
@@ -154,6 +155,36 @@ describe("resolveSingleOutput", () => {
 		assert.equal(result.fullOutput, "fresh assistant output");
 		assert.equal(result.savedPath, outputPath);
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "fresh assistant output");
+	});
+
+	it("rejects managed output inode substitution", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "managed", "review.md");
+		prepareManagedSingleOutput("review.md", outputPath);
+		const before = captureSingleOutputSnapshot(outputPath, true);
+		fs.unlinkSync(outputPath);
+		fs.writeFileSync(outputPath, "substitute", "utf-8");
+
+		const result = resolveSingleOutput(outputPath, "fallback", before);
+		assert.equal(result.savedPath, undefined);
+		assert.match(result.saveError ?? "", /substituted during child execution/);
+	});
+
+	it("rejects managed output symlink substitution", { skip: process.platform === "win32" }, () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "managed.md");
+		const targetPath = path.join(dir, "target.md");
+		prepareManagedSingleOutput("managed.md", outputPath);
+		const before = captureSingleOutputSnapshot(outputPath, true);
+		fs.unlinkSync(outputPath);
+		fs.writeFileSync(targetPath, "target", "utf-8");
+		fs.symlinkSync(targetPath, outputPath);
+
+		const result = resolveSingleOutput(outputPath, "fallback", before);
+		assert.equal(result.savedPath, undefined);
+		assert.match(result.saveError ?? "", /substituted with a symlink/);
 	});
 
 	it("preserves read errors from changed output paths", () => {
