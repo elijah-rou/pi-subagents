@@ -6218,7 +6218,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.error ?? "", /429 quota exceeded/);
 	});
 
-	it("baselines output files per fallback attempt", async () => {
+	it("refreshes the managed output baseline before each fallback attempt", async () => {
 		const outputPath = path.join(tempDir, "fallback-output.md");
 		mockPi.onCall({
 			jsonl: [{
@@ -6243,6 +6243,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const runPromise = runSync(tempDir, agents, "echo", "Task", {
 			runId: "fallback-output-per-attempt",
 			outputPath,
+			managedOutput: true,
 		});
 		setTimeout(() => {
 			fs.writeFileSync(outputPath, "stale partial output from failed primary", "utf-8");
@@ -6952,6 +6953,23 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, true);
 		assert.equal(mockPi.callCount(), 0);
 		assert.equal(fs.existsSync(outputPath), false);
+	});
+
+	it("fails the observable run when a managed output is deleted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const outputPath = path.join(tempDir, "deleted-managed-report.md");
+		mockPi.onCall({ output: "assistant fallback", deleteFiles: [outputPath] });
+		const executor = makeExecutor([makeAgent("echo")], { singleRunOutputBaseDir: tempDir });
+		const result = await executor.execute(
+			"managed-output-deletion",
+			{ agent: "echo", task: "Write report", output: "deleted-managed-report.md" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.equal(result.details.results[0]?.exitCode, 1);
+		assert.match(result.details.results[0]?.error ?? "", /deleted during child execution/);
 	});
 
 	it("fails the observable run when a managed output is substituted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

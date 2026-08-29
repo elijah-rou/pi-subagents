@@ -30,6 +30,7 @@ interface MockPiResponse {
 	/** Files the mock child writes to disk before emitting output, standing in for its write-tool side effects. */
 	writeFiles?: Array<{ path: string; content: string }>;
 	replaceFiles?: Array<{ path: string; content: string }>;
+	deleteFiles?: string[];
 	/** Writes the structured-output capture file without emitting a structured_output tool event. */
 	structuredOutputCapture?: unknown;
 	structuredOutputAcceptanceReport?: unknown;

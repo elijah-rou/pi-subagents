@@ -181,6 +181,9 @@ function writeDeclaredFiles(response) {
 		fs.mkdirSync(path.dirname(target), { recursive: true });
 		fs.writeFileSync(target, file.content, "utf-8");
 	}
+	for (const filePath of Array.isArray(response.deleteFiles) ? response.deleteFiles : []) {
+		if (typeof filePath === "string") fs.rmSync(path.resolve(process.cwd(), filePath), { force: true });
+	}
 	for (const file of Array.isArray(response.replaceFiles) ? response.replaceFiles : []) {
 		if (!file || typeof file.path !== "string" || typeof file.content !== "string") continue;
 		const target = path.resolve(process.cwd(), file.path);

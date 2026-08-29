@@ -180,6 +180,31 @@ describe("resolveSingleOutput", () => {
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "not ours");
 	});
 
+	it("treats managed output deletion as fatal", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "review.md");
+		const reservation = prepareManagedSingleOutput("review.md", outputPath);
+		fs.unlinkSync(outputPath);
+		const result = resolveSingleOutput(outputPath, "fallback", reservation);
+		assert.equal(result.fatalError, true);
+		assert.match(result.saveError ?? "", /deleted during child execution/);
+	});
+
+	it("fails closed when managed output changes between inspection and open", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "review.md");
+		const reservation = prepareManagedSingleOutput("review.md", outputPath)!;
+		fs.writeFileSync(outputPath, "child report", "utf-8");
+		const result = resolveSingleOutput(outputPath, "fallback", reservation, undefined, () => {
+			fs.unlinkSync(outputPath);
+			fs.writeFileSync(outputPath, "late substitute", "utf-8");
+		});
+		assert.equal(result.fatalError, true);
+		assert.match(result.saveError ?? "", /substituted during child execution|substituted during open/);
+	});
+
 	it("rejects managed output inode substitution", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
 		tempDirs.push(dir);

@@ -246,6 +246,25 @@ function openManagedOutput(outputPath: string, flags: number, snapshot: SingleOu
 	}
 }
 
+export function refreshManagedSingleOutputSnapshot(outputPath: string, reservation: SingleOutputSnapshot): SingleOutputSnapshot {
+	if (!reservation.managed) return captureSingleOutputSnapshot(outputPath, false)!;
+	const descriptor = openManagedOutput(outputPath, fs.constants.O_RDONLY, reservation);
+	try {
+		const stat = fs.fstatSync(descriptor);
+		return {
+			...reservation,
+			exists: true,
+			managed: true,
+			mtimeMs: stat.mtimeMs,
+			size: stat.size,
+			device: reservation.device,
+			inode: reservation.inode,
+		};
+	} finally {
+		fs.closeSync(descriptor);
+	}
+}
+
 function inspectSingleOutputChange(
 	outputPath: string,
 	beforeRun: SingleOutputSnapshot | undefined,
@@ -261,8 +280,9 @@ function inspectSingleOutputChange(
 		};
 	} catch (error) {
 		const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
-		if (code === "ENOENT" || code === "ENOTDIR") return { changed: false };
-		return { changed: false, error: error instanceof Error ? error.message : String(error) };
+		if (!beforeRun?.managed && (code === "ENOENT" || code === "ENOTDIR")) return { changed: false };
+		const message = error instanceof Error ? error.message : String(error);
+		return { changed: false, error: beforeRun?.managed && (code === "ENOENT" || code === "ENOTDIR") ? `Managed output '${outputPath}' was deleted during child execution: ${message}` : message };
 	}
 }
 
@@ -299,7 +319,7 @@ function persistSingleOutput(
 		}
 		return { savedPath: outputPath };
 	} catch (err) {
-		return { error: err instanceof Error ? err.message : String(err) };
+		return { error: err instanceof Error ? err.message : String(err), ...(beforeRun?.managed ? { fatalError: true } : {}) };
 	}
 }
 
@@ -308,10 +328,19 @@ export function resolveSingleOutput(
 	fallbackOutput: string,
 	beforeRun: SingleOutputSnapshot | undefined,
 	expectedClaimPath?: string,
+	onBeforeManagedOpen?: () => void,
 ): { fullOutput: string; savedPath?: string; saveError?: string; fatalError?: boolean } {
 	if (!outputPath) return { fullOutput: fallbackOutput };
-	const claimError = outputClaimError(outputPath, expectedClaimPath);
-	if (claimError) return { fullOutput: fallbackOutput, saveError: claimError, fatalError: true };
+	try {
+		const claimError = outputClaimError(outputPath, expectedClaimPath);
+		if (claimError) return { fullOutput: fallbackOutput, saveError: claimError, fatalError: true };
+	} catch (error) {
+		return {
+			fullOutput: fallbackOutput,
+			saveError: `Failed to inspect output claim: ${error instanceof Error ? error.message : String(error)}`,
+			...(beforeRun?.managed ? { fatalError: true } : {}),
+		};
+	}
 
 	const changedSinceStart = inspectSingleOutputChange(outputPath, beforeRun);
 	if (changedSinceStart.error) {
@@ -325,6 +354,7 @@ export function resolveSingleOutput(
 	if (changedSinceStart.changed) {
 		try {
 			if (!beforeRun?.managed) return { fullOutput: fs.readFileSync(outputPath, "utf-8"), savedPath: outputPath };
+			onBeforeManagedOpen?.();
 			const descriptor = openManagedOutput(outputPath, fs.constants.O_RDONLY, beforeRun);
 			try {
 				return { fullOutput: fs.readFileSync(descriptor, "utf-8"), savedPath: outputPath };
@@ -340,6 +370,7 @@ export function resolveSingleOutput(
 		}
 	}
 
+	if (beforeRun?.managed) onBeforeManagedOpen?.();
 	const save = persistSingleOutput(outputPath, fallbackOutput, beforeRun, expectedClaimPath);
 	if (save.savedPath) return { fullOutput: fallbackOutput, savedPath: save.savedPath };
 	return { fullOutput: fallbackOutput, saveError: save.error, ...(save.fatalError ? { fatalError: true } : {}) };

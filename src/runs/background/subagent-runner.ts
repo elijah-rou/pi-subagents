@@ -15,7 +15,7 @@ import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliver
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
-import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, prepareManagedSingleOutput, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, prepareManagedSingleOutput, refreshManagedSingleOutputSnapshot, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type ActivityState,
 	type AcceptanceInput,
@@ -1325,6 +1325,8 @@ interface SingleStepContext {
 }
 
 /** Run a single pi agent step, returning output and metadata */
+class ManagedOutputAttemptError extends Error {}
+
 async function runSingleStepInner(
 	step: SubagentStep,
 	ctx: SingleStepContext,
@@ -1409,6 +1411,15 @@ async function runSingleStepInner(
 	if (ctx.outputs) task = resolveOutputReferences(task, ctx.outputs);
 	const taskForCompletionGuard = task;
 	const cleanupPreflightOutput = () => cleanupManagedSingleOutput(step.outputPath, step.managedOutputReservation);
+	const captureAttemptOutputSnapshot = () => {
+		try {
+			return step.managedOutputReservation && step.outputPath
+				? refreshManagedSingleOutputSnapshot(step.outputPath, step.managedOutputReservation)
+				: captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
+		} catch (error) {
+			throw new ManagedOutputAttemptError(`Failed to refresh managed output before child attempt: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	};
 	let resolvedTaskToolPlan: ReturnType<typeof resolvePiLaunchToolPlan> | undefined;
 	if (!step.runner) {
 		resolvedTaskToolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
@@ -1495,7 +1506,7 @@ async function runSingleStepInner(
 					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
 		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
-		const outputSnapshot = step.managedOutputReservation ?? captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
+		const outputSnapshot = captureAttemptOutputSnapshot();
 		const external = await runExternalCli(omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
@@ -1569,7 +1580,7 @@ async function runSingleStepInner(
 			options: step.runner.options ?? {},
 			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
-		const outputSnapshot = step.managedOutputReservation ?? captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
+		const outputSnapshot = captureAttemptOutputSnapshot();
 		const external = await runExternalJob(omitUndefinedProperties({
 			provider: runner.provider,
 			options: runner.options,
@@ -1690,7 +1701,7 @@ async function runSingleStepInner(
 			thinking: resolveEffectiveThinking(candidate, step.thinking),
 			contextLimit: findModelInfo(candidate, step.modelVerificationRegistry)?.contextWindow,
 		}));
-		const outputSnapshot = step.managedOutputReservation ?? captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
+		const outputSnapshot = captureAttemptOutputSnapshot();
 		if (effectiveStructuredOutput) {
 			try {
 				if (fs.existsSync(effectiveStructuredOutput.outputPath)) fs.unlinkSync(effectiveStructuredOutput.outputPath);
@@ -2284,7 +2295,12 @@ async function runSingleStep(
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
 	if (!step.importAsyncRoot) ctx.orcaProgressTab?.section({ agent: step.agent, index: ctx.flatIndex, count: ctx.flatStepCount });
-	return runSingleStepInner(step, ctx);
+	try {
+		return await runSingleStepInner(step, ctx);
+	} catch (error) {
+		if (!(error instanceof ManagedOutputAttemptError)) throw error;
+		return { agent: step.agent, context: step.context, output: error.message, error: error.message, exitCode: 1 };
+	}
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -2551,9 +2567,10 @@ async function runSingleStepWithTimeout(
 	}
 }
 
-async function runSubagent(
+async function runSubagentInner(
 	config: SubagentRunConfig,
-	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
+	onWriterProcess: ((writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void) | undefined,
+	ownedManagedOutputs: Array<{ outputPath: string; reservation: NonNullable<SubagentStep["managedOutputReservation"]> }>,
 ): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
@@ -4085,12 +4102,33 @@ async function runSubagent(
 					for (const [itemIndex] of materialized.parallel.entries()) {
 						const outputPath = path.join(path.dirname(step.parallel.outputPath), `dynamic-${stepIndex}`, `${itemIndex}-${step.parallel.agent}`, path.basename(step.parallel.outputPath));
 						const reservation = prepareManagedSingleOutput(path.basename(outputPath), outputPath);
-						if (reservation) dynamicOutputReservations.push({ outputPath, reservation });
+						if (reservation) {
+							dynamicOutputReservations.push({ outputPath, reservation });
+							ownedManagedOutputs.push({ outputPath, reservation });
+						}
 					}
 				}
 			} catch (error) {
 				for (const entry of dynamicOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
-				throw error;
+				const now = Date.now();
+				const message = `Failed to reserve dynamic managed output: ${error instanceof Error ? error.message : String(error)}`;
+				statusPayload.state = "failed";
+				statusPayload.error = message;
+				statusPayload.currentStep = groupStartFlatIndex;
+				const placeholder = statusPayload.steps[groupStartFlatIndex];
+				if (placeholder) {
+					placeholder.status = "failed";
+					placeholder.error = message;
+					placeholder.startedAt = now;
+					placeholder.endedAt = now;
+					placeholder.durationMs = 0;
+					placeholder.exitCode = 1;
+				}
+				statusPayload.lastUpdate = now;
+				markDynamicGraphGroup(stepIndex, "failed", message);
+				writeStatusPayload();
+				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1 }));
+				break;
 			}
 			const dynamicSteps = materialized.parallel.map((task, itemIndex) => {
 				const thinkingOverride = step.thinkingOverrides?.[itemIndex];
@@ -5576,6 +5614,18 @@ async function runSubagent(
 		} catch (error) {
 			console.error(`Failed to write process-terminal candidate for '${id}':`, error);
 		}
+	}
+}
+
+async function runSubagent(
+	config: SubagentRunConfig,
+	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
+): Promise<void> {
+	const ownedManagedOutputs: Array<{ outputPath: string; reservation: NonNullable<SubagentStep["managedOutputReservation"]> }> = flattenSteps(config.steps).flatMap((step) => step.outputPath && step.managedOutputReservation ? [{ outputPath: step.outputPath, reservation: step.managedOutputReservation }] : []);
+	try {
+		await runSubagentInner(config, onWriterProcess, ownedManagedOutputs);
+	} finally {
+		for (const entry of ownedManagedOutputs) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
 	}
 }
 

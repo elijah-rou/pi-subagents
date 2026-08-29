@@ -2444,6 +2444,38 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(finalStatus.parallelGroups, [{ start: 1, count: 2, stepIndex: 1 }]);
 	});
 
+	it("terminalizes dynamic managed-output reservation collisions and cleans owned placeholders", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
+		const id = `async-dynamic-output-collision-${Date.now().toString(36)}`;
+		const artifactsDir = path.join(tempDir, ".pi/subagents", "artifacts");
+		const dynamicRoot = path.join(artifactsDir, "outputs", id, "dynamic-1");
+		const firstOutput = path.join(dynamicRoot, "0-reviewer", "context.md");
+		const collisionOutput = path.join(dynamicRoot, "1-reviewer", "context.md");
+		fs.mkdirSync(path.dirname(collisionOutput), { recursive: true });
+		fs.writeFileSync(collisionOutput, "pre-existing collision", "utf-8");
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{ expand: { from: { output: "targets", path: "/items" }, item: "target", maxItems: 4 }, parallel: { agent: "reviewer", task: "Review {target.path}" }, collect: { as: "reviews" } },
+			],
+			agents: [makeAgent("producer"), makeAgent("reviewer", { output: "context.md" })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-dynamic-collision" },
+			artifactConfig: { enabled: true, includeInput: false, includeOutput: true, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			artifactsDir,
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(payload.success, false);
+		assert.equal(status.state, "failed");
+		assert.match(payload.results.at(-1)?.error ?? "", /Failed to reserve dynamic managed output.*EEXIST/);
+		assert.equal(fs.existsSync(firstOutput), false);
+		assert.equal(fs.readFileSync(collisionOutput, "utf-8"), "pre-existing collision");
+	});
+
 	it("async chains expand dynamic fanout and persist collected output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		mockPi.onCall({ matchArgIncludes: "Review src/a.ts", output: "review-a", structuredOutput: { ok: "a" } });
@@ -3645,6 +3677,43 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.match(payload.results[0]?.modelAttempts?.[0]?.error ?? "", /no output/i);
 		assert.deepEqual(payload.results[0]?.modelAttempts?.map((attempt) => attempt.success), [false, true]);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("refreshes the managed output baseline before an async fallback attempt", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const outputPath = path.join(tempDir, "managed-async-fallback.md");
+		mockPi.onCall({
+			jsonl: [{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "primary failed" }],
+					model: "openai/gpt-5-mini",
+					errorMessage: "429 quota exceeded",
+					usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+				},
+			}],
+			exitCode: 0,
+			writeFiles: [{ path: outputPath, content: "failed primary output" }],
+		});
+		mockPi.onCall({ output: "successful fallback output" });
+		const id = `async-managed-output-fallback-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "openai/gpt-5-mini", fallbackModels: ["anthropic/claude-sonnet-4"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			output: "managed-async-fallback.md",
+			outputBaseDir: tempDir,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "successful fallback output");
+		assert.deepEqual(payload.results[0]?.modelAttempts?.map((attempt) => attempt.success), [false, true]);
 	});
 
 	it("background fails a zero-exit child that stops during a tool after earlier assistant output", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

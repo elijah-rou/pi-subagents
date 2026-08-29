@@ -78,7 +78,7 @@ import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructu
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { classifyRequiredChildTools, formatDefinitelyMissingChildTools, readChildToolDiagnosticError, watchChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
-import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, injectOutputPathSystemPrompt, prepareManagedSingleOutput, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, injectOutputPathSystemPrompt, prepareManagedSingleOutput, refreshManagedSingleOutputSnapshot, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
 	formatSubagentModelVerificationError,
@@ -2013,7 +2013,16 @@ async function runSyncCompletionInner(
 			const recoveringAbort = abortRecoveryAttempted;
 			const attemptTask = nextAttemptTask;
 			const verifyModel = Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0);
-			const outputSnapshot = managedOutputReservation ?? captureSingleOutputSnapshot(options.outputPath, options.managedOutput === true);
+			let outputSnapshot: SingleOutputSnapshot | undefined;
+			try {
+				outputSnapshot = managedOutputReservation && options.outputPath
+					? refreshManagedSingleOutputSnapshot(options.outputPath, managedOutputReservation)
+					: captureSingleOutputSnapshot(options.outputPath, options.managedOutput === true);
+			} catch (error) {
+				const message = `Failed to refresh managed output before child attempt: ${error instanceof Error ? error.message : String(error)}`;
+				lastResult = { index: options.index ?? 0, agent: agentName, task, exitCode: 1, messages: [], usage: emptyUsage(), error: message, outputSaveError: message };
+				break modelAttemptsLoop;
+			}
 			const result = await runSingleAttempt(runtimeCwd, agent, attemptTask, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
