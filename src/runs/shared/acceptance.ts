@@ -1,10 +1,13 @@
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type {
 	AcceptanceConfig,
+	AcceptanceContract,
 	AcceptanceEvidenceKind,
 	AcceptanceInput,
 	AgentContract,
@@ -19,20 +22,12 @@ import type {
 	AcceptanceVerifyResult,
 	ResolvedAcceptanceConfig,
 	ResolvedAcceptanceGate,
-	SingleResult,
 	SubagentRunMode,
 } from "../../shared/types.ts";
 import { isAgentContractV1 } from "./agent-contract.ts";
-import { classifyTaskMutationIntent, stripSeverityCompounds, taskMayMutate } from "./task-intent.ts";
+import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
-const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
-	none: 0,
-	attested: 1,
-	checked: 2,
-	verified: 3,
-};
-
-const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified"]);
+const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified", "reviewed"]);
 const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
 	"changed-files",
 	"tests-added",
@@ -47,15 +42,15 @@ const VALID_EVIDENCE_KINDS: AcceptanceEvidenceKind[] = [
 const VALID_EVIDENCE = new Set<AcceptanceEvidenceKind>(VALID_EVIDENCE_KINDS);
 const ACCEPTANCE_EVIDENCE_HELP = `Supported evidence kinds: ${VALID_EVIDENCE_KINDS.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`;
 const ACCEPTANCE_OBJECT_EXAMPLE = "Example: { level: \"checked\", evidence: [\"commands-run\", \"changed-files\"] }.";
-const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
+const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason", "report", "onFailure"]);
+const LEGACY_ONLY_KEYS = new Set(["level", "criteria", "evidence", "stopRules", "reason"]);
+const CANONICAL_ONLY_KEYS = new Set(["report", "onFailure"]);
+const ACCEPTANCE_REPORT_KEYS = new Set(["criteria", "evidence"]);
+const ACCEPTANCE_CONTRACT_KEYS = new Set(["report", "verify", "review", "onFailure"]);
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
 const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
 const EXPLICIT_REVIEWED_UNAVAILABLE = "is an achieved status, not a requestable acceptance level. For a read-only reviewer call, omit acceptance. To require independent review of a writer result, use acceptance.review.required and orchestrate the reviewer separately.";
-
-function normalizeLevel(level: AcceptanceLevel | undefined): Exclude<AcceptanceLevel, "auto"> | "auto" {
-	return level ?? "auto";
-}
 
 function unique<T>(items: T[]): T[] {
 	return [...new Set(items)];
@@ -70,6 +65,7 @@ function requiredEvidenceForLevel(level: Exclude<AcceptanceLevel, "auto">): Acce
 		case "checked":
 			return ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"];
 		case "verified":
+		case "reviewed":
 			return ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files"];
 	}
 }
@@ -93,7 +89,7 @@ function inferLevel(input: {
 	const rolePatchTask = input.acceptanceRole !== undefined
 		&& intent.kind !== "read-only"
 		&& !/\b(?:do not|don't|must not)\s+patch\b/.test(task)
-		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(stripSeverityCompounds(task));
+		&& /\bpatch\s+(?:(?:\.{0,2}[\\/])?(?:[\w.-]+[\\/])+[\w.-]+|[\w.-]+\.[a-z0-9]+\b|(?:the\s+)?parser\b)/.test(task);
 	const taskMayWrite = readOnlyTask ? false : taskMayMutate(input.task ?? "") || intent.kind === "implementation" || rolePatchTask;
 	const readOnlyAgent = input.acceptanceRole === "read-only"
 		|| (input.acceptanceRole === undefined && /\b(?:reviewer|oracle|scout|researcher|analyst)\b/.test(agent));
@@ -146,11 +142,10 @@ function inferLevel(input: {
 	};
 }
 
-export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceConfig {
-	if (input === undefined || input === "auto") return { level: "auto" };
-	if (input === false) return { level: "none", reason: "disabled by deprecated false shorthand" };
-	if (typeof input === "string") return { level: input };
-	return { ...input };
+export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceInput {
+	if (input === undefined) return "auto";
+	if (typeof input === "object" && input !== null) return { ...input };
+	return input;
 }
 
 type GateAcceptanceNormalizationResult =
@@ -164,8 +159,198 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
 }
 
-function explicitAcceptanceCanDisable(explicit: AcceptanceConfig): boolean {
-	return explicit.level === "none" && typeof explicit.reason === "string" && explicit.reason.trim().length > 0;
+export interface AdaptedAcceptance {
+	contract: AcceptanceContract | false;
+	stopRules: string[];
+	reason?: string;
+	deprecationWarnings: string[];
+}
+
+const MERGED_ACCEPTANCE_KIND = "merged-acceptance";
+
+/** Internal, serializable representation used after parent/child contract merging. */
+export interface MergedAcceptanceInput extends AcceptanceContract {
+	kind: typeof MERGED_ACCEPTANCE_KIND;
+	adapted: AdaptedAcceptance;
+}
+
+export type EffectiveAcceptanceInput = AcceptanceInput | MergedAcceptanceInput;
+
+const MERGED_ACCEPTANCE_KEYS = new Set(["kind", "adapted"]);
+const ADAPTED_ACCEPTANCE_KEYS = new Set(["contract", "stopRules", "reason", "deprecationWarnings"]);
+
+function mergedAcceptanceContractErrors(input: unknown, pathLabel: string): string[] {
+	if (input === false) return [];
+	if (!input || typeof input !== "object" || Array.isArray(input)) return [`${pathLabel} must be false or a canonical acceptance contract.`];
+	const contract = input as Record<string, unknown>;
+	const errors = Object.keys(contract)
+		.filter((key) => !ACCEPTANCE_CONTRACT_KEYS.has(key))
+		.map((key) => `${pathLabel}.${key} is not supported in a canonical acceptance contract.`);
+	const review = contract.review;
+	const validationInput = review && typeof review === "object" && !Array.isArray(review)
+		&& (review as Record<string, unknown>).required === true
+		? { ...contract, review: { ...(review as Record<string, unknown>), required: false } }
+		: contract;
+	errors.push(...validateAcceptanceInput(validationInput, pathLabel));
+	return errors;
+}
+
+/** Validate acceptance metadata read from trusted execution artifacts. */
+export function validatePersistedAcceptanceInput(input: unknown, pathLabel = "acceptance"): string[] {
+	if (!input || typeof input !== "object" || Array.isArray(input) || (input as Record<string, unknown>).kind !== MERGED_ACCEPTANCE_KIND) {
+		return validateAcceptanceInput(input, pathLabel);
+	}
+	const errors: string[] = [];
+	const merged = input as Record<string, unknown>;
+	for (const key of Object.keys(merged)) {
+		if (!MERGED_ACCEPTANCE_KEYS.has(key)) errors.push(`${pathLabel}.${key} is not supported in persisted merged acceptance metadata.`);
+	}
+	if (!merged.adapted || typeof merged.adapted !== "object" || Array.isArray(merged.adapted)) {
+		errors.push(`${pathLabel}.adapted must be an object.`);
+		return errors;
+	}
+	const adapted = merged.adapted as Record<string, unknown>;
+	for (const key of Object.keys(adapted)) {
+		if (!ADAPTED_ACCEPTANCE_KEYS.has(key)) errors.push(`${pathLabel}.adapted.${key} is not supported.`);
+	}
+	if (!Object.prototype.hasOwnProperty.call(adapted, "contract")) errors.push(`${pathLabel}.adapted.contract is required.`);
+	else errors.push(...mergedAcceptanceContractErrors(adapted.contract, `${pathLabel}.adapted.contract`));
+	if (!Array.isArray(adapted.stopRules)) errors.push(`${pathLabel}.adapted.stopRules must be an array.`);
+	else for (const [index, rule] of adapted.stopRules.entries()) {
+		if (typeof rule !== "string") errors.push(`${pathLabel}.adapted.stopRules[${index}] must be a string.`);
+	}
+	if (adapted.reason !== undefined && typeof adapted.reason !== "string") errors.push(`${pathLabel}.adapted.reason must be a string.`);
+	if (!Array.isArray(adapted.deprecationWarnings)) errors.push(`${pathLabel}.adapted.deprecationWarnings must be an array.`);
+	else for (const [index, warning] of adapted.deprecationWarnings.entries()) {
+		if (typeof warning !== "string") errors.push(`${pathLabel}.adapted.deprecationWarnings[${index}] must be a string.`);
+	}
+	return errors;
+}
+
+export function isPersistedMergedAcceptanceInput(input: unknown): input is MergedAcceptanceInput {
+	return typeof input === "object"
+		&& input !== null
+		&& !Array.isArray(input)
+		&& (input as Record<string, unknown>).kind === MERGED_ACCEPTANCE_KIND
+		&& validatePersistedAcceptanceInput(input).length === 0;
+}
+
+function isMergedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): input is MergedAcceptanceInput {
+	return isPersistedMergedAcceptanceInput(input);
+}
+
+function isCanonicalObject(value: Record<string, unknown>): boolean {
+	return !Object.keys(value).some((key) => LEGACY_ONLY_KEYS.has(key));
+}
+
+export function mergeAcceptanceContracts(
+	parent: AcceptanceContract | false | undefined,
+	child: AcceptanceContract | false | undefined,
+): AcceptanceContract | false | undefined {
+	if (child === false) return false;
+	if (child === undefined) return parent;
+	if (parent === false || parent === undefined) return { ...child };
+	const merged: AcceptanceContract = { ...parent };
+	if (Object.prototype.hasOwnProperty.call(child, "report")) merged.report = child.report;
+	if (Object.prototype.hasOwnProperty.call(child, "verify")) merged.verify = child.verify;
+	if (Object.prototype.hasOwnProperty.call(child, "review")) merged.review = child.review;
+	if (Object.prototype.hasOwnProperty.call(child, "onFailure")) merged.onFailure = child.onFailure;
+	return merged;
+}
+
+function mergeAdaptedAcceptance(parent: AdaptedAcceptance, child: AdaptedAcceptance, childInput: AcceptanceConfig & AcceptanceContract): AdaptedAcceptance {
+	const childHasStopRules = Object.prototype.hasOwnProperty.call(childInput, "stopRules");
+	const childHasReason = Object.prototype.hasOwnProperty.call(childInput, "reason");
+	return {
+		contract: mergeAcceptanceContracts(parent.contract, child.contract) ?? false,
+		stopRules: childHasStopRules ? child.stopRules : parent.stopRules,
+		...(childHasReason ? { reason: child.reason } : parent.reason !== undefined ? { reason: parent.reason } : {}),
+		deprecationWarnings: unique([...parent.deprecationWarnings, ...child.deprecationWarnings]),
+	};
+}
+
+/** Merge raw parent/child inputs before advisory inference and final resolution. */
+export function mergeAcceptanceInputs(parent: EffectiveAcceptanceInput | undefined, child: EffectiveAcceptanceInput | undefined): EffectiveAcceptanceInput | undefined {
+	if (child === undefined || child === "auto") return parent;
+	if (isMergedAcceptanceInput(child)) return child;
+	const childObject = typeof child === "object" && child !== null ? child as AcceptanceConfig & AcceptanceContract : undefined;
+	if (childObject?.level === "auto") return parent;
+	if (child === false || child === "none") return child;
+	if (childObject?.level === "none") return child;
+	if (typeof child === "string" || childObject?.level !== undefined) return child;
+	const childAdapted = adaptLegacyAcceptance(child);
+	if (childAdapted.contract === false) return child;
+	if (parent === undefined || parent === "auto") return child;
+	const parentObject = !isMergedAcceptanceInput(parent) && typeof parent === "object" && parent !== null
+		? parent as AcceptanceConfig & AcceptanceContract
+		: undefined;
+	if (parentObject?.level === "auto") return child;
+	const merged = mergeAdaptedAcceptance(adaptLegacyAcceptance(parent), childAdapted, childObject ?? {});
+	if (merged.stopRules.length === 0 && merged.reason === undefined && merged.deprecationWarnings.length === 0) return merged.contract;
+	return { kind: MERGED_ACCEPTANCE_KIND, adapted: merged };
+}
+
+export function adaptLegacyAcceptance(input: EffectiveAcceptanceInput | undefined): AdaptedAcceptance {
+	if (isMergedAcceptanceInput(input)) return input.adapted;
+	if (input === undefined || input === "auto") return { contract: false, stopRules: [], deprecationWarnings: [] };
+	if (input === false) return { contract: false, stopRules: [], deprecationWarnings: [] };
+	if (input === "none") {
+		return { contract: false, stopRules: [], deprecationWarnings: ['Acceptance level "none" is deprecated; use acceptance: false.'] };
+	}
+	if (typeof input === "string") return adaptLegacyAcceptance({ level: input });
+
+	const value = input as AcceptanceConfig & AcceptanceContract;
+	if (isCanonicalObject(value as Record<string, unknown>)) {
+		return {
+			contract: {
+				...(Object.prototype.hasOwnProperty.call(value, "report") ? { report: value.report } : {}),
+				...(Object.prototype.hasOwnProperty.call(value, "verify") ? { verify: value.verify } : {}),
+				...(Object.prototype.hasOwnProperty.call(value, "review") ? { review: value.review } : {}),
+				...(Object.prototype.hasOwnProperty.call(value, "onFailure") ? { onFailure: value.onFailure } : {}),
+			},
+			stopRules: [],
+			deprecationWarnings: [],
+		};
+	}
+
+	const level = value.level;
+	if (level === undefined) {
+		const report = value.criteria !== undefined || value.evidence !== undefined
+			? { criteria: value.criteria, evidence: value.evidence }
+			: undefined;
+		return {
+			contract: {
+				...(report ? { report } : {}),
+				...(value.verify !== undefined ? { verify: value.verify } : {}),
+				...(value.review !== undefined ? { review: value.review } : {}),
+			},
+			stopRules: value.stopRules ?? [],
+			reason: value.reason,
+			deprecationWarnings: [],
+		};
+	}
+	if (level === "auto") return { contract: false, stopRules: value.stopRules ?? [], reason: value.reason, deprecationWarnings: [] };
+	if (level === "none") {
+		return {
+			contract: false,
+			stopRules: value.stopRules ?? [],
+			reason: value.reason,
+			deprecationWarnings: ['Acceptance level "none" is deprecated; use acceptance: false.'],
+		};
+	}
+
+	const evidence = unique([...(requiredEvidenceForLevel(level)), ...(value.evidence ?? [])]);
+	return {
+		contract: {
+			report: { criteria: value.criteria, evidence },
+			verify: value.verify ?? [],
+			review: level === "reviewed" ? (value.review === false ? false : value.review ?? { required: true }) : value.review,
+			onFailure: "fail",
+		},
+		stopRules: value.stopRules ?? [],
+		reason: value.reason,
+		deprecationWarnings: [],
+	};
 }
 
 function unsupportedEvidenceKindMessage(pathLabel: string, item: unknown): string {
@@ -178,10 +363,9 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	if (input === undefined) return errors;
 	if (input === false) return errors;
 	if (typeof input === "string") {
-		if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
-		else if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
-		else if (input === "none") errors.push(`${pathLabel} level "none" requires a reason; use { level: "none", reason: "..." }.`);
-		else if (input === "verified") errors.push(`${pathLabel} level "verified" requires object form with at least one runtime verify command. Use level "checked" or provide a non-empty acceptance.verify array.`);
+		if (!VALID_LEVELS.has(input as AcceptanceLevel)) errors.push(`${pathLabel} has invalid level '${input}'.`);
+		else if (input === "reviewed") errors.push(`${pathLabel} ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
+		else if (input === "verified") errors.push(`${pathLabel} verification-config requires at least one runtime verify command.`);
 		return errors;
 	}
 	if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -192,13 +376,39 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 	for (const key of Object.keys(value)) {
 		if (!ACCEPTANCE_CONFIG_KEYS.has(key)) errors.push(`${pathLabel}.${key} is not supported.`);
 	}
-	if (value.level === "reviewed") {
-		errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
-	} else if (value.level !== undefined && (typeof value.level !== "string" || !VALID_LEVELS.has(value.level as AcceptanceLevel))) {
-		errors.push(`${pathLabel}.level must be one of auto, none, attested, checked, verified.`);
+	const hasCanonicalField = Object.keys(value).some((key) => CANONICAL_ONLY_KEYS.has(key));
+	const hasLegacyField = Object.keys(value).some((key) => LEGACY_ONLY_KEYS.has(key));
+	if (hasCanonicalField && hasLegacyField) errors.push(`${pathLabel} cannot mix legacy and canonical acceptance fields.`);
+	if (value.level === "auto" || value.level === "none") {
+		const allowedKeys = value.level === "none" ? new Set(["level", "reason"]) : new Set(["level"]);
+		const discardedDimensions = Object.keys(value).filter((key) => !allowedKeys.has(key));
+		if (discardedDimensions.length > 0) {
+			errors.push(`${pathLabel}.level '${value.level}' cannot combine with contract dimensions: ${discardedDimensions.join(", ")}.`);
+		}
 	}
-	if (value.level === "none" && (typeof value.reason !== "string" || !value.reason.trim())) {
-		errors.push(`${pathLabel}.reason is required when level is none.`);
+	if (value.report !== undefined && value.report !== false) {
+		if (!value.report || typeof value.report !== "object" || Array.isArray(value.report)) {
+			errors.push(`${pathLabel}.report must be false or an object.`);
+		} else {
+			const report = value.report as Record<string, unknown>;
+			for (const key of Object.keys(report)) {
+				if (!ACCEPTANCE_REPORT_KEYS.has(key)) errors.push(`${pathLabel}.report.${key} is not supported.`);
+			}
+			errors.push(...validateAcceptanceInput(
+				{ criteria: report.criteria, evidence: report.evidence },
+				`${pathLabel}.report`,
+			));
+		}
+	}
+	if (value.onFailure !== undefined && value.onFailure !== "fail" && value.onFailure !== "warn") {
+		errors.push(`${pathLabel}.onFailure must be fail or warn.`);
+	}
+	if (value.level !== undefined && (typeof value.level !== "string" || !VALID_LEVELS.has(value.level as AcceptanceLevel))) {
+		errors.push(`${pathLabel}.level must be one of auto, none, attested, checked, verified, reviewed.`);
+	}
+	if (value.level === "reviewed") errors.push(`${pathLabel}.level ${EXPLICIT_REVIEWED_UNAVAILABLE}`);
+	if (value.level === "verified" && (!Array.isArray(value.verify) || value.verify.length === 0)) {
+		errors.push(`${pathLabel} verification-config requires at least one runtime verify command for level verified.`);
 	}
 	if (value.reason !== undefined && typeof value.reason !== "string") errors.push(`${pathLabel}.reason must be a string.`);
 	if (value.criteria !== undefined && !Array.isArray(value.criteria)) errors.push(`${pathLabel}.criteria must be an array.`);
@@ -290,7 +500,11 @@ export function validateAcceptanceInput(input: unknown, pathLabel = "acceptance"
 			}
 			if (review.agent !== undefined && typeof review.agent !== "string") errors.push(`${pathLabel}.review.agent must be a string.`);
 			if (review.focus !== undefined && typeof review.focus !== "string") errors.push(`${pathLabel}.review.focus must be a string.`);
-			if (review.required !== undefined && typeof review.required !== "boolean") errors.push(`${pathLabel}.review.required must be a boolean.`);
+			if (review.required !== undefined && typeof review.required !== "boolean") {
+				errors.push(`${pathLabel}.review.required must be a boolean.`);
+			} else if (review.required !== false) {
+				errors.push(`${pathLabel}.review.required must be false; this run cannot supply an independent reviewer result.`);
+			}
 		}
 	}
 	if (value.stopRules !== undefined && !Array.isArray(value.stopRules)) errors.push(`${pathLabel}.stopRules must be an array.`);
@@ -330,7 +544,7 @@ export function validateExecutionAcceptance(input: {
 function normalizeCriteria(criteria: Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined, evidence: AcceptanceEvidenceKind[]): ResolvedAcceptanceGate[] {
 	return (criteria ?? []).map((criterion, index): ResolvedAcceptanceGate => {
 		if (typeof criterion === "string") {
-			return { id: `criterion-${index + 1}`, must: criterion, evidence, severity: "required" };
+			return { id: `criterion-${index + 1}`, must: criterion, evidence, severity: "required" as const };
 		}
 		return {
 			id: criterion.id?.trim() || `criterion-${index + 1}`,
@@ -341,8 +555,28 @@ function normalizeCriteria(criteria: Array<string | { id?: string; must?: string
 	}).filter((criterion) => criterion.must.trim());
 }
 
+export function inferAcceptanceRecommendations(input: {
+	agentName: string;
+	acceptanceRole?: AcceptanceRole;
+	task?: string;
+	mode?: SubagentRunMode;
+	async?: boolean;
+	dynamic?: boolean;
+	dynamicGroup?: boolean;
+}): { recommendations: string[]; inferredReason: string[] } {
+	const inferred = inferLevel(input);
+	return {
+		recommendations: [
+			`Suggested legacy level: ${inferred.level}.`,
+			...inferred.criteria.map((criterion) => `Suggested criterion: ${criterion}`),
+			...(inferred.evidence.length > 0 ? [`Suggested evidence: ${inferred.evidence.join(", ")}.`] : []),
+		],
+		inferredReason: inferred.reasons,
+	};
+}
+
 export function resolveEffectiveAcceptance(input: {
-	explicit?: AcceptanceInput;
+	explicit?: EffectiveAcceptanceInput;
 	agentName: string;
 	acceptanceRole?: AcceptanceRole;
 	task?: string;
@@ -352,51 +586,45 @@ export function resolveEffectiveAcceptance(input: {
 	dynamicGroup?: boolean;
 	agentContract?: AgentContract;
 }): ResolvedAcceptanceConfig {
-	const explicit = normalizeAcceptanceInput(input.explicit);
-	const explicitLevel = normalizeLevel(explicit.level);
-	if (isAgentContractV1(input.agentContract)) {
-		const level = explicitAcceptanceCanDisable(explicit) || explicitLevel === "auto"
-			? "none"
-			: explicitLevel;
-		const evidence = unique(explicit.evidence ?? []);
-		const criteria = normalizeCriteria(
-			explicit.criteria as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }> | undefined,
-			evidence,
-		);
-		return {
-			level,
-			explicit: input.explicit !== undefined,
-			inferredReason: [],
-			criteria,
-			evidence,
-			verify: explicit.verify ?? [],
-			review: explicit.review,
-			stopRules: explicit.stopRules ?? [],
-			reason: explicit.reason,
-		};
-	}
-	const inferred = inferLevel(input);
-	const level = explicitAcceptanceCanDisable(explicit)
-		? "none"
-		: explicitLevel === "auto"
-			? inferred.level
-			: (LEVEL_RANK[explicitLevel] >= LEVEL_RANK[inferred.level] ? explicitLevel : inferred.level);
-	const evidence = unique([...(level === inferred.level ? inferred.evidence : requiredEvidenceForLevel(level)), ...(explicit.evidence ?? [])]);
-	const criteria = normalizeCriteria(
-		(explicit.criteria?.length ? explicit.criteria : inferred.criteria) as Array<string | { id?: string; must?: string; evidence?: AcceptanceEvidenceKind[]; severity?: "required" | "recommended" }>,
-		evidence,
-	);
-	const review = explicit.review !== undefined ? explicit.review : inferred.review;
+	const agentContractV1 = isAgentContractV1(input.agentContract);
+	const explicitObjectForContract = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit) && !isMergedAcceptanceInput(input.explicit)
+		? input.explicit as Record<string, unknown>
+		: undefined;
+	const inheritedByContract = input.explicit === undefined || input.explicit === "auto" || explicitObjectForContract?.level === "auto";
+	const effectiveInput = agentContractV1 && inheritedByContract ? false : input.explicit;
+	const adapted = adaptLegacyAcceptance(effectiveInput);
+	const advisory = agentContractV1 ? { recommendations: [], inferredReason: [] } : inferAcceptanceRecommendations(input);
+	const contract = adapted.contract;
+	const report = contract === false ? false : contract.report ?? false;
+	const reportCriteria = report === false ? undefined : report.criteria;
+	const evidence = report === false ? [] : report.evidence ?? [];
+	const criteria = normalizeCriteria(reportCriteria, evidence);
+	const verify = contract === false ? [] : contract.verify ?? [];
+	const review = contract === false ? false : contract.review ?? false;
+	const level: ResolvedAcceptanceConfig["level"] = review !== false
+		? "reviewed"
+		: verify.length > 0
+			? "verified"
+			: report !== false
+				? (criteria.length > 0 || evidence.length > 0 ? "checked" : "attested")
+				: "none";
+	const explicitObjectAuto = explicitObjectForContract?.level === "auto"
+		&& Object.keys(explicitObjectForContract).every((key) => key === "level");
+	const explicit = input.explicit !== undefined && input.explicit !== "auto" && !explicitObjectAuto;
 	return {
 		level,
-		explicit: input.explicit !== undefined,
-		inferredReason: inferred.reasons,
+		explicit,
+		report,
+		onFailure: contract === false ? "warn" : contract.onFailure ?? "fail",
+		recommendations: explicit ? [] : advisory.recommendations,
+		deprecationWarnings: adapted.deprecationWarnings,
+		inferredReason: advisory.inferredReason,
 		criteria,
 		evidence,
-		verify: explicit.verify ?? [],
+		verify,
 		review,
-		stopRules: explicit.stopRules ?? [],
-		reason: explicit.reason,
+		stopRules: adapted.stopRules,
+		reason: adapted.reason,
 	};
 }
 
@@ -405,19 +633,21 @@ function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): bo
 }
 
 export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean; structuredOutput?: boolean } = {}): string {
-	if (acceptance.level === "none") return "";
-	if (options.reportOptional && !acceptanceRequiresChildReport(acceptance)) return "";
-	const lines = [
-		"",
-		"## Acceptance Contract",
-		`Acceptance level: ${acceptance.level}`,
-		"Completion is not accepted from prose alone. End with a structured acceptance report.",
-		"",
-		"Criteria:",
-		...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => `- ${criterion.id}: ${criterion.must}`) : ["- Return the requested result."]),
-		"",
-		`Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
-	];
+	if (acceptance.level === "none" || options.reportOptional === true) return "";
+	const lines = ["", "## Acceptance Contract", `Acceptance level: ${acceptance.level}`];
+	if (acceptance.report !== false) {
+		lines.push(
+			"Completion is not accepted from prose alone. End with a structured acceptance report.",
+			"",
+			"Criteria:",
+			...(acceptance.criteria.length ? acceptance.criteria.map((criterion) => {
+				const evidence = criterion.evidence.length > 0 ? ` [evidence: ${criterion.evidence.join(", ")}]` : "";
+				return `- ${criterion.id}: ${criterion.must}${evidence}`;
+			}) : ["- Return the requested result."]),
+			"",
+			`Required evidence: ${acceptance.evidence.join(", ") || "none"}`,
+		);
+	}
 	if (acceptance.verify.length > 0) {
 		lines.push("", "Runtime verification commands configured by parent:");
 		for (const command of acceptance.verify) lines.push(`- ${command.id}: ${command.command}`);
@@ -429,13 +659,12 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, opt
 	if (acceptance.stopRules.length > 0) {
 		lines.push("", "Stop rules:", ...acceptance.stopRules.map((rule) => `- ${rule}`));
 	}
-	lines.push(
+	if (acceptance.report !== false) lines.push(
 		"",
 		options.structuredOutput
 			? "Include an `acceptanceReport` object in your final `structured_output` tool call in this shape:"
 			: "Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
 		"Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
-		"Empty-string entries (`[\"\"]`) are ignored; use `[]` when nothing applies.",
 		"`criteriaSatisfied[].status` must be exactly one of: satisfied, not-satisfied, not-applicable.",
 		"`commandsRun[].result` must be exactly one of: passed, failed, not-run.",
 		"`manualNotes` and `notes` are optional strings; an empty string means no note and does not satisfy `manual-notes` evidence.",
@@ -591,7 +820,7 @@ function normalizeAcceptanceReportValue(value: unknown, pathLabel = ""): { value
 			errors.push(`${pathFor(reportPath, key)}: unsupported acceptance report field`);
 			continue;
 		}
-		if (Object.hasOwn(normalized, canonical)) {
+		if (Object.prototype.hasOwnProperty.call(normalized, canonical)) {
 			errors.push(`${pathFor(reportPath, key)}: duplicates normalized field '${canonical}'`);
 			continue;
 		}
@@ -615,17 +844,9 @@ function normalizeAcceptanceReportValue(value: unknown, pathLabel = ""): { value
 			case "testsAddedOrUpdated":
 			case "validationOutput":
 			case "residualRisks":
-			case "reviewFindings": {
-				// Tolerate empty-string entries ("[\"\"]"): models write them for "no items"
-				// and a single empty entry must not reject the whole report. Drop them at
-				// parse time; non-string entries are kept so validateStringArrayField still
-				// flags structural garbage.
-				const items = typeof fieldValue === "string" ? [fieldValue] : fieldValue;
-				normalized[canonical] = Array.isArray(items)
-					? items.filter((item) => typeof item !== "string" || item.trim().length > 0)
-					: items;
+			case "reviewFindings":
+				normalized[canonical] = typeof fieldValue === "string" ? [fieldValue] : fieldValue;
 				break;
-			}
 			case "noStagedFiles": {
 				const token = typeof fieldValue === "string" ? fieldValue.trim().toLowerCase() : undefined;
 				normalized[canonical] = token === "true" ? true : token === "false" ? false : fieldValue;
@@ -948,7 +1169,7 @@ function reportEvidenceStatus(report: AcceptanceReport, kind: AcceptanceEvidence
 }
 
 function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
-	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8", windowsHide: true });
+	const result = spawnSync("git", ["status", "--short"], { cwd, encoding: "utf-8" });
 	if (result.status !== 0) {
 		return { id: "no-staged-files", status: "not-applicable", message: "git status unavailable; no staged-files check skipped" };
 	}
@@ -958,29 +1179,84 @@ function checkNoStagedFiles(cwd: string): AcceptanceRuntimeCheck {
 		: { id: "no-staged-files", status: "failed", message: `Staged files present: ${staged.join(", ")}` };
 }
 
+function evidenceRuntimeCheck(id: string, label: string, report: AcceptanceReport, kind: AcceptanceEvidenceKind): AcceptanceRuntimeCheck {
+	const status = reportEvidenceStatus(report, kind);
+	return {
+		id,
+		status,
+		message: status === "passed"
+			? `${label} evidence present.`
+			: status === "not-applicable"
+				? `${label} evidence explicitly reported as not applicable.`
+				: `${label} evidence missing from child report.`,
+	};
+}
+
 function runStructuralChecks(acceptance: ResolvedAcceptanceConfig, report: AcceptanceReport, cwd: string): AcceptanceRuntimeCheck[] {
 	const checks: AcceptanceRuntimeCheck[] = [];
+	const globalEvidence = new Set(acceptance.evidence);
+	const criterionReports = new Map((report.criteriaSatisfied ?? [])
+		.filter((item) => item.id)
+		.map((item) => [normalizedToken(item.id!), item]));
 	for (const kind of acceptance.evidence) {
-		if (kind === "no-staged-files" && report.noStagedFiles === undefined) continue;
-		const status = reportEvidenceStatus(report, kind);
-		checks.push({
-			id: `evidence:${kind}`,
-			status,
-			message: status === "passed"
-				? `${kind} evidence present.`
-				: status === "not-applicable"
-					? `${kind} evidence explicitly reported as not applicable.`
-					: `${kind} evidence missing from child report.`,
-		});
+		checks.push(evidenceRuntimeCheck(`evidence:${kind}`, kind, report, kind));
 	}
-	if (acceptance.evidence.includes("no-staged-files")) checks.push(checkNoStagedFiles(cwd));
+	if (globalEvidence.has("no-staged-files")) checks.push(checkNoStagedFiles(cwd));
+	for (const criterion of acceptance.criteria) {
+		if (criterion.severity === "recommended") continue;
+		if (criterionReports.get(normalizedToken(criterion.id))?.status !== "satisfied") continue;
+		for (const kind of criterion.evidence) {
+			if (globalEvidence.has(kind)) continue;
+			const id = `criterion:${criterion.id}:evidence:${kind}`;
+			checks.push(evidenceRuntimeCheck(id, `${criterion.id} ${kind}`, report, kind));
+			if (kind === "no-staged-files") checks.push({ ...checkNoStagedFiles(cwd), id: `${id}:workspace` });
+		}
+	}
 	return checks;
 }
 
-function trimOutput(value: string): string | undefined {
+const VERIFY_OUTPUT_LIMIT_BYTES = 12_000;
+const VERIFY_OUTPUT_TRUNCATED = "\n...[truncated]";
+
+interface BoundedVerifyOutput {
+	chunks: Buffer[];
+	bytes: number;
+	truncated: boolean;
+}
+
+function createBoundedVerifyOutput(): BoundedVerifyOutput {
+	return { chunks: [], bytes: 0, truncated: false };
+}
+
+function appendBoundedOutput(output: BoundedVerifyOutput, chunk: Buffer): void {
+	assert(output.bytes >= 0);
+	assert(output.bytes <= VERIFY_OUTPUT_LIMIT_BYTES);
+	const remaining = VERIFY_OUTPUT_LIMIT_BYTES - output.bytes;
+	const keptBytes = Math.min(remaining, chunk.length);
+	if (keptBytes > 0) {
+		output.chunks.push(Buffer.from(chunk.subarray(0, keptBytes)));
+		output.bytes += keptBytes;
+	}
+	output.truncated ||= keptBytes < chunk.length;
+	assert(output.bytes <= VERIFY_OUTPUT_LIMIT_BYTES);
+}
+
+function decodeBoundedOutput(output: BoundedVerifyOutput): string {
+	assert(output.bytes >= 0);
+	assert(output.bytes <= VERIFY_OUTPUT_LIMIT_BYTES);
+	const bytes = Buffer.concat(output.chunks, output.bytes);
+	assert(bytes.length === output.bytes);
+	if (!output.truncated) return bytes.toString("utf-8");
+
+	// Do not flush the decoder: an incomplete code point at the byte cap stays
+	// buffered instead of becoming a replacement character in ledger output.
+	return new StringDecoder("utf-8").write(bytes);
+}
+
+function trimOutput(value: string, truncated = false): string | undefined {
 	const trimmed = value.trim();
-	if (!trimmed) return undefined;
-	return trimmed.length > 12_000 ? `${trimmed.slice(0, 12_000)}\n...[truncated]` : trimmed;
+	if (!trimmed && !truncated) return undefined;
+	return `${trimmed}${truncated ? VERIFY_OUTPUT_TRUNCATED : ""}`;
 }
 
 const SENSITIVE_ENV_KEY_PATTERN = /(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASS|AUTH|CREDENTIAL|COOKIE|SESSION|PRIVATE|API_KEY|ACCESS_KEY)(?:_|$)/i;
@@ -1010,22 +1286,36 @@ function uniqueStrings(items: Array<string | undefined>): string[] {
 }
 
 export function aggregateAcceptanceReport(input: {
-	results: Array<Pick<SingleResult, "agent" | "acceptance" | "error"> & { exitCode: number | null }>;
+	criteria?: ResolvedAcceptanceGate[];
+	results: Array<{
+		agent: string;
+		acceptance?: AcceptanceLedger;
+		error?: string;
+		exitCode: number | null;
+	}>;
 	notes?: string;
 }): AcceptanceReport {
 	const childReports = input.results.map((result) => result.acceptance?.childReport).filter((report): report is AcceptanceReport => Boolean(report));
-	const blockers = input.results.filter((result) => result.exitCode !== 0 || result.acceptance?.status === "rejected");
+	const blockers = input.results.filter((result) => result.exitCode !== 0 || (result.acceptance ? acceptanceBlocksRun(result.acceptance) : false));
 	const successfulChildren = input.results.length > 0 && blockers.length === 0;
+	const requiredCriteria = (input.criteria ?? []).filter((criterion) => criterion.severity !== "recommended");
+	const childEvidence = input.results.map((result, index) =>
+		`Child ${index + 1} (${result.agent}): acceptance ${result.acceptance?.status ?? "unreported"}${result.error ? ` (${result.error})` : ""}`,
+	);
+	const aggregateNotes = uniqueStrings([input.notes, ...childEvidence]).join("\n");
 	return {
-		criteriaSatisfied: [
-			{ id: "criterion-1", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.` : "Dynamic fanout produced no accepted child evidence." },
-			{ id: "criterion-2", status: successfulChildren ? "satisfied" : "not-satisfied", evidence: successfulChildren ? "Collected child acceptance evidence for aggregate review." : "Dynamic fanout produced no aggregate review evidence." },
-			...input.results.map((result, index): { id?: string; status: "satisfied" | "not-satisfied" | "not-applicable"; evidence: string } => ({
-				id: `child-${index + 1}`,
-				status: result.exitCode === 0 && result.acceptance?.status !== "rejected" ? "satisfied" : "not-satisfied",
-				evidence: `${result.agent}: acceptance ${result.acceptance?.status ?? "unreported"}${result.error ? ` (${result.error})` : ""}`,
-			})),
-		],
+
+		criteriaSatisfied: requiredCriteria.map((criterion, index) => ({
+			id: normalizedToken(criterion.id),
+			status: successfulChildren ? "satisfied" as const : "not-satisfied" as const,
+			evidence: successfulChildren
+				? index === 0
+					? `All ${input.results.length} dynamic child run(s) completed without child or acceptance blockers.`
+					: "Collected child acceptance evidence for aggregate review."
+				: index === 0
+					? "Dynamic fanout produced no accepted child evidence."
+					: "Dynamic fanout produced no aggregate review evidence.",
+		})),
 		changedFiles: uniqueStrings(childReports.flatMap((report) => report.changedFiles ?? [])),
 		testsAddedOrUpdated: uniqueStrings(childReports.flatMap((report) => report.testsAddedOrUpdated ?? [])),
 		commandsRun: childReports.flatMap((report) => report.commandsRun ?? []),
@@ -1036,8 +1326,8 @@ export function aggregateAcceptanceReport(input: {
 		]),
 		noStagedFiles: childReports.length > 0 && childReports.every((report) => report.noStagedFiles === true),
 		reviewFindings: uniqueStrings(childReports.flatMap((report) => report.reviewFindings ?? [])),
-		manualNotes: input.notes ?? `Aggregated acceptance evidence from ${input.results.length} dynamic fanout child run(s).`,
-		notes: input.notes,
+		manualNotes: aggregateNotes || `Aggregated acceptance evidence from ${input.results.length} dynamic fanout child run(s).`,
+		notes: aggregateNotes || input.notes,
 	};
 }
 
@@ -1056,11 +1346,11 @@ interface VerifyWorkspaceState {
 }
 
 function readVerifyWorkspaceState(cwd: string): VerifyWorkspaceState | undefined {
-	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", windowsHide: true });
+	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8" });
 	if (repo.status !== 0 || !repo.stdout.trim()) return undefined;
 	const repoRoot = fs.realpathSync(repo.stdout.trim());
-	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8", windowsHide: true });
-	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, windowsHide: true });
+	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8" });
+	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024 });
 	if (head.status !== 0 || diff.status !== 0 || !head.stdout.trim()) return undefined;
 	return {
 		kind: "git-tracked",
@@ -1143,19 +1433,6 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 	return evidenced;
 }
 
-/**
- * On Windows with `shell: true`, cmd.exe parses the command line itself and an
- * unquoted executable path containing spaces (e.g. `C:\Program Files\...\tool.exe`)
- * is split at the first space, so cmd tries to run `C:\Program` and fails.
- *
- * The command line is ambiguous, so only an unquoted absolute drive path with
- * a space in a directory component is safe to identify as an executable. That
- * path is quoted; everything after it is preserved as arguments.
- *
- * Commands that already start with a quote, single-token commands, and commands
- * whose first token already ends in an executable extension are returned
- * unchanged. Non-Windows platforms pass the command through untouched.
- */
 export function quoteExecutableForShell(command: string, platform: string = process.platform): string {
 	if (platform !== "win32") return command;
 	const trimmed = command.trimStart();
@@ -1186,22 +1463,36 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 	return command;
 }
 
+
 function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
 		const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
-		let stdout = "";
-		let stderr = "";
+		const stdout = createBoundedVerifyOutput();
+		const stderr = createBoundedVerifyOutput();
 		let timedOut = false;
 		let settled = false;
 		let hardKill: NodeJS.Timeout | undefined;
-		const child = spawn(quoteExecutableForShell(command.command), {
+		const child = spawn(command.command, {
 			cwd,
 			env: effectiveVerifyEnv(command.env),
 			shell: true,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
+			detached: process.platform !== "win32",
 		});
+		const killTree = (signal: "SIGTERM" | "SIGKILL") => {
+			if (process.platform === "win32") {
+				if (child.pid) spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true });
+				return;
+			}
+			if (!child.pid) return;
+			try {
+				process.kill(-child.pid, signal);
+			} catch {
+				child.kill(signal);
+			}
+		};
 		const finish = (result: Omit<AcceptanceVerifyResult, "id" | "command" | "cwd" | "durationMs">) => {
 			if (settled) return;
 			settled = true;
@@ -1219,35 +1510,33 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 		const abortVerification = () => {
 			if (settled || timedOut) return;
 			timedOut = true;
-			child.kill("SIGTERM");
+			killTree("SIGTERM");
 			hardKill = setTimeout(() => {
-				child.kill("SIGKILL");
+				killTree("SIGKILL");
+				const decodedStderr = decodeBoundedOutput(stderr);
 				finish({
 					exitCode: null,
 					status: "timed-out",
-					stdout: trimOutput(redactVerifyEnv(stdout, command.env)),
-					stderr: trimOutput(redactVerifyEnv(stderr || options.abortMessage || "Acceptance verification timed out.", command.env)),
+					stdout: trimOutput(redactVerifyEnv(decodeBoundedOutput(stdout), command.env), stdout.truncated),
+					stderr: trimOutput(redactVerifyEnv(decodedStderr || options.abortMessage || "Acceptance verification timed out.", command.env), stderr.truncated),
 				});
-			}, 1000);
+			}, 100);
 			hardKill.unref?.();
 		};
 		const timeout = setTimeout(abortVerification, command.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS);
 		timeout.unref?.();
 		if (options.signal?.aborted) abortVerification();
 		else options.signal?.addEventListener("abort", abortVerification, { once: true });
-		child.stdout.on("data", (chunk: Buffer) => {
-			stdout += chunk.toString();
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString();
-		});
+		child.stdout.on("data", (chunk: Buffer) => appendBoundedOutput(stdout, chunk));
+		child.stderr.on("data", (chunk: Buffer) => appendBoundedOutput(stderr, chunk));
 		child.on("close", (exitCode) => {
-			const passed = exitCode === 0 && !timedOut;
+			if (timedOut) return;
+			const passed = exitCode === 0;
 			finish({
 				exitCode,
-				status: timedOut ? "timed-out" : passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
-				stdout: trimOutput(redactVerifyEnv(stdout, command.env)),
-				stderr: trimOutput(redactVerifyEnv(stderr || (timedOut ? options.abortMessage ?? "" : ""), command.env)),
+				status: passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
+				stdout: trimOutput(redactVerifyEnv(decodeBoundedOutput(stdout), command.env), stdout.truncated),
+				stderr: trimOutput(redactVerifyEnv(decodeBoundedOutput(stderr), command.env), stderr.truncated),
 			});
 		});
 		child.on("error", (error) => {
@@ -1255,7 +1544,7 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 				exitCode: timedOut ? null : 1,
 				status: timedOut ? "timed-out" : command.allowFailure ? "allowed-failure" : "failed",
 				stderr: timedOut
-					? trimOutput(redactVerifyEnv(stderr || options.abortMessage || "Acceptance verification timed out.", command.env))
+					? trimOutput(redactVerifyEnv(decodeBoundedOutput(stderr) || options.abortMessage || "Acceptance verification timed out.", command.env), stderr.truncated)
 					: redactVerifyEnv(error instanceof Error ? error.message : String(error), command.env),
 			});
 		});
@@ -1296,103 +1585,71 @@ export async function evaluateAcceptance(input: {
 	};
 	if (acceptance.level === "none") return ledger;
 
-	const parsed = input.reportError
-		? { error: input.reportError }
-		: input.report
-		? (() => {
-			const validation = validateAcceptanceReport(input.report);
-			return validation.report
-				? { report: validation.report }
-				: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
-		})()
-		: parseAcceptanceReportSources(input.output, input.fileOutput);
-	const needsReport = acceptanceRequiresChildReport(acceptance);
-	if (parsed.report) {
-		ledger.childReport = parsed.report;
-		ledger.status = "attested";
-		ledger.evidenceStatus = "attested";
-	} else if (!input.reportOptional || needsReport || parsed.error !== ACCEPTANCE_REPORT_NOT_FOUND) {
-		ledger.childReportParseError = parsed.error;
-		ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
-		if (!input.reportOptional) {
-			ledger.status = "rejected";
-			ledger.evidenceStatus = "rejected";
-			return ledger;
-		}
-	} else {
-		ledger.childReportParseError = parsed.error;
-	}
-
-	if (parsed.report && LEVEL_RANK[acceptance.level] >= LEVEL_RANK.checked) {
-		ledger.runtimeChecks = [
-			...ledger.runtimeChecks,
-			...checkCriteriaSatisfied(acceptance.criteria, parsed.report),
-			...runStructuralChecks(acceptance, parsed.report, input.cwd),
-		];
-		if (!ledger.runtimeChecks.some((check) => check.status === "failed")) {
-			ledger.status = "checked";
-			ledger.evidenceStatus = "checked";
+	let reportPassed = acceptance.report === false || input.reportOptional === true;
+	if (acceptance.report !== false) {
+		const parsed = input.reportError
+			? { error: input.reportError }
+			: input.report
+			? (() => {
+				const validation = validateAcceptanceReport(input.report);
+				return validation.report
+					? { report: validation.report }
+					: { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
+			})()
+			: parseAcceptanceReportSources(input.output, input.fileOutput);
+		if (parsed.report) {
+			ledger.childReport = parsed.report;
+			ledger.runtimeChecks.push(
+				...checkCriteriaSatisfied(acceptance.criteria, parsed.report),
+				...runStructuralChecks(acceptance, parsed.report, input.cwd),
+			);
+			reportPassed = !ledger.runtimeChecks.some((check) => check.status === "failed");
+		} else if (input.reportOptional !== true) {
+			ledger.childReportParseError = parsed.error;
+			ledger.runtimeChecks.push({ id: "attestation", status: "failed", message: parsed.error ?? "Structured acceptance report missing." });
+		} else {
+			ledger.childReportParseError = parsed.error;
 		}
 	}
 
-	if (LEVEL_RANK[acceptance.level] >= LEVEL_RANK.verified && (acceptance.level === "verified" || acceptance.verify.length > 0)) {
-		if (acceptance.level === "verified" && acceptance.verify.length === 0) {
-			ledger.runtimeChecks.push({ id: "verification-config", status: "failed", message: "verified acceptance requires runtime verify commands." });
-			ledger.status = "rejected";
-			ledger.evidenceStatus = "rejected";
-			return ledger;
-		}
-		ledger.verifyRuns = [];
-		for (const command of acceptance.verify) {
-			ledger.verifyRuns.push(await runMemoizedVerifyCommand(command, input.cwd, {
-				signal: input.signal,
-				abortMessage: input.abortMessage,
-				artifactsDir: input.artifactsDir,
-				runId: input.runId,
-			}));
-			if (input.signal?.aborted) break;
-		}
-		if (ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out")) {
-			ledger.status = "rejected";
-			ledger.evidenceStatus = "rejected";
-			return ledger;
-		}
-		if (!ledger.runtimeChecks.some((check) => check.status === "failed")) {
-			ledger.status = "verified";
-			ledger.evidenceStatus = "verified";
-		}
-	}
-
-	if (ledger.runtimeChecks.some((check) => check.status === "failed")) {
-		ledger.status = "rejected";
+	if (acceptance.report === false) {
+		ledger.evidenceStatus = "not-required";
+	} else if (!reportPassed) {
 		ledger.evidenceStatus = "rejected";
-		return ledger;
-	}
-	if (ledger.status === "claimed") {
-		ledger.status = acceptance.level === "verified" ? "verified" : acceptance.level;
-		ledger.evidenceStatus = ledger.status;
+	} else {
+		ledger.evidenceStatus = acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
 	}
 
-	if (acceptance.review) {
-		if (input.reviewResult?.status === "reviewed") {
+	for (const command of acceptance.verify) {
+		ledger.verifyRuns.push(await runMemoizedVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage, artifactsDir: input.artifactsDir, runId: input.runId }));
+		if (input.signal?.aborted) break;
+	}
+	const verifyPassed = !ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out");
+
+	let reviewPassed = true;
+	if (acceptance.review !== false) {
+		if (input.reviewResult) {
 			ledger.reviewResult = input.reviewResult;
-			ledger.status = "reviewed";
-		} else if (input.reviewResult?.status === "blockers") {
-			ledger.reviewResult = input.reviewResult;
-			ledger.status = "rejected";
-		} else if (acceptance.review.required !== false) {
-			ledger.reviewResult = input.reviewResult ?? {
-				status: "review-required",
+			reviewPassed = input.reviewResult.status === "no-blockers";
+		} else {
+			const required = acceptance.review.required !== false;
+			ledger.reviewResult = {
+				status: "needs-parent-decision",
 				findings: [{
-					severity: "non-blocking",
-					issue: "Independent review has not been supplied.",
+					severity: required ? "blocker" : "non-blocking",
+					issue: "Reviewed acceptance requires an independent reviewer result.",
 					rationale: "The run cannot be marked reviewed from child evidence alone.",
 				}],
 			};
-			ledger.status = "review-required";
+			reviewPassed = !required;
 		}
 	}
 
+	if (!reportPassed || !verifyPassed || !reviewPassed) ledger.status = "rejected";
+	else if (acceptance.review !== false && ledger.reviewResult?.status === "no-blockers") ledger.status = "reviewed";
+	else if (acceptance.verify.length > 0) ledger.status = "verified";
+	else if (acceptance.report !== false) ledger.status = acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
+	else if (acceptance.review !== false && acceptance.review.required === false && !input.reviewResult) ledger.status = "not-required";
 	return ledger;
 }
 
@@ -1410,6 +1667,22 @@ export function buildSkippedAcceptanceLedger(acceptance: ResolvedAcceptanceConfi
 			: [{ id: input.id, status: "failed", message: input.message }],
 		verifyRuns: [],
 	};
+}
+
+function rejectedAcceptanceBlocksRun(status: string, explicit: boolean, onFailure: "fail" | "warn"): boolean {
+	return status === "rejected" && explicit && onFailure === "fail";
+}
+
+export function acceptanceBlocksRun(ledger: AcceptanceLedger): boolean {
+	return rejectedAcceptanceBlocksRun(ledger.status, ledger.explicit, ledger.effectiveAcceptance.onFailure);
+}
+
+export function acceptanceControlBlocksRun(acceptance: {
+	status: string;
+	explicit?: boolean;
+	effectiveAcceptance?: { onFailure: "fail" | "warn" };
+}): boolean {
+	return rejectedAcceptanceBlocksRun(acceptance.status, acceptance.explicit === true, acceptance.effectiveAcceptance?.onFailure ?? "fail");
 }
 
 export function acceptanceFailureMessage(ledger: AcceptanceLedger): string | undefined {

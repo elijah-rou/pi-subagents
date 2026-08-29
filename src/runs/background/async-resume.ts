@@ -4,7 +4,7 @@ import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDesc
 import type { AgentConfig } from "../../agents/agents.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
-import { validateAcceptanceInput } from "../shared/acceptance.ts";
+import { type EffectiveAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { intersectSubagentCapabilityCeilings, parseSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { validateRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
@@ -54,6 +54,7 @@ export type AsyncResumeTarget = {
 	launchContractDigest?: string;
 	runner?: NonNullable<AsyncStatus["steps"]>[number]["runner"];
 	externalJob?: NonNullable<AsyncStatus["steps"]>[number]["externalJob"];
+	acceptance?: EffectiveAcceptanceInput;
 };
 
 interface AsyncResultFile {
@@ -71,7 +72,7 @@ interface AsyncResultFile {
 	thinking?: string;
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	results?: Array<{ agent?: string; sessionName?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling }>;
+	results?: Array<{ agent?: string; sessionName?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; acceptanceInput?: unknown }>;
 }
 
 export interface AsyncRunLocation {
@@ -116,7 +117,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const capabilityCeiling = child.capabilityCeiling === undefined ? undefined : parseSubagentCapabilityCeiling(child.capabilityCeiling, `async result file '${resultPath}' results[${index}].capabilityCeiling`);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
-			return { agent, sessionName, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) };
+			return { agent, sessionName, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}), ...(child.acceptanceInput !== undefined ? { acceptanceInput: child.acceptanceInput } : {}) };
 		});
 	}
 	const success = data.success;
@@ -285,7 +286,7 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 }
 
 function normalizeRecoveryAcceptance(value: unknown, descriptorPath: string): AcceptanceInput {
-	const errors = validateAcceptanceInput(value, "recoveryDescriptor.acceptance");
+	const errors = validatePersistedAcceptanceInput(value, "recoveryDescriptor.acceptance");
 	if (errors.length) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${errors.join(" ")}`);
 	return value as AcceptanceInput;
 }
@@ -468,7 +469,8 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 
 	const statusSteps = status?.steps ?? [];
 	const resultSteps = result?.results ?? [];
-	const stepCount = statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
+	const persistedResultIdentity = (state === "complete" || state === "failed" || state === "paused") && resultSteps.length > 0;
+	const stepCount = persistedResultIdentity ? resultSteps.length : statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
 	const requestedIndex = params.index;
 	if (requestedIndex !== undefined && !Number.isInteger(requestedIndex)) throw new Error(`Async run '${runId}' index must be an integer.`);
 	const terminalStepStatuses = new Set(["complete", "completed", "failed", "paused"]);
@@ -540,42 +542,53 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const index = requestedIndex ?? 0;
 	if (!Number.isInteger(index)) throw new Error(`Async run '${runId}' index must be an integer.`);
 	if (index < 0 || index >= stepCount) throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${index} is out of range.`);
-	const agent = statusSteps[index]?.agent ?? resultSteps[index]?.agent ?? result?.agent;
+	const resultStep = persistedResultIdentity ? resultSteps[index] : undefined;
+	let matchedStatusStep: NonNullable<AsyncStatus["steps"]>[number] | undefined;
+	let matchedStatusIndex: number | undefined;
+	if (resultStep) {
+		const sessionMatches = resultStep.sessionFile ? statusSteps.map((step, statusIndex) => ({ step, statusIndex })).filter(({ step }) => step.sessionFile === resultStep.sessionFile) : [];
+		const agentMatches = resultStep.agent ? statusSteps.map((step, statusIndex) => ({ step, statusIndex })).filter(({ step }) => step.agent === resultStep.agent) : [];
+		const match = sessionMatches.length === 1 ? sessionMatches[0] : agentMatches.length === 1 ? agentMatches[0] : undefined;
+		matchedStatusStep = match?.step;
+		matchedStatusIndex = match?.statusIndex;
+	}
+	const statusStep = persistedResultIdentity ? matchedStatusStep : statusSteps[index];
+	const fallbackResultStep = persistedResultIdentity ? undefined : resultSteps[index];
+	const agent = resultStep?.agent ?? statusStep?.agent ?? fallbackResultStep?.agent ?? result?.agent;
 	if (!agent) throw new Error(`Could not determine child agent for async run '${runId}'.`);
 	if (recoveryDescriptor && recoveryDescriptor.agent !== agent) throw new Error(`Async run '${runId}' has a recovery descriptor for '${recoveryDescriptor.agent}', not '${agent}'.`);
-	const sessionFile = statusSteps[index]?.sessionFile
-		?? resultSteps[index]?.sessionFile
-		?? (stepCount === 1 ? status?.sessionFile ?? result?.sessionFile : undefined);
+	const sessionFile = resultStep?.sessionFile ?? statusStep?.sessionFile ?? fallbackResultStep?.sessionFile ?? (stepCount === 1 ? result?.sessionFile ?? status?.sessionFile : undefined);
 	if (!sessionFile && requireSessionFile) throw new Error(`Async run '${runId}' child ${index} does not have a persisted session file to resume from.`);
 	const resolvedSessionFile = sessionFile ? validateResumeSessionFile(runId, sessionFile) : undefined;
-	const stepModel = statusSteps[index]?.model ?? resultSteps[index]?.model ?? (stepCount === 1 ? result?.model : undefined);
-	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
-	const thinkingCeiling = statusSteps[index]?.thinkingCeiling ?? (stepCount === 1 ? recoveryDescriptor?.thinkingCeiling : undefined);
-	const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
-	const managedWorktreeCwd = location.asyncDir
-		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index)
-		: undefined;
+	const stepModel = resultStep?.model ?? statusStep?.model ?? fallbackResultStep?.model ?? (stepCount === 1 ? result?.model : undefined);
+	const stepThinking = resultStep?.thinking ?? statusStep?.thinking ?? fallbackResultStep?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
+	const thinkingCeiling = statusStep?.thinkingCeiling ?? (stepCount === 1 ? recoveryDescriptor?.thinkingCeiling : undefined);
+	const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusStep?.capabilityCeiling, result?.capabilityCeiling, resultStep?.capabilityCeiling, fallbackResultStep?.capabilityCeiling);
+	const acceptanceCandidates = [
+		{ value: resultStep?.acceptanceInput ?? fallbackResultStep?.acceptanceInput, source: `Invalid async result file '${location.resultPath ?? "result.json"}'`, pathLabel: `results[${index}].acceptanceInput` },
+		{ value: statusStep?.acceptanceInput, source: `Invalid async status '${location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json"}'`, pathLabel: `steps[${matchedStatusIndex ?? index}].acceptanceInput` },
+	];
+	let acceptance: EffectiveAcceptanceInput | undefined;
+	let acceptanceError: Error | undefined;
+	for (const candidate of acceptanceCandidates) {
+		if (candidate.value === undefined) continue;
+		const errors = validatePersistedAcceptanceInput(candidate.value, candidate.pathLabel);
+		if (errors.length === 0) { acceptance = candidate.value as EffectiveAcceptanceInput; break; }
+		acceptanceError ??= new Error(`${candidate.source}: ${errors.join(" ")}`);
+	}
+	if (acceptance === undefined && acceptanceError) throw acceptanceError;
+	const managedWorktreeCwd = location.asyncDir ? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index) : undefined;
 	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? status?.cwd ?? result?.cwd ?? recoveryDescriptor?.cwd);
 
 	return {
-		kind: "revive",
-		runId,
-		asyncDir: location.asyncDir ?? undefined,
-		state,
-		...(mode ? { mode } : {}),
-		agent,
-		...(statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName ? { sessionName: statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName } : {}),
-		index,
-		...(resumeCwd ? { cwd: resumeCwd } : {}),
-		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-		...(stepModel ? { model: stepModel } : {}),
-		...(stepThinking ? { thinking: stepThinking } : {}),
-		launchContractDigest: statusSteps[index]?.launchContractDigest ?? resultSteps[index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
-		...(statusSteps[index]?.runner ? { runner: statusSteps[index]!.runner } : {}),
-		...(statusSteps[index]?.externalJob ? { externalJob: statusSteps[index]!.externalJob } : {}),
-		...(capabilityCeiling ? { capabilityCeiling } : {}),
-		...(thinkingCeiling ? { thinkingCeiling } : {}),
-		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
+		kind: "revive", runId, asyncDir: location.asyncDir ?? undefined, state, ...(mode ? { mode } : {}), agent,
+		...(statusStep?.sessionName ?? resultStep?.sessionName ?? fallbackResultStep?.sessionName ? { sessionName: statusStep?.sessionName ?? resultStep?.sessionName ?? fallbackResultStep?.sessionName } : {}),
+		index, ...(resumeCwd ? { cwd: resumeCwd } : {}), ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+		...(stepModel ? { model: stepModel } : {}), ...(stepThinking ? { thinking: stepThinking } : {}),
+		launchContractDigest: statusStep?.launchContractDigest ?? resultStep?.launchContractDigest ?? fallbackResultStep?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
+		...(statusStep?.runner ? { runner: statusStep.runner } : {}), ...(statusStep?.externalJob ? { externalJob: statusStep.externalJob } : {}),
+		...(capabilityCeiling ? { capabilityCeiling } : {}), ...(thinkingCeiling ? { thinkingCeiling } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}), ...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	};
 }
 

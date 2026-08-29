@@ -606,7 +606,7 @@ Advise only.
 		assert.equal(result.isError, true);
 		assert.match(readText(result), /config\.timeoutMs must be a positive integer/);
 
-		const invalidAcceptance = handleCreate(
+		const deprecatedAcceptance = handleCreate(
 			{
 				config: {
 					name: "bad-acceptance-default",
@@ -617,8 +617,7 @@ Advise only.
 			},
 			{ cwd: tempDir, modelRegistry: { getAvailable: () => [] } },
 		);
-		assert.equal(invalidAcceptance.isError, true);
-		assert.match(readText(invalidAcceptance), /config\.acceptance level "none" requires a reason/);
+		assert.equal(deprecatedAcceptance.isError, false);
 
 		const invalidOutputMode = handleCreate(
 			{

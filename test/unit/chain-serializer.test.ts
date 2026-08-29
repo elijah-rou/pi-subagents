@@ -217,13 +217,11 @@ Review the diff
 
 		assert.deepEqual((parsed.steps[0] as { acceptance?: unknown }).acceptance, { level: "checked", evidence: ["changed-files", "commands-run"] });
 		assert.equal(((parsed.steps[1] as { parallel?: Array<{ acceptance?: unknown }> }).parallel?.[0]?.acceptance), "attested");
-		assert.throws(
-			() => parseJsonChain(JSON.stringify({
-				name: "bad-acceptance",
-				description: "Bad acceptance",
-				chain: [{ agent: "worker", acceptance: { level: "none" } }],
-			}), "project", "/tmp/bad-acceptance.chain.json"),
-			/step 1 acceptance\.reason is required/,
-		);
+		const deprecatedNone = parseJsonChain(JSON.stringify({
+			name: "deprecated-none",
+			description: "Legacy disabled acceptance",
+			chain: [{ agent: "worker", acceptance: { level: "none" } }],
+		}), "project", "/tmp/deprecated-none.chain.json");
+		assert.deepEqual((deprecatedNone.steps[0] as { acceptance?: unknown }).acceptance, { level: "none" });
 	});
 });

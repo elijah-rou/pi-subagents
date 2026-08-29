@@ -104,7 +104,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, isPersistedMergedAcceptanceInput, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -483,6 +483,7 @@ async function runSingleAttempt(
 		task: shared.originalTask ?? task,
 		...(childSessionName ? { sessionName: childSessionName } : {}),
 		...(options.agentContract ? { agentContract: options.agentContract } : {}),
+		...(options.acceptance !== undefined ? { acceptanceInput: options.acceptance } : {}),
 		launchContractDigest,
 		launchResolvedExtensions,
 		exitCode: 0,
@@ -559,6 +560,7 @@ async function runSingleAttempt(
 	const mutationSnapshot = snapshotTrackedMutations(options.cwd ?? runtimeCwd);
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
+	let forcedDrainAfterFinalSuccess = false;
 	let structuredOutputMessageStartIndex: number | undefined;
 	let toolAvailabilityError: string | undefined;
 	let abortedBySignal = options.signal?.aborted === true;
@@ -1323,7 +1325,7 @@ async function runSingleAttempt(
 			const stderr = stderrTail.text();
 			const rawStdout = rawStdoutTail.text();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
-			const forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);
 			if (signal) result.processSignal = signal;
 			if (!closeError && forcedDrainAfterEmptyTerminal && stderr.trim()) {
@@ -1334,7 +1336,7 @@ async function runSingleAttempt(
 				interrupted: result.interrupted,
 				timedOut: result.timedOut,
 				stopped: result.stopped,
-				forcedDrainAfterFinalSuccess: forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal,
+				forcedDrainAfterFinalSuccess,
 			})) {
 				closeError = formatProcessSignalError(signal!);
 			}
@@ -1344,7 +1346,7 @@ async function runSingleAttempt(
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();
 			}
-			const finalCode = forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
 			if (!result.error && closeError) result.error = closeError;
 			finish(finalCode);
 		});
@@ -1490,7 +1492,7 @@ async function runSingleAttempt(
 			? messages.slice(structuredOutputMessageStartIndex ?? messages.length)
 			: messages;
 		const errInfo = detectSubagentError(errorMessages);
-		const missingOutput = !finalText?.trim() && !validatedStructuredOutput;
+		const missingOutput = !finalText?.trim() && !validatedStructuredOutput && !forcedDrainAfterFinalSuccess;
 		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
 			&& hasEmptyTerminalAssistantResponse(messages)
 			&& (progress.toolCount > 0 || Boolean(finalText?.trim()));
@@ -1716,7 +1718,9 @@ async function runSyncCompletionInner(
 			...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
 		}, options.context));
 	}
-	const acceptanceErrors = validateAcceptanceInput(options.acceptance);
+	const acceptanceErrors = isPersistedMergedAcceptanceInput(options.acceptance)
+		? validatePersistedAcceptanceInput(options.acceptance)
+		: validateAcceptanceInput(options.acceptance);
 	if (acceptanceErrors.length > 0) {
 		return redactResultPrompt(withRunContext({
 			index: options.index ?? 0,
@@ -2173,7 +2177,7 @@ async function runSyncCompletionInner(
 	}
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
 	stripAcceptanceReportsFromMessages(result.messages);
-	if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.interrupted && !result.timedOut && !isAgentContractV1(options.agentContract)) {
+	if (acceptanceFailure && acceptanceBlocksRun(result.acceptance) && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut && !isAgentContractV1(options.agentContract)) {
 		result.exitCode = 1;
 		if (result.savedOutputPath) {
 			result.finalOutput = finalizeSingleOutput({

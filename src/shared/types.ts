@@ -940,7 +940,7 @@ export interface ModelAttempt {
 	usage?: Usage;
 }
 
-export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified";
+export type AcceptanceLevel = "auto" | "none" | "attested" | "checked" | "verified" | "reviewed";
 
 export type AcceptanceEvidenceKind =
 	| "changed-files"
@@ -985,8 +985,20 @@ export interface AcceptanceConfig {
 	reason?: string;
 }
 
-/** Bare "none" and "verified" are not accepted; verified policies require object form with runtime commands. */
-export type AcceptanceInput = Exclude<AcceptanceLevel, "none" | "verified"> | false | AcceptanceConfig;
+export interface AcceptanceReportContract {
+	criteria?: Array<string | AcceptanceGate>;
+	evidence?: AcceptanceEvidenceKind[];
+}
+
+export interface AcceptanceContract {
+	report?: AcceptanceReportContract | false;
+	verify?: AcceptanceVerifyCommand[];
+	review?: AcceptanceReviewGate | false;
+	onFailure?: "fail" | "warn";
+}
+
+export type AcceptanceLegacyInput = AcceptanceLevel | AcceptanceConfig;
+export type AcceptanceInput = false | AcceptanceLegacyInput | AcceptanceContract;
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;
@@ -996,13 +1008,18 @@ export interface ResolvedAcceptanceGate extends AcceptanceGate {
 }
 
 export interface ResolvedAcceptanceConfig {
+	/** Compatibility display level derived from the enabled dimensions. */
 	level: Exclude<AcceptanceLevel, "auto">;
 	explicit: boolean;
+	report: AcceptanceReportContract | false;
+	onFailure: "fail" | "warn";
+	recommendations: string[];
+	deprecationWarnings: string[];
 	inferredReason: string[];
 	criteria: ResolvedAcceptanceGate[];
 	evidence: AcceptanceEvidenceKind[];
 	verify: AcceptanceVerifyCommand[];
-	review?: AcceptanceReviewGate | false;
+	review: AcceptanceReviewGate | false;
 	stopRules: string[];
 	reason?: string;
 }
@@ -1062,7 +1079,7 @@ export interface AcceptanceVerifyResult {
 }
 
 export interface AcceptanceReviewResult {
-	status: "review-required" | "reviewed" | "blockers";
+	status: "no-blockers" | "blockers" | "needs-parent-decision";
 	findings: Array<{
 		severity: "blocker" | "non-blocking";
 		file?: string;
@@ -1229,6 +1246,8 @@ export interface SingleResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
+	/** Raw effective input retained for lossless result-identity revival. */
+	acceptanceInput?: AcceptanceInput;
 	agentContract?: AgentContract;
 	launchContractDigest?: string;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
@@ -1839,6 +1858,8 @@ export interface AsyncStatus {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
+		/** Raw effective input retained for lossless async revival. */
+		acceptanceInput?: AcceptanceInput;
 		agentContract?: AgentContract;
 		launchContractDigest?: string;
 		launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
@@ -1966,6 +1987,7 @@ export interface ForegroundResumeChild {
 	transcriptError?: string;
 	detachedReason?: string;
 	acceptance?: AcceptanceLedger;
+	acceptanceInput?: AcceptanceInput;
 	agentContract?: AgentContract;
 	/** Private bounded launch fields needed to preserve the child contract on resume. */
 	resumeContract?: {

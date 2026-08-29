@@ -35,7 +35,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { isPersistedMergedAcceptanceInput, mergeAcceptanceInputs, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { validateImplementationToolContract } from "../shared/completion-guard.ts";
 import {
@@ -304,6 +304,7 @@ export interface AsyncRunnerStepBuildParams {
 	contextForAgent?: (agentName: string) => ContextMode;
 	progressDir?: string;
 	agentContract?: AgentContract;
+	acceptance?: AcceptanceInput;
 	dynamicFanoutMaxItems?: number;
 	maxSubagentDepth: number;
 	waitToolEnabled?: boolean;
@@ -985,7 +986,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			waitToolEnabled: params.waitToolEnabled,
 			waitToolDefaultTimeoutMs: params.waitToolDefaultTimeoutMs,
 			effectiveAcceptance: resolveEffectiveAcceptance({
-				explicit: s.acceptance,
+				explicit: mergeAcceptanceInputs(params.acceptance, s.acceptance),
 				agentName: s.agent,
 				acceptanceRole: a.acceptanceRole,
 				task,
@@ -994,7 +995,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				dynamic: false,
 				agentContract,
 			}),
-			acceptanceInput: s.acceptance,
+			acceptanceInput: mergeAcceptanceInputs(params.acceptance, s.acceptance) as AcceptanceInput | undefined,
 			acceptanceRole: a.acceptanceRole,
 			...(s.gateOn ? { gateOn: s.gateOn } : {}),
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
@@ -1040,7 +1041,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 							}
 						}
 						const staticStep = nextFlatStep();
-						return buildSeqStep({ ...t, agentContract: t.agentContract ?? s.agentContract, gateOn: t.gateOn ?? s.gateOn }, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex }, resultMode === "parallel" ? `tasks[${taskIndex}]` : `chain[${stepIndex}].parallel[${taskIndex}]`);
+						return buildSeqStep({ ...t, acceptance: mergeAcceptanceInputs(s.acceptance, t.acceptance) as AcceptanceInput | undefined, agentContract: t.agentContract ?? s.agentContract, gateOn: t.gateOn ?? s.gateOn }, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index, { stepIndex, taskIndex }, resultMode === "parallel" ? `tasks[${taskIndex}]` : `chain[${stepIndex}].parallel[${taskIndex}]`);
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
@@ -1069,7 +1070,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					sessionFiles: dynamicFlatSteps.map((step) => step.sessionFile),
 					thinkingOverrides: dynamicFlatSteps.map((step) => step.thinkingOverride),
 					effectiveAcceptance: resolveEffectiveAcceptance({
-						explicit: s.acceptance,
+						explicit: mergeAcceptanceInputs(params.acceptance, s.acceptance),
 						agentName: s.parallel.agent,
 						acceptanceRole: agent.acceptanceRole,
 						task: parallel.task,
@@ -1078,7 +1079,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 						dynamicGroup: true,
 						agentContract: s.agentContract ?? params.agentContract,
 					}),
-					acceptanceInput: s.acceptance,
+					acceptanceInput: mergeAcceptanceInputs(params.acceptance, s.acceptance) as AcceptanceInput | undefined,
 					acceptanceRole: agent.acceptanceRole,
 					...(s.agentContract ?? params.agentContract ? { agentContract: s.agentContract ?? params.agentContract } : {}),
 					...(s.gateOn ? { gateOn: s.gateOn } : {}),
@@ -1207,6 +1208,7 @@ export function executeAsyncChain(
 		contextForAgent: params.contextForAgent,
 		progressDir: params.progressDir ?? (artifactsDir ? path.join(artifactsDir, "progress", id) : resultMode === "parallel" ? path.join(asyncDir, "progress") : undefined),
 		agentContract: params.agentContract,
+		acceptance: params.acceptance,
 		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
 		dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 		maxSubagentDepth,
@@ -1502,7 +1504,9 @@ export function executeAsyncSingle(
 	} catch (error) {
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 	}
-	const acceptanceErrors = validateAcceptanceInput(params.acceptance);
+	const acceptanceErrors = isPersistedMergedAcceptanceInput(params.acceptance)
+		? validatePersistedAcceptanceInput(params.acceptance)
+		: validateAcceptanceInput(params.acceptance);
 	if (acceptanceErrors.length > 0) return formatAsyncStartError("single", acceptanceErrors.join(" "));
 	const externalRunner = agentConfig.runner?.type === "external-cli" || agentConfig.runner?.type === "external-job";
 	const externalRunnerType = agentConfig.runner?.type;

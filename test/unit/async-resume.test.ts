@@ -957,6 +957,39 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("uses persisted result identity and revives its raw acceptance contract", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-identity-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const firstSession = path.join(root, "first.jsonl");
+			const secondSession = path.join(root, "second.jsonl");
+			fs.writeFileSync(firstSession, "", "utf-8");
+			fs.writeFileSync(secondSession, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-identity", "status.json"), {
+				runId: "run-identity", mode: "parallel", state: "complete", startedAt: 100,
+				steps: [
+					{ agent: "second", status: "complete", sessionFile: secondSession, acceptanceInput: { report: false } },
+					{ agent: "first", status: "complete", sessionFile: firstSession, acceptanceInput: { report: false } },
+				],
+			});
+			writeJson(path.join(resultsDir, "run-identity.json"), {
+				id: "run-identity", mode: "parallel", state: "complete", success: true,
+				results: [
+					{ agent: "first", success: true, sessionFile: firstSession, acceptanceInput: { verify: [], onFailure: "warn" } },
+					{ agent: "second", success: true, sessionFile: secondSession },
+				],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-identity", index: 0 }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(target.agent, "first");
+			assert.equal(target.sessionFile, firstSession);
+			assert.deepEqual(target.acceptance, { verify: [], onFailure: "warn" });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("frames the revived follow-up with original run context", () => {
 		const task = buildRevivedAsyncTask({
 			kind: "revive",

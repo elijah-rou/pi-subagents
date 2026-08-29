@@ -50,7 +50,7 @@ import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCap
 import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { mergeAcceptanceInputs, normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -733,6 +733,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				...(result.transcriptError ? { transcriptError: result.transcriptError } : {}),
 				...(result.detachedReason ? { detachedReason: result.detachedReason } : {}),
 				...(result.acceptance ? { acceptance: result.acceptance } : {}),
+				...(result.acceptanceInput !== undefined ? { acceptanceInput: result.acceptanceInput } : {}),
 				...(Object.keys(resumeContract).length ? { resumeContract } : {}),
 				...(result.launchContractDigest ? { launchContractDigest: result.launchContractDigest } : {}),
 				...(input.extensionBindings ? { extensionBindings: input.extensionBindings } : {}),
@@ -815,6 +816,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.transcriptError ? { transcriptError: input.result.transcriptError } : {}),
 		...(input.result.detachedReason ? { detachedReason: input.result.detachedReason } : {}),
 		...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
+		...(input.result.acceptanceInput !== undefined ? { acceptanceInput: input.result.acceptanceInput } : {}),
 		...(input.result.launchContractDigest ? { launchContractDigest: input.result.launchContractDigest } : {}),
 		...(input.result.launchResolvedExtensions ? { launchResolvedExtensions: input.result.launchResolvedExtensions } : {}),
 		...(input.result.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: input.result.runtimeAcknowledgedExtensions } : {}),
@@ -854,7 +856,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; acceptance?: AcceptanceInput; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const direct = state.foregroundRuns.get(requested);
@@ -885,6 +887,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 		...(child.model ? { model: child.model } : {}),
 		...(child.thinking ? { thinking: child.thinking } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(child.acceptanceInput !== undefined ? { acceptance: child.acceptanceInput } : {}),
 		...(child.resumeContract ? { resumeContract: child.resumeContract } : {}),
 		...(child.extensionBindings ? { extensionBindings: normalizeExtensionBindings(child.extensionBindings)!.value } : {}),
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
@@ -904,6 +907,7 @@ type NestedResumeSourceTarget = {
 	sessionFile: string;
 	model?: string;
 	thinking?: AgentConfig["thinking"];
+	acceptance?: AcceptanceInput;
 	launchContractDigest?: string;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
@@ -1410,7 +1414,14 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 	if (!agent) throw new Error(`Could not determine child agent for nested run '${run.id}'.`);
 	const state = run.state === "complete" || run.state === "failed" || run.state === "paused" ? run.state : "failed";
 	const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
-	const recoveryDescriptor = readNestedRecoveryDescriptor(asyncDir, run.id, agent);
+	const persistedTarget = asyncDir
+		? resolveAsyncResumeTarget(
+			{ id: run.id, dir: asyncDir, index: 0 },
+			{ asyncDirRoot: asyncDir, resultsDir: path.join(DIRS.results, "nested", match.match.rootRunId) },
+		)
+		: undefined;
+	if (persistedTarget && persistedTarget.runId !== run.id) throw new Error(`Nested run '${run.id}' resolved mismatched persisted metadata for '${persistedTarget.runId}'.`);
+	const recoveryDescriptor = persistedTarget?.recoveryDescriptor ?? readNestedRecoveryDescriptor(asyncDir, run.id, agent);
 	return compactOptional<NestedResumeSourceTarget>({
 		kind: "revive",
 		source: "nested",
@@ -1418,9 +1429,12 @@ function resolveNestedResumeTarget(match: ResolvedSubagentRunId & { kind: "neste
 		state,
 		agent,
 		index: 0,
-		cwd: asyncDir ? path.dirname(asyncDir) : undefined,
+		cwd: persistedTarget?.cwd ?? (asyncDir ? path.dirname(asyncDir) : undefined),
 		sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
 		...(run.capabilityCeiling ? { capabilityCeiling: run.capabilityCeiling } : {}),
+		...(persistedTarget?.model ? { model: persistedTarget.model } : {}),
+		...(persistedTarget?.thinking ? { thinking: persistedTarget.thinking as AgentConfig["thinking"] } : {}),
+		...(persistedTarget?.kind === "revive" && persistedTarget.acceptance !== undefined ? { acceptance: persistedTarget.acceptance as AcceptanceInput } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
 	});
 }
@@ -1981,6 +1995,10 @@ async function resumeAsyncRun(input: {
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(baseAgentConfig, recoveryDescriptor) : baseAgentConfig;
 	const agentConfig = intercomBridge.active ? applyIntercomBridgeToAgent(recoveryAgentConfig, intercomBridge) : recoveryAgentConfig;
 	const foregroundContract = target.source === "foreground" ? target.resumeContract : undefined;
+	const recoveredAcceptance = "acceptance" in target && target.acceptance !== undefined
+		? target.acceptance
+		: recoveryDescriptor?.acceptance ?? foregroundContract?.acceptance;
+	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance) as AcceptanceInput | undefined;
 	const outputSchema = input.params.outputSchema ?? foregroundContract?.outputSchema ?? recoveryDescriptor?.structuredOutputSchema;
 	const agentContract = input.params.agentContract ?? foregroundContract?.agentContract ?? recoveryDescriptor?.agentContract;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
@@ -2045,7 +2063,7 @@ async function resumeAsyncRun(input: {
 		...(agentContract ? { agentContract } : {}),
 		...(outputSchema ? { structuredOutputSchema: outputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
-		...(input.params.acceptance !== undefined ? { acceptance: input.params.acceptance } : foregroundContract?.acceptance !== undefined ? { acceptance: foregroundContract.acceptance } : recoveryDescriptor?.acceptance !== undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
+		...(acceptance !== undefined ? { acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
@@ -4340,7 +4358,7 @@ export function prepareWorkflowLaunchParams(
 		if (outputSchema !== undefined) assertJsonSchemaObject(outputSchema, "outputSchema");
 		const agentContract = Object.hasOwn(childParams, "agentContract") ? childParams.agentContract : workflowDefaults.agentContract;
 		if (agentContract !== undefined && !isAgentContractV1(agentContract as AgentContract)) throw new Error("agentContract must be { version: 1 }.");
-		const acceptance = Object.hasOwn(childParams, "acceptance") ? childParams.acceptance : workflowDefaults.acceptance;
+		const acceptance = mergeAcceptanceInputs(workflowDefaults.acceptance as AcceptanceInput | undefined, childParams.acceptance as AcceptanceInput | undefined) as AcceptanceInput | undefined;
 		const output = Object.hasOwn(childParams, "output") ? childParams.output : workflowDefaults.output;
 		if (output !== undefined && typeof output !== "string" && typeof output !== "boolean") throw new Error("output must be a path string or boolean.");
 		const outputMode = Object.hasOwn(childParams, "outputMode") ? childParams.outputMode : workflowDefaults.outputMode;
@@ -4371,6 +4389,9 @@ export function prepareWorkflowLaunchParams(
 		...workflowDefaults,
 		async: options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? true : false,
 		...childParams,
+		...(mergeAcceptanceInputs(workflowDefaults.acceptance as AcceptanceInput | undefined, childParams.acceptance as AcceptanceInput | undefined) !== undefined
+			? { acceptance: mergeAcceptanceInputs(workflowDefaults.acceptance as AcceptanceInput | undefined, childParams.acceptance as AcceptanceInput | undefined) as AcceptanceInput }
+			: {}),
 		...(options.externalAsyncRequired === true && childParams.async === undefined && workflowDefaults.async === undefined ? { workflowAwaitAsync: true } : {}),
 		...(options.missionDetached ? { mission: false } : {}),
 		workflowParentRunId: parentWorkflowRunId,

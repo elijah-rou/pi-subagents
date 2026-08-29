@@ -3906,7 +3906,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("rejects string \"none\" acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("accepts deprecated string \"none\" acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 
 		const result = await executor.execute(
@@ -3917,9 +3917,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /acceptance level "none" requires a reason/);
-		assert.equal(mockPi.callCount(), 0);
+		assert.equal(result.isError, undefined);
+		assert.equal(mockPi.callCount(), 1);
 	});
 
 	it("rejects invalid verified acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -3940,7 +3939,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			);
 
 			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /(?:verified.*object form|verify.*at least one runtime command)/i);
+			assert.match(result.content[0]?.text ?? "", /verification-config.*verify command/i);
 		}
 		assert.equal(mockPi.callCount(), 0);
 	});
