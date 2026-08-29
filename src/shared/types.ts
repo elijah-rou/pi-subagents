@@ -1179,6 +1179,12 @@ export interface UsageBudgetState {
 	reason?: "tokens" | "costUsd";
 }
 
+export interface ChildProfileProvenance {
+	profile: string;
+	source: string;
+	confidence: number;
+}
+
 export interface SingleResult {
 	/**
 	 * Stable child identity within the foreground run. Pair with Details.runId for
@@ -1255,6 +1261,7 @@ export interface SingleResult {
 	acceptanceInput?: AcceptanceInput;
 	agentContract?: AgentContract;
 	launchContractDigest?: string;
+	childProfile?: ChildProfileProvenance;
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	execution?: ExecutionProjection;
@@ -2326,6 +2333,8 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Parent resolver selection provenance for launch/status/receipt projection. */
+	childProfile?: ChildProfileProvenance;
 	/** Opt into priority service tier for supported native OpenAI-Codex launches. */
 	fast?: boolean;
 	/** The override came from the running parent session, not configuration. */

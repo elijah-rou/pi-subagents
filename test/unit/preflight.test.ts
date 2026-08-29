@@ -106,8 +106,12 @@ Project prompt.
 			assert.deepEqual(routed.contract.childProfile, { profile: "standard", source: "profile-router", confidence: 89 });
 			assert.equal(parallel, true);
 			const ceiling = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Implement", parentSessionId: sessionId, thinkingCeiling: "medium", availableModels });
-			assert.equal(ceiling.ok, false);
-			if (!ceiling.ok) assert.equal(ceiling.code, "thinking_ceiling");
+			assert.equal(ceiling.ok, true);
+			if (ceiling.ok) {
+				assert.equal(ceiling.contract.model, "test/static:low");
+				assert.equal(ceiling.contract.childProfile, undefined);
+				assert.match(ceiling.contract.diagnostics.map((diagnostic) => diagnostic.message).join("\n"), /failed open/);
+			}
 			const explicit = await resolveSubagentLaunchContract({ agent: "worker", cwd, task: "Implement", parentSessionId: sessionId, model: "test/explicit", availableModels });
 			assert.equal(explicit.ok, true);
 			if (!explicit.ok) return;

@@ -34,6 +34,10 @@ export interface SubagentChildProfileResolverHandle {
 	dispose(): void;
 }
 
+export interface ResolveSubagentChildProfileOptions {
+	signal?: AbortSignal;
+}
+
 export interface ResolveSubagentChildProfileResult {
 	selection?: ResolvedSubagentChildProfileSelection;
 	warnings: string[];
@@ -56,10 +60,14 @@ function registry(): Registry {
 }
 
 function validText(value: unknown, field: string, maxLength: number): string {
-	if (typeof value !== "string" || !value.trim() || value.length > maxLength || /[\u0000-\u001f\u007f]/u.test(value)) {
-		throw new Error(`Invalid child profile ${field}.`);
-	}
+	if (typeof value !== "string" || !value.trim() || value.length > maxLength || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error(`Invalid child profile ${field}.`);
 	return value.trim();
+}
+
+function normalizeSessionIdentities(value: string | readonly string[] | undefined): string[] {
+	if (value === undefined) return [];
+	const values = typeof value === "string" ? [value] : value;
+	return [...new Set(values.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => validText(item, "sessionId", 4096)))];
 }
 
 function normalizeRequest(request: SubagentChildProfileRequest): SubagentChildProfileRequest {
@@ -82,17 +90,11 @@ function normalizeSelection(value: unknown, source: string): ResolvedSubagentChi
 	if (!Number.isSafeInteger(selection.confidence) || selection.confidence! < 0 || selection.confidence! > 100) throw new Error("confidence must be an integer from 0 to 100");
 	const thinking = selection.thinking === undefined ? undefined : validText(selection.thinking, "thinking", 32);
 	if (thinking !== undefined && !THINKING_LEVELS.has(thinking)) throw new Error("thinking is not a supported level");
-	return {
-		profile: validText(selection.profile, "profile", 64),
-		model: validText(selection.model, "model", 256),
-		...(thinking ? { thinking } : {}),
-		confidence: selection.confidence!,
-		source,
-	};
+	return { profile: validText(selection.profile, "profile", 64), model: validText(selection.model, "model", 256), ...(thinking ? { thinking } : {}), confidence: selection.confidence!, source };
 }
 
 export function registerSubagentChildProfileResolver(options: RegisterSubagentChildProfileResolverOptions): SubagentChildProfileResolverHandle {
-	const sessionId = validText(options.sessionId, "sessionId", 256);
+	const sessionId = validText(options.sessionId, "sessionId", 4096);
 	const source = validText(options.source, "source", 256);
 	if (typeof options.resolve !== "function") throw new Error("Invalid child profile resolver; expected a function.");
 	const token = Symbol(source);
@@ -104,45 +106,60 @@ export function registerSubagentChildProfileResolver(options: RegisterSubagentCh
 		store.set(sessionId, session);
 	}
 	if (session.size >= MAX_RESOLVERS_PER_SESSION) throw new Error(`At most ${MAX_RESOLVERS_PER_SESSION} child profile resolvers are allowed per session.`);
-	let resolver = options.resolve;
-	session.set(token, { source, resolve: resolver });
+	session.set(token, { source, resolve: options.resolve });
 	let disposed = false;
 	return {
 		update(next) {
 			if (disposed) throw new Error("Cannot update a disposed child profile resolver handle.");
 			if (typeof next !== "function") throw new Error("Invalid child profile resolver; expected a function.");
-			resolver = next;
-			session!.set(token, { source, resolve: resolver });
+			const current = store.get(sessionId);
+			if (!current?.has(token)) throw new Error("Cannot update a stale child profile resolver handle.");
+			current.set(token, { source, resolve: next });
 		},
 		dispose() {
 			if (disposed) return;
 			disposed = true;
-			session!.delete(token);
-			if (session!.size === 0) store.delete(sessionId);
+			const current = store.get(sessionId);
+			current?.delete(token);
+			if (current?.size === 0) store.delete(sessionId);
 		},
 	};
 }
 
-export async function resolveSubagentChildProfile(sessionId: string | undefined, request: SubagentChildProfileRequest): Promise<ResolveSubagentChildProfileResult> {
-	if (!sessionId) return { warnings: [] };
-	const registrations = registry().get(sessionId);
-	if (!registrations || registrations.size === 0) return { warnings: [] };
+export async function resolveSubagentChildProfile(sessionIdentity: string | readonly string[] | undefined, request: SubagentChildProfileRequest, options: ResolveSubagentChildProfileOptions = {}): Promise<ResolveSubagentChildProfileResult> {
+	const identities = normalizeSessionIdentities(sessionIdentity);
+	if (identities.length === 0) return { warnings: [] };
+	const registrations = identities.flatMap((identity) => [...(registry().get(identity)?.values() ?? [])]);
+	if (registrations.length === 0) return { warnings: [] };
 	const normalizedRequest = normalizeRequest(request);
 	const warnings: string[] = [];
-	for (const { source, resolve } of registrations.values()) {
+	const deadlineAt = Date.now() + RESOLVER_TIMEOUT_MS;
+	for (const { source, resolve } of registrations) {
+		if (options.signal?.aborted) return { warnings: [...warnings, `Child profile resolution aborted; preserving static agent defaults.`] };
+		const remainingMs = deadlineAt - Date.now();
+		if (remainingMs <= 0) return { warnings: [...warnings, `Child profile resolution timed out after ${RESOLVER_TIMEOUT_MS}ms; preserving static agent defaults.`] };
 		let timeout: ReturnType<typeof setTimeout> | undefined;
+		let abortListener: (() => void) | undefined;
 		try {
 			const expired = new Promise<never>((_resolve, reject) => {
-				timeout = setTimeout(() => reject(new Error(`timed out after ${RESOLVER_TIMEOUT_MS}ms`)), RESOLVER_TIMEOUT_MS);
+				timeout = setTimeout(() => reject(new Error(`timed out after aggregate ${RESOLVER_TIMEOUT_MS}ms deadline`)), remainingMs);
 				timeout.unref?.();
 			});
-			const value = await Promise.race([Promise.resolve(resolve(normalizedRequest)), expired]);
+			const aborted = new Promise<never>((_resolve, reject) => {
+				if (!options.signal) return;
+				abortListener = () => reject(new Error("aborted"));
+				options.signal.addEventListener("abort", abortListener, { once: true });
+			});
+			const value = await Promise.race([Promise.resolve(resolve(normalizedRequest)), expired, aborted]);
 			if (value === null) continue;
 			return { selection: normalizeSelection(value, source), warnings };
 		} catch (error) {
-			warnings.push(`Child profile resolver '${source}' failed open: ${error instanceof Error ? error.message : String(error)}`);
+			const message = error instanceof Error ? error.message : String(error);
+			warnings.push(`Child profile resolver '${source}' failed open: ${message}`);
+			if (options.signal?.aborted || message.startsWith("timed out after aggregate") || Date.now() >= deadlineAt) return { warnings };
 		} finally {
 			if (timeout !== undefined) clearTimeout(timeout);
+			if (abortListener && options.signal) options.signal.removeEventListener("abort", abortListener);
 		}
 	}
 	return { warnings };

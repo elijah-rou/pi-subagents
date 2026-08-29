@@ -4,6 +4,7 @@ export {
 	registerSubagentChildProfileResolver,
 	resolveSubagentChildProfile,
 	type RegisterSubagentChildProfileResolverOptions,
+	type ResolveSubagentChildProfileOptions,
 	type ResolveSubagentChildProfileResult,
 	type ResolvedSubagentChildProfileSelection,
 	type SubagentChildProfileRequest,

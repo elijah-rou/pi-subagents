@@ -505,6 +505,7 @@ async function runSingleAttempt(
 		...(options.agentContract ? { agentContract: options.agentContract } : {}),
 		...(options.acceptance !== undefined ? { acceptanceInput: options.acceptance } : {}),
 		launchContractDigest,
+		...(options.childProfile ? { childProfile: options.childProfile } : {}),
 		launchResolvedExtensions,
 		exitCode: 0,
 		outputState: "absent",

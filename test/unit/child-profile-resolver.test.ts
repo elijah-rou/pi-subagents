@@ -52,10 +52,53 @@ describe("subagent child profile resolver", () => {
 			t.mock.timers.tick(6_000);
 			const result = await pending;
 			assert.equal(result.selection, undefined);
-			assert.match(result.warnings.join("\n"), /slow.*timed out after 6000ms/);
+			assert.match(result.warnings.join("\n"), /slow.*timed out after aggregate 6000ms/);
 		} finally {
 			handle.dispose();
 		}
+	});
+
+	it("uses one aggregate deadline and never starts later resolvers after it expires", async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const sessionId = `profile-aggregate-${Date.now()}-${Math.random()}`;
+		let laterCalls = 0;
+		const slow = registerSubagentChildProfileResolver({ sessionId, source: "slow", resolve: async () => new Promise(() => {}) });
+		const later = registerSubagentChildProfileResolver({ sessionId, source: "later", resolve: async () => { laterCalls += 1; return { profile: "late", model: "test/late", confidence: 50 }; } });
+		try {
+			const pending = resolveSubagentChildProfile(sessionId, { agent: "worker", task: "Implement", cwd: "/tmp", parallel: false });
+			await Promise.resolve();
+			t.mock.timers.tick(6_000);
+			const result = await pending;
+			assert.equal(result.selection, undefined);
+			assert.equal(laterCalls, 0);
+		} finally {
+			later.dispose();
+			slow.dispose();
+		}
+	});
+
+	it("stops promptly when the parent launch aborts", async () => {
+		const sessionId = `profile-abort-${Date.now()}-${Math.random()}`;
+		const handle = registerSubagentChildProfileResolver({ sessionId, source: "slow", resolve: async () => new Promise(() => {}) });
+		const controller = new AbortController();
+		try {
+			const pending = resolveSubagentChildProfile(sessionId, { agent: "worker", task: "Implement", cwd: "/tmp", parallel: false }, { signal: controller.signal });
+			controller.abort();
+			const result = await pending;
+			assert.match(result.warnings.join("\n"), /aborted/);
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("bounds registrations and releases capacity on disposal", () => {
+		const sessionId = `profile-bounds-${Date.now()}-${Math.random()}`;
+		const handles = Array.from({ length: 8 }, (_, index) => registerSubagentChildProfileResolver({ sessionId, source: `resolver-${index}`, resolve: () => null }));
+		assert.throws(() => registerSubagentChildProfileResolver({ sessionId, source: "overflow", resolve: () => null }), /At most 8/);
+		handles[0]!.dispose();
+		const replacement = registerSubagentChildProfileResolver({ sessionId, source: "replacement", resolve: () => null });
+		for (const handle of handles) handle.dispose();
+		replacement.dispose();
 	});
 
 	it("stops at the first valid resolver and rejects updates after disposal", async () => {

@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig, type AgentScope, type UnknownAgentDiagnosticContext } from "../agents/agents.ts";
 import { normalizeSkillInput } from "../agents/skills.ts";
 import { normalizeOutputOverride, type OutputOverrideInput, type ResolvedStepBehavior } from "../runs/shared/child-launch-plan.ts";
-import { CHAIN_RUNS_DIR, type AcceptanceInput, type AgentContract, type ChainGateLayer, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "./types.ts";
+import { CHAIN_RUNS_DIR, type AcceptanceInput, type AgentContract, type ChainGateLayer, type ChildProfileProvenance, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "./types.ts";
 const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const INITIAL_PROGRESS_CONTENT = "# Progress\n\n## Status\nIn Progress\n\n## Tasks\n\n## Files Changed\n\n## Notes\n";
 
@@ -41,6 +41,10 @@ export interface SequentialStep {
 	skill?: string | string[] | false;
 	model?: string;
 	fast?: boolean;
+	/** Internal parent-resolver launch fields. */
+	thinking?: string | false;
+	modelSource?: "resolver";
+	childProfile?: ChildProfileProvenance;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
 	agentContract?: AgentContract;
@@ -66,6 +70,10 @@ export interface ParallelTaskItem {
 	skill?: string | string[] | false;
 	model?: string;
 	fast?: boolean;
+	/** Internal parent-resolver launch fields. */
+	thinking?: string | false;
+	modelSource?: "resolver";
+	childProfile?: ChildProfileProvenance;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
 	agentContract?: AgentContract;

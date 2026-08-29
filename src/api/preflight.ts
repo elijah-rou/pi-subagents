@@ -326,7 +326,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const modelScopes = resolveModelScopesForAgent(discovered.modelScope, agent.name, input.parentModel);
 	let resolvedProfile: Awaited<ReturnType<typeof resolveSubagentChildProfile>>["selection"];
 	if (!externalRunner && input.model === undefined && input.thinking === undefined) {
-		const result = await resolveSubagentChildProfile(input.parentSessionId, {
+		const result = await resolveSubagentChildProfile([input.parentSessionId ?? "", input.parentSessionFile ?? ""], {
 			agent: agent.name,
 			task: input.task ?? "",
 			cwd: effectiveCwd,
@@ -337,36 +337,41 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		for (const warning of result.warnings) diagnostics.push({ code: "snapshot_warning", severity: "warning", message: warning });
 		resolvedProfile = result.selection;
 	}
-	const selectedModel = input.model ?? resolvedProfile?.model;
-	const primaryModel = externalRunner
-		? undefined
-		: resolveEffectiveSubagentModel(selectedModel, agent.model, input.parentModel, availableModels, preferredProvider, { scope: modelScopes });
-	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : resolvedProfile?.thinking ?? agent.thinking;
-	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(
-		discovered.maxThinking,
-		input.thinkingCeiling,
-		input.inheritedThinkingCeiling,
-		decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]),
-	);
-	const replaceModelThinking = input.thinking !== undefined || resolvedProfile?.thinking !== undefined;
-	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinkingConfig, replaceModelThinking);
-	const modelCandidates = externalRunner
-		? []
-		: buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, {
-			scope: modelScopes,
-			primaryModelFromParent: inheritsParentModel(selectedModel, agent.model, input.parentModel),
-		})
-			.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, replaceModelThinking) ?? candidate);
-	if (!externalRunner) {
-		try {
+	const thinkingCeiling = externalRunner ? undefined : intersectThinkingCeilings(discovered.maxThinking, input.thinkingCeiling, input.inheritedThinkingCeiling, decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]));
+	const resolveProfiledModels = (profile: typeof resolvedProfile) => {
+		const selectedModel = input.model ?? profile?.model;
+		const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : profile?.thinking ?? agent.thinking;
+		const primaryModel = externalRunner ? undefined : resolveEffectiveSubagentModel(selectedModel, agent.model, input.parentModel, availableModels, preferredProvider, { scope: modelScopes, ...(profile ? { source: "explicit" as const } : {}) });
+		const replaceModelThinking = input.thinking !== undefined || profile?.thinking !== undefined;
+		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinkingConfig, replaceModelThinking);
+		const modelCandidates = externalRunner ? [] : buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, { scope: modelScopes, primaryModelFromParent: inheritsParentModel(selectedModel, agent.model, input.parentModel) }).map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, replaceModelThinking) ?? candidate);
+		if (!externalRunner) {
 			assertThinkingWithinCeiling({ model, configThinking: effectiveThinkingConfig, ceiling: thinkingCeiling, agent: agent.name, runId });
 			for (const candidate of modelCandidates) assertThinkingWithinCeiling({ model: candidate, configThinking: effectiveThinkingConfig, ceiling: thinkingCeiling, agent: agent.name, runId });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+		}
+		return { model, modelCandidates, effectiveThinkingConfig };
+	};
+	let profiledModels: ReturnType<typeof resolveProfiledModels>;
+	try {
+		profiledModels = resolveProfiledModels(resolvedProfile);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (!resolvedProfile) {
+			if (!/thinking|ceiling/i.test(message)) throw error;
 			diagnostics.push({ code: "thinking_ceiling", severity: "error", message });
 			return { ok: false, code: "thinking_ceiling", message, diagnostics };
 		}
+		diagnostics.push({ code: "snapshot_warning", severity: "warning", message: `Child profile resolver '${resolvedProfile.source}' selection '${resolvedProfile.profile}' failed open: ${message}` });
+		resolvedProfile = undefined;
+		try {
+			profiledModels = resolveProfiledModels(undefined);
+		} catch (fallbackError) {
+			const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+			diagnostics.push({ code: "thinking_ceiling", severity: "error", message: fallbackMessage });
+			return { ok: false, code: "thinking_ceiling", message: fallbackMessage, diagnostics };
+		}
 	}
+	const { model, modelCandidates, effectiveThinkingConfig } = profiledModels;
 	let toolPlan: PiLaunchToolPlan;
 	const permissionRules = resolvePermissionRules(loadConfig().permissions, agent.permissions);
 	const fast = input.fast ?? agent.fast;

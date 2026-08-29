@@ -437,8 +437,43 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			);
 			assert.equal(result.isError, undefined, JSON.stringify(result.content));
 			assert.equal(observedParallel, true);
+			assert.deepEqual(result.details.results[0]?.childProfile, { profile: "standard", source: "profile-router", confidence: 90 });
 			const args = readCallArgs();
 			assert.ok(args.includes("test/routed:high"), `expected routed model in ${JSON.stringify(args)}`);
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("fails open to the static model when a routed model is unavailable", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "static child" });
+		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);
+		const sessionId = `profile-unavailable-${Date.now()}`;
+		const handle = registerSubagentChildProfileResolver({ sessionId, source: "profile-router", resolve: () => ({ profile: "missing", model: "test/unavailable", thinking: "high", confidence: 70 }) });
+		try {
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => sessionId;
+			ctx.modelRegistry.getAvailable = () => [{ provider: "test", id: "static" }];
+			const result = await executor.execute("child-profile-unavailable", { agent: "worker", task: "Inspect", async: false }, new AbortController().signal, undefined, ctx);
+			assert.equal(result.isError, undefined, JSON.stringify(result.content));
+			assert.equal(result.details.results[0]?.childProfile, undefined);
+			assert.ok(readCallArgs().includes("test/static:low"));
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("does not route external agents", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		let calls = 0;
+		const sessionId = `profile-external-${Date.now()}`;
+		const handle = registerSubagentChildProfileResolver({ sessionId, source: "profile-router", resolve: () => { calls += 1; return { profile: "bad", model: "test/routed", confidence: 50 }; } });
+		try {
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => sessionId;
+			const executor = makeExecutor([makeAgent("external", { runner: { type: "external-cli", command: "external" } })]);
+			const result = await executor.execute("child-profile-external", { agent: "external", task: "Query", async: false }, new AbortController().signal, undefined, ctx);
+			assert.equal(result.isError, true);
+			assert.equal(calls, 0);
 		} finally {
 			handle.dispose();
 		}

@@ -261,6 +261,7 @@ interface StepResult {
 	transcriptError?: string;
 	agentContract?: import("../../shared/types.ts").AgentContract;
 	launchContractDigest?: string;
+	childProfile?: import("../../shared/types.ts").ChildProfileProvenance;
 	execution?: import("../../shared/types.ts").ExecutionProjection;
 	review?: import("../../shared/types.ts").ReviewProjection;
 	effects?: import("../../shared/types.ts").EffectsProjection;
@@ -2232,6 +2233,7 @@ async function runSingleStepInner(
 				acceptance: effectiveAcceptance,
 				...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
 				launchContractDigest: actualLaunchContractDigest,
+				...(step.childProfile ? { childProfile: step.childProfile } : {}),
 				launchResolvedExtensions,
 				...((finalResult as (RunPiStreamingResult & { runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1 }) | undefined)?.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: (finalResult as RunPiStreamingResult & { runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1 }).runtimeAcknowledgedExtensions } : {}),
 				...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
@@ -2248,6 +2250,7 @@ async function runSingleStepInner(
 		context: step.context,
 		...(step.agentContract ? { agentContract: step.agentContract } : {}),
 		launchContractDigest: actualLaunchContractDigest,
+		...(step.childProfile ? { childProfile: step.childProfile } : {}),
 		output: outputForSummary,
 		outputState,
 		exitCode: effectiveFinalExitCode,
@@ -2634,6 +2637,7 @@ async function runSubagentInner(
 					structured: task.structured,
 					...(task.agentContract ? { agentContract: task.agentContract } : {}),
 					...(task.launchContractDigest ? { launchContractDigest: task.launchContractDigest } : {}),
+					...(task.childProfile ? { childProfile: task.childProfile } : {}),
 					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
 					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
@@ -2688,6 +2692,7 @@ async function runSubagentInner(
 				structured: step.structured,
 				...(step.agentContract ? { agentContract: step.agentContract } : {}),
 				...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
+				...(step.childProfile ? { childProfile: step.childProfile } : {}),
 				...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
 				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
@@ -4398,6 +4403,7 @@ async function runSubagentInner(
 					context: pr.context,
 					agentContract: pr.agentContract,
 					launchContractDigest: pr.launchContractDigest,
+					childProfile: pr.childProfile,
 					launchResolvedExtensions: pr.launchResolvedExtensions,
 					runtimeAcknowledgedExtensions: pr.runtimeAcknowledgedExtensions,
 					output: pr.output,
@@ -4847,6 +4853,7 @@ async function runSubagentInner(
 						context: pr.context,
 						agentContract: pr.agentContract,
 						launchContractDigest: pr.launchContractDigest,
+						childProfile: pr.childProfile,
 						launchResolvedExtensions: pr.launchResolvedExtensions,
 						output: pr.output,
 						outputState: pr.outputState,
@@ -5105,6 +5112,7 @@ async function runSubagentInner(
 				context: singleResult.context,
 				agentContract: singleResult.agentContract,
 				launchContractDigest: singleResult.launchContractDigest,
+				childProfile: singleResult.childProfile,
 				launchResolvedExtensions: singleResult.launchResolvedExtensions,
 				runtimeAcknowledgedExtensions: singleResult.runtimeAcknowledgedExtensions,
 				output: stopped || childStopped ? stopMessage : timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
@@ -5499,6 +5507,7 @@ async function runSubagentInner(
 				transcriptError: r.transcriptError,
 				agentContract: r.agentContract,
 				launchContractDigest: r.launchContractDigest,
+				childProfile: r.childProfile,
 				launchResolvedExtensions: r.launchResolvedExtensions,
 				runtimeAcknowledgedExtensions: r.runtimeAcknowledgedExtensions,
 				runner: r.runner,

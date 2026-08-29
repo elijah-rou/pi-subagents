@@ -28,7 +28,7 @@ import { normalizePublicSubagentExecution } from "../../extension/public-executi
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
-import { buildModelCandidates, inheritsParentModel, normalizeParentModel, resolveEffectiveSubagentModel, type ParentModel } from "../shared/model-fallback.ts";
+import { buildModelCandidates, inheritsParentModel, normalizeParentModel, resolveEffectiveSubagentModel, resolveSubagentModelOverride, type ParentModel } from "../shared/model-fallback.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { recordRun } from "../shared/run-history.ts";
@@ -62,6 +62,8 @@ import { formatSpawnBudget, getSpawnBudgetSnapshot, grantSpawnBudget, preflightS
 import { claimRunFanoutBatch, claimRunFanoutBatchWithCommit, createRunFanoutBudget, decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetDescriptor, RunFanoutLimitError, RUN_FANOUT_BUDGET_ENV, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { resolveDurationBudget } from "../shared/duration-budget.ts";
+import { applyThinkingSuffix } from "../shared/pi-args.ts";
+import { assertThinkingWithinCeiling, decodeThinkingCeiling, intersectThinkingCeilings, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { applySubagentChildProfiles } from "../shared/child-profile-routing.ts";
@@ -275,6 +277,9 @@ interface TaskParam {
 	progress?: boolean;
 	model?: string;
 	fast?: boolean;
+	thinking?: string | false;
+	modelSource?: "resolver";
+	childProfile?: import("../../shared/types.ts").ChildProfileProvenance;
 	skill?: string | string[] | boolean;
 	outputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
@@ -365,6 +370,9 @@ export interface SubagentParamsLike {
 	model?: string;
 	fast?: boolean;
 	thinking?: string | false;
+	/** Internal parent-resolver launch fields. */
+	modelSource?: "resolver";
+	childProfile?: import("../../shared/types.ts").ChildProfileProvenance;
 	scope?: string;
 	target?: string;
 	focus?: boolean;
@@ -3227,7 +3235,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		const modelScopes = resolveModelScopesForAgent(data.modelScope, a.name, parentModel);
 		const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
 			? params.model ?? (externalRunnerWithoutExplicitModel ? undefined : a.model)
-			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, modelScopes.length === 0 ? {} : { scope: modelScopes });
+			: resolveEffectiveSubagentModel(params.model as string | undefined, a.model, parentModel, availableModels, a.modelProvider ?? currentProvider, { ...(modelScopes.length > 0 ? { scope: modelScopes } : {}), ...(params.modelSource === "resolver" ? { source: "inherited" as const } : {}) });
 		const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, a.model, parentModel);
 		const asyncResult = executeAsyncSingle(id, compactOptional<Parameters<typeof executeAsyncSingle>[1]>({
 			agent: params.agent!,
@@ -3254,6 +3262,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			...(params.reads !== undefined ? { reads: params.reads } : {}),
 			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
 			modelOverride,
+			...(params.childProfile ? { childProfile: params.childProfile } : {}),
 			fast: params.fast,
 			modelOverrideFromParent,
 			thinkingOverride: externalRunnerWithoutExplicitModel ? undefined : thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
@@ -3639,7 +3648,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		parentModel,
 		availableModels,
 		agentConfig.modelProvider ?? currentProvider,
-		modelScopes.length === 0 ? {} : { scope: modelScopes },
+		{ ...(modelScopes.length > 0 ? { scope: modelScopes } : {}), ...(params.modelSource === "resolver" ? { source: "inherited" as const } : {}) },
 	);
 	const modelOverrideFromParent = inheritsParentModel(params.model as string | undefined, agentConfig.model, parentModel);
 	let skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
@@ -3785,6 +3794,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			nestedRoute: foregroundControl?.nestedRoute,
 			index: 0,
 			modelOverride,
+			...(params.childProfile ? { childProfile: params.childProfile } : {}),
 			fast: params.fast,
 			modelOverrideFromParent,
 			thinkingOverride: thinkingOverrideForTask(params.agent!, 0, modelOverride, modelOverrideFromParent),
@@ -6224,12 +6234,32 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		effectiveParams = applySingleAgentLaunchDefaults(effectiveParams, discoveredAgents);
 		try {
 			effectiveParams = await applySubagentChildProfiles(effectiveParams, {
-				sessionId: requestSessionId,
+				sessionIds: [requestSessionId, requestPiSessionId ?? ""],
 				cwd: effectiveCwd,
 				...(requestParentModel ? { parentModel: requestParentModel } : {}),
 				directParallel: effectiveParams.workflowParallel === true,
 				tasksParallel: effectiveParams.workflowParentRunId === undefined || effectiveParams.workflowParallel === true,
 				disabled: delegatedThinkingOverride !== undefined,
+				signal,
+				isEligible: (item) => {
+					const itemCwd = item.cwd ? resolveChildCwd(effectiveCwd, item.cwd) : effectiveCwd;
+					const itemDiscovery = deps.discoverAgents(itemCwd, scope, requestParentModel?.provider);
+					const candidate = itemDiscovery.agents.find((agent) => agent.name === item.agent);
+					return candidate?.runner?.type !== "external-cli" && candidate?.runner?.type !== "external-job";
+				},
+				validateSelection: (item, selection) => {
+					const itemCwd = item.cwd ? resolveChildCwd(effectiveCwd, item.cwd) : effectiveCwd;
+					const itemDiscovery = deps.discoverAgents(itemCwd, scope, requestParentModel?.provider);
+					const candidate = itemDiscovery.agents.find((agent) => agent.name === item.agent);
+					if (!candidate) throw new Error(`agent '${item.agent}' is unavailable`);
+					const scopes = resolveModelScopesForAgent(itemDiscovery.modelScope, candidate.name, requestParentModel);
+					const availableProfileModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+					const selectedModel = resolveSubagentModelOverride(selection.model, requestParentModel, availableProfileModels, candidate.modelProvider ?? requestParentModel?.provider, { scope: scopes, source: "explicit" });
+					if (selectedModel && availableProfileModels.length > 0 && !availableProfileModels.some((model) => model.fullId === selectedModel)) throw new Error(`selected model '${selection.model}' is unavailable`);
+					const selectedWithThinking = applyThinkingSuffix(selectedModel, selection.thinking, true);
+					const ceiling = intersectThinkingCeilings(candidate.maxThinking, decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]));
+					assertThinkingWithinCeiling({ model: selectedWithThinking, configThinking: selection.thinking, ceiling, agent: candidate.name, runId: "profile-routing" });
+				},
 				onWarning: (warning) => console.warn(`[pi-subagents] ${warning}`),
 			});
 			effectiveParams = applyTopLevelModelDefaults(effectiveParams);

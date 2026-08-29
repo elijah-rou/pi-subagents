@@ -870,9 +870,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			ctx.currentModel,
 			availableModels,
 			a.modelProvider ?? ctx.currentModelProvider,
-			{ scope: modelScopes },
+			{ scope: modelScopes, ...(s.modelSource === "resolver" ? { source: "inherited" as const } : {}) },
 		);
-		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
+		const thinkingOverride = s.thinking ?? (flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex]);
 		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
 		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		const contextLimit = model ? findModelInfo(model, availableModels, a.modelProvider ?? ctx.currentModelProvider)?.contextWindow : undefined;
@@ -1007,6 +1007,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
 			...(s.outputSchema ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output"), { captureAcceptanceReport: s.acceptance !== false }) } : {}),
 			...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
+			...(s.childProfile ? { childProfile: s.childProfile } : {}),
 			...(s.worktree ? { worktree: true } : {}),
 		};
 	};

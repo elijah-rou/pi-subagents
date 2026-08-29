@@ -4,7 +4,7 @@
 ## [Unreleased]
 
 ### Added
-- Add a versioned parent-side child-profile resolver API. It can select model and thinking from child role, task, and serial/parallel topology while preserving explicit launch overrides and failing open to static agent defaults.
+- Add a versioned parent-side child-profile resolver API. It can select model and thinking from child role, task, and serial/parallel topology while preserving explicit launch overrides, skipping external runners and retained resumes, enforcing upstream model/thinking constraints, projecting bounded provenance, and failing open to static agent defaults.
 
 ### Changed
 - Show `runs.lanes(...)` workflows with active-stage focus and planned-stage progress in async status widgets (#1699).
