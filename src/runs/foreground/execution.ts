@@ -560,7 +560,6 @@ async function runSingleAttempt(
 	const mutationSnapshot = snapshotTrackedMutations(options.cwd ?? runtimeCwd);
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
-	let forcedDrainAfterFinalSuccess = false;
 	let structuredOutputMessageStartIndex: number | undefined;
 	let toolAvailabilityError: string | undefined;
 	let abortedBySignal = options.signal?.aborted === true;
@@ -1325,7 +1324,7 @@ async function runSingleAttempt(
 			const stderr = stderrTail.text();
 			const rawStdout = rawStdoutTail.text();
 			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
-			forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+			const forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
 			const forcedDrainAfterEmptyTerminal = forcedDrainAfterFinalSuccess && hasEmptyTerminalAssistantResponse(result.messages ?? []);
 			if (signal) result.processSignal = signal;
 			if (!closeError && forcedDrainAfterEmptyTerminal && stderr.trim()) {
@@ -1336,7 +1335,7 @@ async function runSingleAttempt(
 				interrupted: result.interrupted,
 				timedOut: result.timedOut,
 				stopped: result.stopped,
-				forcedDrainAfterFinalSuccess,
+				forcedDrainAfterFinalSuccess: forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal,
 			})) {
 				closeError = formatProcessSignalError(signal!);
 			}
@@ -1346,7 +1345,7 @@ async function runSingleAttempt(
 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
 				closeError = stderr.trim();
 			}
-			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			const finalCode = forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
 			if (!result.error && closeError) result.error = closeError;
 			finish(finalCode);
 		});
@@ -1492,7 +1491,7 @@ async function runSingleAttempt(
 			? messages.slice(structuredOutputMessageStartIndex ?? messages.length)
 			: messages;
 		const errInfo = detectSubagentError(errorMessages);
-		const missingOutput = !finalText?.trim() && !validatedStructuredOutput && !forcedDrainAfterFinalSuccess;
+		const missingOutput = !finalText?.trim() && !validatedStructuredOutput;
 		const terminalEmptyAfterUsefulWork = !validatedStructuredOutput
 			&& hasEmptyTerminalAssistantResponse(messages)
 			&& (progress.toolCount > 0 || Boolean(finalText?.trim()));

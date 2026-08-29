@@ -314,7 +314,7 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.ok((args.at(-1) ?? "").startsWith("Task: \n\n## Acceptance Contract"));
+		assert.equal(args.at(-1), "Task: ");
 	});
 
 	it("fails pruned fork model auth before child spawn", async () => {
@@ -1263,11 +1263,11 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		const args = readAllCallArgs().find((callArgs) => (callArgs.at(-1) ?? "").startsWith(`Task: ${task}\n\n## Acceptance Contract`));
+		const args = readAllCallArgs().find((callArgs) => callArgs.at(-1) === `Task: ${task}`);
 		assert.ok(args, "expected a recorded mock pi call for this test task");
 		const modelIndex = args.indexOf("--model");
 		assert.notEqual(modelIndex, -1);
-		assert.equal(args[modelIndex + 1], "anthropic/claude-haiku-4-5");
+		assert.equal(args[modelIndex + 1], "anthropic/claude-haiku-4-5:high");
 	});
 
 

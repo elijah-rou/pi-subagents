@@ -558,7 +558,6 @@ interface RunPiStreamingResult {
 	observedMutationAttempt?: boolean;
 	structuredOutputToolInvoked?: boolean;
 	structuredOutputMessageStartIndex?: number;
-	forcedDrainAfterFinalSuccess?: boolean;
 	structuredOutput?: unknown;
 	watchdog?: ChildWatchdogStateSnapshot;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
@@ -1112,17 +1111,17 @@ function runPiStreaming(
 				interrupted,
 				timedOut,
 				stopped,
-				forcedDrainAfterFinalSuccess,
+				forcedDrainAfterFinalSuccess: forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal,
 			}) ? formatProcessSignalError(signal!) : undefined;
 			resolve(omitUndefinedProperties({
 				stderr,
-				exitCode: timedOut || stopped ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
+				exitCode: timedOut || stopped ? 1 : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal) ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
 				messages,
 				usage,
 				toolCount,
 				durationMs: Date.now() - startedAt,
 				model,
-				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError ?? forcedDrainError ?? signalError,
+				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : interrupted || (forcedDrainAfterFinalSuccess && !forcedDrainAfterEmptyTerminal) ? undefined : finalError ?? forcedDrainError ?? signalError,
 				protocolError,
 				finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput,
 				outputState: finalOutput.trim() ? "present" : "absent",
@@ -1132,7 +1131,6 @@ function runPiStreaming(
 				observedMutationAttempt,
 				structuredOutputToolInvoked,
 				structuredOutputMessageStartIndex,
-				forcedDrainAfterFinalSuccess,
 				watchdog: childWatchdogState,
 				processInstanceId,
 				processCloseObservedAt,
@@ -1897,7 +1895,6 @@ async function runSingleStepInner(
 			&& !toolAvailabilityError
 			&& !structuredError
 			&& !validatedStructuredOutput
-			&& !run.forcedDrainAfterFinalSuccess
 			&& (!run.finalOutput.trim() || terminalEmptyAfterUsefulWork)
 			&& (!hiddenError?.hasError || hasEmptyTerminalAssistantResponse(run.messages))
 			? formatEmptyTerminalAssistantResponseError(run.messages)

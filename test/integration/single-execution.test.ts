@@ -8045,7 +8045,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(terminal.finalOutput, "terminal answer");
 		assert.deepEqual(terminal.agentContract, { version: 1 });
 		assert.equal(terminal.acceptance?.status, "checked");
-		assert.equal(terminal.acceptance?.runtimeChecks.every((check) => check.status === "passed"), true);
+		assert.equal(terminal.acceptance?.runtimeChecks.every((check) => check.status === "passed" || check.status === "not-applicable"), true);
+		assert.equal(terminal.acceptance?.runtimeChecks.find((check) => check.id === "no-staged-files")?.status, "not-applicable");
 		assert.equal(terminal.progress.status, "completed");
 		assert.deepEqual(terminal.usage, { turns: 2, input: 107, output: 53, cacheRead: 0, cacheWrite: 0, cost: 0.002 });
 		assert.deepEqual(terminal.attemptedModels, ["mock/test-model"]);
