@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { ensurePrivateDirectory } from "../../shared/private-state.ts";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -1181,7 +1182,7 @@ export function executeAsyncChain(
 	let runFanoutBudget: RunFanoutBudgetDescriptor;
 	try {
 		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
-		fs.mkdirSync(asyncDir, { recursive: true });
+		ensurePrivateDirectory(asyncDir);
 		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1565,7 +1566,7 @@ export function executeAsyncSingle(
 	let runFanoutBudget: RunFanoutBudgetDescriptor;
 	try {
 		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
-		fs.mkdirSync(asyncDir, { recursive: true });
+		ensurePrivateDirectory(asyncDir);
 		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
