@@ -5579,7 +5579,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.results[0].output, "async-done-before-drain");
 	});
 
-	it("background forced drain after empty terminal assistant output is cleanup success", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("background forced drain after empty terminal assistant output remains a missing-output failure", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({
 			jsonl: [events.assistantMessage("")],
 			keepAliveAfterFinalMessageMs: 10000,
@@ -5609,10 +5609,10 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const elapsed = Date.now() - start;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.ok(elapsed < 9000, `should clean up async child before the mock's natural keepalive exit, took ${elapsed}ms`);
-		assert.equal(payload.success, true);
-		assert.equal(payload.exitCode, 0);
-		assert.equal(payload.results[0].success, true);
-		assert.equal(payload.results[0].output, "");
+		assert.equal(payload.success, false);
+		assert.equal(payload.exitCode, 1);
+		assert.equal(payload.results[0].success, false);
+		assert.match(payload.results[0].error ?? "", /empty terminal assistant response|produced no output/i);
 	});
 
 	it("background final-drain cleanup preserves explicit assistant errors", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

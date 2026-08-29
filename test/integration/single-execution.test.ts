@@ -7644,7 +7644,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(!(result.progress?.recentOutput ?? []).some((line) => line.includes("Forcing termination")));
 	});
 
-	it("treats forced drain after empty terminal assistant output as cleanup success", async () => {
+	it("keeps forced drain after empty terminal assistant output eligible for missing-output recovery", async () => {
 		mockPi.onCall({
 			jsonl: [{
 				type: "message_end",
@@ -7665,10 +7665,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const elapsed = Date.now() - start;
 
 		assert.ok(elapsed < 4000, `should clean up shortly after empty terminal stop, took ${elapsed}ms`);
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.error, undefined);
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /empty terminal assistant response|produced no output/i);
 		assert.equal(result.finalOutput, "");
-		assert.equal(result.progress.status, "completed");
+		assert.equal(result.progress.status, "failed");
 		assert.ok(!(result.progress?.recentOutput ?? []).some((line) => line.includes("Forcing termination")));
 	});
 
