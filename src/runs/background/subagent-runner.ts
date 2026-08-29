@@ -1493,7 +1493,7 @@ async function runSingleStepInner(
 					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
 		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		const external = await runExternalCli(omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
@@ -1567,7 +1567,7 @@ async function runSingleStepInner(
 			options: step.runner.options ?? {},
 			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		const external = await runExternalJob(omitUndefinedProperties({
 			provider: runner.provider,
 			options: runner.options,
@@ -1684,7 +1684,7 @@ async function runSingleStepInner(
 			thinking: resolveEffectiveThinking(candidate, step.thinking),
 			contextLimit: findModelInfo(candidate, step.modelVerificationRegistry)?.contextWindow,
 		}));
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		if (effectiveStructuredOutput) {
 			try {
 				if (fs.existsSync(effectiveStructuredOutput.outputPath)) fs.unlinkSync(effectiveStructuredOutput.outputPath);

@@ -65,7 +65,7 @@ import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, prepareManagedSingleOutput, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
@@ -3672,6 +3672,8 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: "";
 	task = readsInstruction + task;
 	task = injectSingleOutputInstruction(task, outputPath, agentConfig);
+	prepareManagedSingleOutput(effectiveOutput, outputPath);
+	const managedOutput = typeof effectiveOutput === "string" && !path.isAbsolute(effectiveOutput);
 
 	let effectiveSkills: string[] | undefined;
 	if (skillOverride === false) {
@@ -3742,6 +3744,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			maxOutput: params.maxOutput,
 			outputPath,
 			outputClaimPath: params.workflowOutputClaimPath,
+			managedOutput,
 			outputMode: effectiveOutputMode,
 			maxSubagentDepth,
 			waitToolEnabled: deps.waitToolEnabled,

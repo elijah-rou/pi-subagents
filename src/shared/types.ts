@@ -2311,6 +2311,7 @@ export interface RunSyncOptions {
 	share?: boolean;
 	outputPath?: string;
 	outputClaimPath?: string;
+	managedOutput?: boolean;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */

@@ -1995,7 +1995,7 @@ async function runSyncCompletionInner(
 			const recoveringAbort = abortRecoveryAttempted;
 			const attemptTask = nextAttemptTask;
 			const verifyModel = Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0);
-			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
+			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath, options.managedOutput === true);
 			const result = await runSingleAttempt(runtimeCwd, agent, attemptTask, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
