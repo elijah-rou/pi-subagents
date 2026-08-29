@@ -21,19 +21,34 @@ export function assertNoSymlinkPathComponents(target: string): void {
 	}
 }
 
-export function ensurePrivateDirectory(target: string): void {
-	const absolute = path.resolve(target);
-	assertNoSymlinkPathComponents(absolute);
-	fs.mkdirSync(absolute, { recursive: true, mode: 0o700 });
+function securePrivateDirectory(target: string): void {
 	const flags = fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
-	const descriptor = fs.openSync(absolute, flags);
+	const descriptor = fs.openSync(target, flags);
 	try {
 		const stat = fs.fstatSync(descriptor);
-		if (!stat.isDirectory()) throw new Error(`Private state path '${absolute}' must be a directory.`);
-		assertOwnedByCurrentUser(stat, absolute);
+		const pathStat = fs.lstatSync(target);
+		if (!stat.isDirectory() || pathStat.isSymbolicLink() || !pathStat.isDirectory()) throw new Error(`Private state path '${target}' must be a directory.`);
+		if (pathStat.dev !== stat.dev || pathStat.ino !== stat.ino) throw new Error(`Private state path '${target}' changed while it was opened.`);
+		assertOwnedByCurrentUser(stat, target);
 		if (process.platform !== "win32") fs.fchmodSync(descriptor, 0o700);
 	} finally {
 		fs.closeSync(descriptor);
+	}
+}
+
+export function ensurePrivateDirectory(target: string, options: { privateRoot?: string } = {}): void {
+	const absolute = path.resolve(target);
+	const privateRoot = path.resolve(options.privateRoot ?? absolute);
+	const relative = path.relative(privateRoot, absolute);
+	if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`Private state path '${absolute}' escapes private root '${privateRoot}'.`);
+	assertNoSymlinkPathComponents(absolute);
+	fs.mkdirSync(privateRoot, { recursive: true, mode: 0o700 });
+	securePrivateDirectory(privateRoot);
+	let current = privateRoot;
+	for (const segment of relative.split(path.sep).filter(Boolean)) {
+		current = path.join(current, segment);
+		fs.mkdirSync(current, { recursive: true, mode: 0o700 });
+		securePrivateDirectory(current);
 	}
 }
 
@@ -42,6 +57,8 @@ export function openPrivateFile(filePath: string, flags: number): number {
 	const descriptor = fs.openSync(filePath, flags | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
 	try {
 		const stat = fs.fstatSync(descriptor);
+		const pathStat = fs.lstatSync(filePath);
+		if (!stat.isFile() || pathStat.isSymbolicLink() || !pathStat.isFile() || pathStat.dev !== stat.dev || pathStat.ino !== stat.ino) throw new Error(`Private state file '${filePath}' changed while it was opened.`);
 		if (!stat.isFile()) throw new Error(`Private state file '${filePath}' must be a regular file.`);
 		assertOwnedByCurrentUser(stat, filePath);
 		if (process.platform !== "win32") fs.fchmodSync(descriptor, 0o600);

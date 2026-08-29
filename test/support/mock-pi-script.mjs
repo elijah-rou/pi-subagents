@@ -175,11 +175,17 @@ function defaultResponse() {
 }
 
 function writeDeclaredFiles(response) {
-	if (!Array.isArray(response.writeFiles)) return;
-	for (const file of response.writeFiles) {
+	for (const file of Array.isArray(response.writeFiles) ? response.writeFiles : []) {
 		if (!file || typeof file.path !== "string" || typeof file.content !== "string") continue;
 		const target = path.resolve(process.cwd(), file.path);
 		fs.mkdirSync(path.dirname(target), { recursive: true });
+		fs.writeFileSync(target, file.content, "utf-8");
+	}
+	for (const file of Array.isArray(response.replaceFiles) ? response.replaceFiles : []) {
+		if (!file || typeof file.path !== "string" || typeof file.content !== "string") continue;
+		const target = path.resolve(process.cwd(), file.path);
+		fs.mkdirSync(path.dirname(target), { recursive: true });
+		fs.rmSync(target, { force: true });
 		fs.writeFileSync(target, file.content, "utf-8");
 	}
 }
@@ -377,6 +383,18 @@ async function main() {
 		}
 	}
 	await waitForReleasePath(response.waitForPath);
+	if (response.waitForSteerInboxRequest === true) {
+		const inbox = process.env.PI_SUBAGENT_STEER_INBOX;
+		if (!inbox) fail("Missing PI_SUBAGENT_STEER_INBOX");
+		const deadline = Date.now() + 30_000;
+		while (true) {
+			try {
+				if (fs.readdirSync(inbox).some((name) => name.endsWith(".json"))) break;
+			} catch {}
+			if (Date.now() >= deadline) fail(`Timed out waiting for steer inbox request: ${inbox}`);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+	}
 
 	writeDeclaredFiles(response);
 	writeStructuredOutputCapture(response);

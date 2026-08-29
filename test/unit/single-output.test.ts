@@ -6,6 +6,7 @@ import * as path from "node:path";
 import type { Message, Usage } from "@earendil-works/pi-ai";
 import {
 	captureSingleOutputSnapshot,
+	cleanupManagedSingleOutput,
 	extractChildWrittenOutput,
 	finalizeSingleOutput,
 	formatSavedOutputReference,
@@ -157,6 +158,28 @@ describe("resolveSingleOutput", () => {
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "fresh assistant output");
 	});
 
+	it("reserves managed output exclusively and cleans only its unchanged placeholder", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "managed", "review.md");
+		const reservation = prepareManagedSingleOutput("review.md", outputPath);
+		assert.ok(reservation?.ownedPlaceholder);
+		assert.throws(() => prepareManagedSingleOutput("review.md", outputPath), /EEXIST/);
+		cleanupManagedSingleOutput(outputPath, reservation);
+		assert.equal(fs.existsSync(outputPath), false);
+	});
+
+	it("does not clean a substituted managed placeholder", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
+		tempDirs.push(dir);
+		const outputPath = path.join(dir, "review.md");
+		const reservation = prepareManagedSingleOutput("review.md", outputPath);
+		fs.unlinkSync(outputPath);
+		fs.writeFileSync(outputPath, "not ours", "utf-8");
+		cleanupManagedSingleOutput(outputPath, reservation);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "not ours");
+	});
+
 	it("rejects managed output inode substitution", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-output-test-"));
 		tempDirs.push(dir);
@@ -168,6 +191,7 @@ describe("resolveSingleOutput", () => {
 
 		const result = resolveSingleOutput(outputPath, "fallback", before);
 		assert.equal(result.savedPath, undefined);
+		assert.equal(result.fatalError, true);
 		assert.match(result.saveError ?? "", /substituted during child execution/);
 	});
 
@@ -184,6 +208,7 @@ describe("resolveSingleOutput", () => {
 
 		const result = resolveSingleOutput(outputPath, "fallback", before);
 		assert.equal(result.savedPath, undefined);
+		assert.equal(result.fatalError, true);
 		assert.match(result.saveError ?? "", /substituted with a symlink/);
 	});
 

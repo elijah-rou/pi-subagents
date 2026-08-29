@@ -11,6 +11,7 @@ export interface SingleOutputSnapshot {
 	size?: number;
 	device?: number;
 	inode?: number;
+	ownedPlaceholder?: boolean;
 }
 
 /**
@@ -177,17 +178,34 @@ export function resolveSingleOutputClaimPath(outputPath: string): string {
 }
 
 /** Reserve a runtime-managed relative output before child execution. */
-export function prepareManagedSingleOutput(output: string | boolean | undefined, outputPath: string | undefined): void {
-	if (!outputPath || typeof output !== "string" || path.isAbsolute(output)) return;
+export function prepareManagedSingleOutput(output: string | boolean | undefined, outputPath: string | undefined): SingleOutputSnapshot | undefined {
+	if (!outputPath || typeof output !== "string" || path.isAbsolute(output)) return undefined;
 	fs.mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 });
-	const flags = fs.constants.O_CREAT | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0);
+	const flags = fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0);
 	const descriptor = fs.openSync(outputPath, flags, 0o600);
+	let reservation: SingleOutputSnapshot | undefined;
 	try {
 		const stat = fs.fstatSync(descriptor);
-		if (!stat.isFile()) throw new Error(`Managed output '${outputPath}' must be a regular file.`);
+		reservation = { exists: true, managed: true, ownedPlaceholder: true, mtimeMs: stat.mtimeMs, size: stat.size, device: stat.dev, inode: stat.ino };
+		const pathStat = fs.lstatSync(outputPath);
+		if (!stat.isFile() || pathStat.isSymbolicLink() || pathStat.dev !== stat.dev || pathStat.ino !== stat.ino) throw new Error(`Managed output '${outputPath}' changed while it was reserved.`);
 		fs.fchmodSync(descriptor, 0o600);
+		return reservation;
+	} catch (error) {
+		cleanupManagedSingleOutput(outputPath, reservation);
+		throw error;
 	} finally {
 		fs.closeSync(descriptor);
+	}
+}
+
+export function cleanupManagedSingleOutput(outputPath: string | undefined, snapshot: SingleOutputSnapshot | undefined): void {
+	if (!outputPath || snapshot?.ownedPlaceholder !== true || snapshot.device === undefined || snapshot.inode === undefined) return;
+	try {
+		const stat = fs.lstatSync(outputPath);
+		if (stat.isFile() && stat.dev === snapshot.device && stat.ino === snapshot.inode && stat.size === 0) fs.unlinkSync(outputPath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
 }
 
@@ -212,6 +230,20 @@ function assertManagedOutputIdentity(outputPath: string, snapshot: SingleOutputS
 	if (!stat.isFile()) throw new Error(`Managed output '${outputPath}' must be a regular file.`);
 	if (!snapshot.exists || snapshot.device === undefined || snapshot.inode === undefined) throw new Error(`Managed output '${outputPath}' was not reserved before child execution.`);
 	if (stat.dev !== snapshot.device || stat.ino !== snapshot.inode) throw new Error(`Managed output '${outputPath}' was substituted during child execution.`);
+}
+
+function openManagedOutput(outputPath: string, flags: number, snapshot: SingleOutputSnapshot): number {
+	const descriptor = fs.openSync(outputPath, flags | (fs.constants.O_NOFOLLOW ?? 0));
+	try {
+		const descriptorStat = fs.fstatSync(descriptor);
+		assertManagedOutputIdentity(outputPath, snapshot, descriptorStat);
+		const pathStat = fs.lstatSync(outputPath);
+		if (pathStat.isSymbolicLink() || pathStat.dev !== descriptorStat.dev || pathStat.ino !== descriptorStat.ino) throw new Error(`Managed output '${outputPath}' was substituted during open.`);
+		return descriptor;
+	} catch (error) {
+		fs.closeSync(descriptor);
+		throw error;
+	}
 }
 
 function inspectSingleOutputChange(
@@ -258,9 +290,8 @@ function persistSingleOutput(
 			fs.writeFileSync(outputPath, fullOutput, "utf-8");
 			return { savedPath: outputPath };
 		}
-		const descriptor = fs.openSync(outputPath, fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0));
+		const descriptor = openManagedOutput(outputPath, fs.constants.O_WRONLY, beforeRun);
 		try {
-			assertManagedOutputIdentity(outputPath, beforeRun, fs.fstatSync(descriptor));
 			fs.ftruncateSync(descriptor, 0);
 			fs.writeFileSync(descriptor, fullOutput, "utf-8");
 		} finally {
@@ -287,15 +318,15 @@ export function resolveSingleOutput(
 		return {
 			fullOutput: fallbackOutput,
 			saveError: `Failed to inspect output file: ${changedSinceStart.error}`,
+			...(beforeRun?.managed ? { fatalError: true } : {}),
 		};
 	}
 
 	if (changedSinceStart.changed) {
 		try {
 			if (!beforeRun?.managed) return { fullOutput: fs.readFileSync(outputPath, "utf-8"), savedPath: outputPath };
-			const descriptor = fs.openSync(outputPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+			const descriptor = openManagedOutput(outputPath, fs.constants.O_RDONLY, beforeRun);
 			try {
-				assertManagedOutputIdentity(outputPath, beforeRun, fs.fstatSync(descriptor));
 				return { fullOutput: fs.readFileSync(descriptor, "utf-8"), savedPath: outputPath };
 			} finally {
 				fs.closeSync(descriptor);
@@ -304,6 +335,7 @@ export function resolveSingleOutput(
 			return {
 				fullOutput: fallbackOutput,
 				saveError: `Failed to read changed output file: ${error instanceof Error ? error.message : String(error)}`,
+				...(beforeRun?.managed ? { fatalError: true } : {}),
 			};
 		}
 	}

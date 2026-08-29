@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+	applyWorkflowCheckpointDeadline,
 	DEFAULT_ASYNC_TIMEOUT_MS,
 	DEFAULT_FOREGROUND_TIMEOUT_MS,
 	resolveConfigDefaultTimeoutMs,
@@ -108,6 +109,17 @@ describe("single-agent launch timeout wiring", () => {
 			resolveSingleAgentLaunchTimeout({ agent: "worker", task: "x", tasks: [{ agent: "worker", task: "y" }] }, true, NINETY_MIN),
 			{},
 		);
+	});
+});
+
+describe("workflow checkpoint propagation", () => {
+	it("propagates one absolute checkpoint as remaining time bounded by the child deadline", () => {
+		const child = { timeoutMs: 400 };
+		applyWorkflowCheckpointDeadline(child, 1_000, 700);
+		assert.equal(child.checkpointAfterMs, 300);
+		const shorterChild = { timeoutMs: 100 };
+		applyWorkflowCheckpointDeadline(shorterChild, 1_000, 700);
+		assert.equal(shorterChild.checkpointAfterMs, 99);
 	});
 });
 

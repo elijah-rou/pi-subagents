@@ -67,7 +67,7 @@ import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-prog
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV, type SubagentTaskDelivery } from "../shared/pi-args.ts";
-import { enqueueStepSteer, steerAcksDir, steerCapabilityPath, stepSteerInboxDir } from "../background/control-channel.ts";
+import { steerAcksDir, steerCapabilityPath, stepSteerInboxDir, writeSteerRequestToDir } from "../background/control-channel.ts";
 import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
@@ -78,7 +78,7 @@ import { MISSING_STRUCTURED_OUTPUT_CALL_ERROR, readStructuredOutput, readStructu
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { classifyRequiredChildTools, formatDefinitelyMissingChildTools, readChildToolDiagnosticError, watchChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
-import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, injectOutputPathSystemPrompt, prepareManagedSingleOutput, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	buildModelCandidates,
 	formatSubagentModelVerificationError,
@@ -406,11 +406,12 @@ async function runSingleAttempt(
 		shared.launchWarnings.emitted = true;
 	}
 
-	const checkpointControlDir = options.checkpointAt !== undefined ? tempDir : undefined;
-	if (checkpointControlDir) {
-		sharedEnv[SUBAGENT_STEER_INBOX_ENV] = stepSteerInboxDir(checkpointControlDir, options.index ?? 0);
-		sharedEnv[SUBAGENT_STEER_CAPABILITY_ENV] = steerCapabilityPath(checkpointControlDir, options.index ?? 0);
-		sharedEnv[SUBAGENT_STEER_ACK_DIR_ENV] = steerAcksDir(checkpointControlDir, options.index ?? 0);
+	const generatedCheckpointControlDir = options.checkpointAt !== undefined && !options.steerInboxDir ? tempDir : undefined;
+	const checkpointSteerInboxDir = options.steerInboxDir ?? (generatedCheckpointControlDir ? stepSteerInboxDir(generatedCheckpointControlDir, options.index ?? 0) : undefined);
+	if (generatedCheckpointControlDir) {
+		sharedEnv[SUBAGENT_STEER_INBOX_ENV] = checkpointSteerInboxDir!;
+		sharedEnv[SUBAGENT_STEER_CAPABILITY_ENV] = steerCapabilityPath(generatedCheckpointControlDir, options.index ?? 0);
+		sharedEnv[SUBAGENT_STEER_ACK_DIR_ENV] = steerAcksDir(generatedCheckpointControlDir, options.index ?? 0);
 	}
 
 	const effectiveSystemPrompt = shared.systemPrompt;
@@ -468,6 +469,7 @@ async function runSingleAttempt(
 			modelAttempts: [],
 			attemptedModels: [],
 			progressSummary: { status: "failed", toolCount: 0, tokens: 0, durationMs: 0 },
+			preflightFailure: true,
 			...(toolPlan.capabilityCeiling ? { capabilityCeiling: toolPlan.capabilityCeiling } : {}),
 			...(toolPlan.capabilityAudit ? { capabilityAudit: toolPlan.capabilityAudit } : {}),
 		};
@@ -574,6 +576,7 @@ async function runSingleAttempt(
 			tokens: progress.tokens,
 			durationMs: progress.durationMs,
 		};
+		result.preflightFailure = true;
 		return result;
 	}
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
@@ -599,6 +602,7 @@ async function runSingleAttempt(
 			result.exitCode = 1;
 			result.error = permitError;
 			result.finalOutput = permitError;
+			result.preflightFailure = true;
 			progress.status = "failed";
 			progress.error = permitError;
 			return result;
@@ -629,11 +633,11 @@ async function runSingleAttempt(
 		let checkpointTimer: NodeJS.Timeout | undefined;
 		let checkpointPending = false;
 		const deliverCheckpoint = () => {
-			if (!checkpointPending || result.checkpointDelivered || progress.currentTool || processClosed || lifecycleFinished || !checkpointControlDir) return;
+			if (!checkpointPending || result.checkpointDelivered || progress.currentTool || processClosed || lifecycleFinished || !checkpointSteerInboxDir) return;
 			checkpointPending = false;
 			result.checkpointDelivered = true;
 			result.wrapUpRequested = true;
-			enqueueStepSteer(checkpointControlDir, options.index ?? 0, {
+			writeSteerRequestToDir(checkpointSteerInboxDir, {
 				type: "steer",
 				id: `duration-checkpoint-${options.runId}-${options.index ?? 0}`,
 				ts: Date.now(),
@@ -664,6 +668,17 @@ async function runSingleAttempt(
 			}, 3_000);
 			toolDiagnosticHardKillTimer.unref?.();
 		});
+		const disposeRuntimeMonitors = () => {
+			toolDiagnosticWatcher.dispose();
+			if (toolDiagnosticHardKillTimer) {
+				clearTimeout(toolDiagnosticHardKillTimer);
+				toolDiagnosticHardKillTimer = undefined;
+			}
+			if (checkpointTimer) {
+				clearInterval(checkpointTimer);
+				checkpointTimer = undefined;
+			}
+		};
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
 				clearTimeout(timeoutTimer);
@@ -824,6 +839,7 @@ async function runSingleAttempt(
 			clearWatchdogTailTimer();
 			clearStdioGuard();
 			clearTimeoutTimers();
+			disposeRuntimeMonitors();
 			clearAllToolTimeouts();
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
@@ -1371,9 +1387,7 @@ async function runSingleAttempt(
 			processClosed = true;
 			clearFinalDrainTimers();
 			clearStdioGuard();
-			toolDiagnosticWatcher.dispose();
-			if (toolDiagnosticHardKillTimer) clearTimeout(toolDiagnosticHardKillTimer);
-			if (checkpointTimer) clearInterval(checkpointTimer);
+			disposeRuntimeMonitors();
 			void jsonlWriter.close().catch(() => {
 				// JSONL artifact flush is best effort.
 			});
@@ -1965,8 +1979,12 @@ async function runSyncCompletionInner(
 
 	let intercomDetached = false;
 	let detachedReason: string | undefined;
+	const managedOutputReservation = options.managedOutput
+		? options.managedOutputReservation ?? prepareManagedSingleOutput(path.basename(options.outputPath!), options.outputPath)
+		: undefined;
 	const attemptOptions: RunSyncOptions = {
 		...options,
+		...(managedOutputReservation ? { managedOutputReservation } : {}),
 		onDetachReceipt: (receipt) => {
 			receipt.acceptance = buildPendingAcceptanceLedger(effectiveAcceptance);
 			try {
@@ -1995,7 +2013,7 @@ async function runSyncCompletionInner(
 			const recoveringAbort = abortRecoveryAttempted;
 			const attemptTask = nextAttemptTask;
 			const verifyModel = Boolean(candidate) && !(options.modelOverrideFromParent && modelIndex === 0);
-			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath, options.managedOutput === true);
+			const outputSnapshot = managedOutputReservation ?? captureSingleOutputSnapshot(options.outputPath, options.managedOutput === true);
 			const result = await runSingleAttempt(runtimeCwd, agent, attemptTask, candidate, attemptOptions, {
 				sessionEnabled,
 				systemPrompt,
@@ -2148,6 +2166,9 @@ async function runSyncCompletionInner(
 		}
 	}
 
+	const preflightFailure = lastResult?.preflightFailure === true || (lastResult !== undefined && lastResult.progress === undefined && lastResult.progressSummary === undefined);
+	if (preflightFailure) cleanupManagedSingleOutput(options.outputPath, managedOutputReservation);
+	if (lastResult) delete lastResult.preflightFailure;
 	const result = withRunContext(lastResult ?? {
 		index: options.index ?? 0,
 		agent: agentName,

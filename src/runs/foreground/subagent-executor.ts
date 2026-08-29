@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { discoverAgents, findBlockingAgentDiagnostic, formatUnknownAgentError, resolveAgentName, unknownAgentDiagnosticContext, type AgentConfig, type AgentDiscoveryDiagnostic, type AgentScope, type UnknownAgentDiagnosticContext } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectArtifactPackagingWarning, getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { ensurePrivateDirectory } from "../../shared/private-state.ts";
 import { createCapacityResilientJsonWriter } from "../../shared/capacity-resilient-json.ts";
 import { isStorageCapacityError } from "../../shared/file-system-retry.ts";
 import { resolveEffectiveThinking, toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
@@ -65,7 +66,7 @@ import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
-import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, prepareManagedSingleOutput, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
@@ -168,6 +169,7 @@ import {
 	type SubagentRunMode,
 	type SubagentState,
 	DIRS,
+	TEMP_ROOT_DIR,
 	DEFAULT_ARTIFACT_CONFIG,
 	DEFAULT_FORK_PREAMBLE,
 	SUBAGENT_ACTIONS,
@@ -2743,6 +2745,17 @@ export function resolveForegroundTimeout(params: SubagentParamsLike, defaultTime
  * set — even with a config default — while their runner children resolve separate
  * deadlines. Exported so the executor wiring is directly testable.
  */
+export function applyWorkflowCheckpointDeadline(childRequest: SubagentParamsLike, checkpointAt: number | undefined, now = Date.now()): void {
+	if (checkpointAt === undefined) return;
+	let remainingMs = Math.max(1, checkpointAt - now);
+	const childHardMs = childRequest.timeoutMs ?? childRequest.maxRuntimeMs;
+	if (childHardMs !== undefined) {
+		if (childHardMs <= 1) return;
+		remainingMs = Math.min(remainingMs, childHardMs - 1);
+	}
+	childRequest.checkpointAfterMs = remainingMs;
+}
+
 export function resolveSingleAgentLaunchTimeout(params: SubagentParamsLike, async: boolean, configDefaultTimeoutMs?: number): { timeoutMs?: number; error?: string } {
 	const isComposite = (params.chain?.length ?? 0) > 0 || (params.tasks?.length ?? 0) > 0 || params.workflowScript !== undefined;
 	const foregroundDefault = configDefaultTimeoutMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS;
@@ -3672,7 +3685,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		: "";
 	task = readsInstruction + task;
 	task = injectSingleOutputInstruction(task, outputPath, agentConfig);
-	prepareManagedSingleOutput(effectiveOutput, outputPath);
 	const managedOutput = typeof effectiveOutput === "string" && !path.isAbsolute(effectiveOutput);
 
 	let effectiveSkills: string[] | undefined;
@@ -4696,7 +4708,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 			const parentCwd = ctx.cwd;
-			const timeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
+			const requestedWorkflowTimeout = requestParams.timeoutMs ?? requestParams.maxRuntimeMs ?? (requestParams.async === false ? resolveConfigDefaultTimeoutMs(deps.config.timeoutMs) ?? DEFAULT_FOREGROUND_TIMEOUT_MS : undefined);
+			const workflowDurationStartedAt = Date.now();
+			let workflowDuration: ReturnType<typeof resolveDurationBudget>;
+			try {
+				workflowDuration = resolveDurationBudget({ timeoutMs: requestedWorkflowTimeout, checkpointAfterMs: requestParams.checkpointAfterMs }, workflowDurationStartedAt);
+			} catch (error) {
+				return buildRequestedModeError(requestParams, error instanceof Error ? error.message : String(error));
+			}
+			const timeout = workflowDuration.timeoutMs;
+			const workflowCheckpointAt = workflowDuration.checkpointAt;
+
 			const workflowUsageBudget = validateUsageBudgetConfig(requestParams.usageBudget ?? deps.config.usageBudget, requestParams.usageBudget ? "usageBudget" : "config.usageBudget");
 			if (workflowUsageBudget.error) return buildRequestedModeError(requestParams, workflowUsageBudget.error);
 			const workflowCwd = resolveRequestedCwd(parentCwd, requestParams.cwd);
@@ -4802,9 +4824,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const completionOwnerId = deps.state.completionOwnerId ?? currentCompletionOwnerId();
 				deps.state.completionOwnerId = completionOwnerId;
 				try {
-					fs.mkdirSync(asyncDir, { recursive: true });
+					ensurePrivateDirectory(asyncDir, { privateRoot: TEMP_ROOT_DIR });
 					writeRunFanoutBudgetDescriptor(asyncDir, workflowFanoutBudget);
-					fs.mkdirSync(DIRS.results, { recursive: true });
+					ensurePrivateDirectory(DIRS.results, { privateRoot: TEMP_ROOT_DIR });
 				} catch (error) {
 					workflowCapacity?.rollback();
 					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
@@ -4824,7 +4846,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					state: "running",
 					startedAt,
 					lastUpdate: startedAt,
-					...(timeout !== undefined ? { deadlineAt: startedAt + timeout, timeoutMs: timeout } : {}),
+					...(timeout !== undefined ? { deadlineAt: workflowDuration.deadlineAt, timeoutMs: timeout } : {}),
+					...(workflowCheckpointAt !== undefined ? { checkpointAfterMs: workflowDuration.checkpointAfterMs, checkpointAt: workflowCheckpointAt, checkpointDelivered: false } : {}),
 					cwd: workflowCwd,
 					...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}),
 					...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}),
@@ -4980,10 +5003,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {
-					const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
+					const workflowDeadlineAt = workflowDuration.deadlineAt;
 					const workflowResults: SingleResult[] = [];
 					const workflowChildRunIds = new Map<string, string>();
-					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, preflight: _preflight, ...workflowChildDefaults } = workflowRequest;
+					const { action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, checkpointAfterMs: _checkpointAfterMs, usageBudget: _usageBudget, missionId: _missionId, mission: _mission, preflight: _preflight, ...workflowChildDefaults } = workflowRequest;
 					const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 					const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 					const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, parentCwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, workflowRunId));
@@ -5154,6 +5177,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										missionBinding,
 										deps.asyncByDefault,
 									);
+									applyWorkflowCheckpointDeadline(childRequest, workflowCheckpointAt);
 									preparedChildParams = childRequest;
 									workflowLaunchObservers.set(childRequest, (launch) => {
 										const step = status.steps?.find((candidate) => candidate.workflowKey === key);
@@ -5309,7 +5333,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "workflow", runId: workflowRunId, toolCallId, asyncId: workflowRunId, asyncDir, results: [], ...(workflowPreflight ? { preflight: workflowPreflight } : {}), workflowChildren: status.workflowChildren, chatProgress, ...(deps.state.activeAsyncCapacity ? { activeAsyncCapacity: deps.state.activeAsyncCapacity } : {}) },
 				}, workflowFanoutBudget));
 			}
-			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, preflight: _preflight, ...workflowChildDefaults } = requestParams;
+			const { workflowScript: _workflowScript, action: _action, agent: _agent, task: _task, resume: _resume, tasks: _tasks, chain: _chain, concurrency: _concurrency, async: _async, foregroundOnly: _foregroundOnly, clarify: _clarify, timeoutMs: _timeoutMs, maxRuntimeMs: _maxRuntimeMs, checkpointAfterMs: _checkpointAfterMs, usageBudget: _usageBudget, chatProgress: _chatProgress, missionId: _missionId, mission: _mission, preflight: _preflight, ...workflowChildDefaults } = requestParams;
 			const workflowOutput = typeof workflowChildDefaults.output === "string" || typeof workflowChildDefaults.output === "boolean" ? workflowChildDefaults.output : undefined;
 			const configuredOutputBaseDir = resolveConfiguredSingleRunOutputBaseDir(deps);
 			const workflowAggregateOutputPath = resolveWorkflowAggregateOutputPath(workflowOutput, ctx.cwd, workflowCwd, resolveSingleRunOutputBaseDir(deps, workflowArtifactsDir, _id));
@@ -5323,7 +5347,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			const workflowHostSteps = new Map<string, HostStepNodeV1>();
 			let liveWorkflow: NonNullable<Details["workflow"]> = { trace: [], emits: [], console: [] };
 			let liveWorkflowChildren = workflowChildSummary({ parentToolCallId: _id, workflowRunId: _id, workflowState: "running", inventoryComplete: false });
-			const workflowDeadlineAt = timeout === undefined ? undefined : Date.now() + timeout;
+			const workflowDeadlineAt = workflowDuration.deadlineAt;
 			const workflowCapabilityCeiling = intersectSubagentCapabilityCeilings(requestParams.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(resolveCurrentSessionId(ctx.sessionManager)));
 			const sendWorkflowProgress = () => {
 				const update = workflowChatProgressUpdate(_id, chatProgress, liveWorkflow, liveWorkflowChildren, workflowPreflight);
@@ -5383,6 +5407,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								missionBinding,
 								deps.asyncByDefault,
 							);
+							applyWorkflowCheckpointDeadline(childRequest, workflowCheckpointAt);
 							preparedChildParams = childRequest;
 							if (delegatedWorkflowPermit) {
 								if (childRequest.async !== false) throw new Error("Workflow child permit supports one foreground child only.");

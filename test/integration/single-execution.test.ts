@@ -6938,6 +6938,40 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
+	it("cleans its managed placeholder when foreground preflight fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const outputPath = path.join(tempDir, "preflight-report.md");
+		const executor = makeExecutor([makeAgent("reader", { tools: ["read"] })], { singleRunOutputBaseDir: tempDir });
+		const result = await executor.execute(
+			"managed-output-preflight-cleanup",
+			{ agent: "reader", task: "Implement the fix", output: "preflight-report.md" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.equal(mockPi.callCount(), 0);
+		assert.equal(fs.existsSync(outputPath), false);
+	});
+
+	it("fails the observable run when a managed output is substituted", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const outputPath = path.join(tempDir, "managed-report.md");
+		mockPi.onCall({ output: "assistant fallback", replaceFiles: [{ path: outputPath, content: "substitute" }] });
+		const executor = makeExecutor([makeAgent("echo")], { singleRunOutputBaseDir: tempDir });
+		const result = await executor.execute(
+			"managed-output-substitution",
+			{ agent: "echo", task: "Write report", output: "managed-report.md" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, true);
+		assert.equal(result.details.results[0]?.exitCode, 1);
+		assert.match(result.details.results[0]?.error ?? "", /substituted during child execution/);
+		assert.equal(fs.readFileSync(outputPath, "utf-8"), "substitute");
+	});
+
 	it("treats string false as disabled output in foreground single runs", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "inline report" });
 		const executor = makeExecutor([makeAgent("echo", { output: "default-report.md" })]);
@@ -7016,6 +7050,39 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, true);
 		assert.match(result.content[0]?.text ?? "", /aliases/);
 		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("preserves foreground workflow steering while delivering the workflow checkpoint", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "workflow wrapped up", waitForSteerInboxRequest: true });
+		const executor = makeExecutor();
+		const result = await executor.execute(
+			"workflow-soft-checkpoint",
+			{ workflowScript: "return runs.run('child', {agent:'echo', task:'Task'})", async: false, checkpointAfterMs: 50, timeoutMs: 2_000 },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.results[0]?.checkpointDelivered, true);
+		assert.match(result.content[0]?.text ?? "", /Workflow completed/);
+	});
+
+	it("delivers a foreground soft checkpoint before the hard deadline", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "wrapped up", waitForSteerInboxRequest: true });
+		const executor = makeExecutor();
+		const result = await executor.execute(
+			"foreground-soft-checkpoint",
+			{ agent: "echo", task: "Task", async: false, checkpointAfterMs: 50, timeoutMs: 2_000 },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.results[0]?.checkpointDelivered, true);
+		assert.equal(result.details.results[0]?.wrapUpRequested, true);
+		assert.match(result.content[0]?.text ?? "", /wrapped up/);
 	});
 
 	it("applies the foreground timeout default without overriding explicit or agent values", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

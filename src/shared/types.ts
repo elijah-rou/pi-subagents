@@ -1195,6 +1195,8 @@ export interface SingleResult {
 	/** Resolved launch context for this child. */
 	context?: "fresh" | "fork";
 	exitCode: number;
+	/** Internal marker used to clean an owned managed-output placeholder before any child process starts. */
+	preflightFailure?: boolean;
 	processSignal?: string | null;
 	timeoutRecovery?: TimeoutRecoverySummary;
 	detached?: boolean;
@@ -2312,6 +2314,7 @@ export interface RunSyncOptions {
 	outputPath?: string;
 	outputClaimPath?: string;
 	managedOutput?: boolean;
+	managedOutputReservation?: import("../runs/shared/single-output.ts").SingleOutputSnapshot;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */

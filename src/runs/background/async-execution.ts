@@ -16,9 +16,9 @@ import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
-import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, prepareManagedSingleOutput, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+import { cleanupManagedSingleOutput, injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, prepareManagedSingleOutput, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
-import type { RunnerStep } from "../shared/parallel-utils.ts";
+import { flattenSteps, type RunnerStep } from "../shared/parallel-utils.ts";
 import type { ContextMode } from "../shared/context-mode.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
@@ -186,6 +186,8 @@ interface AsyncChainParams {
 	acceptance?: AcceptanceInput;
 	fast?: boolean;
 	timeoutMs?: number;
+	checkpointAfterMs?: number;
+	checkpointAt?: number;
 	toolBudget?: ResolvedToolBudget;
 	usageBudget?: UsageBudgetConfig;
 	configToolBudget?: ResolvedToolBudget;
@@ -531,7 +533,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 		return { error: "upstream jiti for TypeScript execution could not be found; ensure package dependencies are installed" };
 	}
 
-	fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
+	ensurePrivateDirectory(TEMP_ROOT_DIR);
 	const cfgPath = getAsyncConfigPath(suffix);
 	const runnerProcessInstanceId = randomUUID();
 	const hasRevivalLease = typeof (cfg as { revivalLease?: unknown }).revivalLease === "object";
@@ -980,6 +982,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			inheritSkills: a.inheritSkills,
 			skills: resolvedSkills.map((r) => r.name),
 			outputPath,
+			...(typeof behavior.output === "string" && !path.isAbsolute(behavior.output) ? { managedOutput: true } : {}),
 			...(namespaceOutputPath ? { namespaceOutputPath: true } : {}),
 			outputMode: behavior.outputMode,
 			sessionFile,
@@ -1184,7 +1187,7 @@ export function executeAsyncChain(
 	let runFanoutBudget: RunFanoutBudgetDescriptor;
 	try {
 		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
-		ensurePrivateDirectory(asyncDir);
+		ensurePrivateDirectory(asyncDir, { privateRoot: TEMP_ROOT_DIR });
 		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1237,7 +1240,9 @@ export function executeAsyncChain(
 		return formatAsyncStartError(resultMode, built.error);
 	}
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
-	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
+	const durationStartedAt = Date.now();
+	const deadlineAt = params.timeoutMs !== undefined ? durationStartedAt + params.timeoutMs : undefined;
+	const checkpointAt = params.checkpointAt ?? (params.checkpointAfterMs !== undefined ? durationStartedAt + params.checkpointAfterMs : undefined);
 	const initialUsageBudget = usageBudgetState(params.usageBudget, undefined);
 	let childTargetIndex = 0;
 	const childIntercomTargets = childIntercomTarget ? steps.flatMap((step) => {
@@ -1270,6 +1275,22 @@ export function executeAsyncChain(
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
 
+	const managedOutputReservations: Array<{ outputPath: string; reservation: NonNullable<ReturnType<typeof prepareManagedSingleOutput>> }> = [];
+	const cleanupManagedOutputs = () => {
+		for (const entry of managedOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
+	};
+	try {
+		for (const step of flattenSteps(steps)) {
+			if (!step.managedOutput || step.namespaceOutputPath || !step.outputPath) continue;
+			const reservation = prepareManagedSingleOutput(path.basename(step.outputPath), step.outputPath);
+			if (!reservation) continue;
+			step.managedOutputReservation = reservation;
+			managedOutputReservations.push({ outputPath: step.outputPath, reservation });
+		}
+	} catch (error) {
+		cleanupManagedOutputs();
+		return formatAsyncStartError(resultMode, `Failed to reserve managed output: ${error instanceof Error ? error.message : String(error)}`);
+	}
 	let spawnResult: SpawnRunnerResult = {};
 	try {
 		spawnResult = spawnRunner(
@@ -1302,6 +1323,8 @@ export function executeAsyncChain(
 				dynamicFanoutMaxItems: params.dynamicFanoutMaxItems,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
+				checkpointAfterMs: params.checkpointAfterMs,
+				checkpointAt,
 				globalConcurrencyLimit: params.globalConcurrencyLimit,
 				runFanoutBudget,
 				workflowGraph,
@@ -1335,17 +1358,20 @@ export function executeAsyncChain(
 			(proof) => emitProcessTerminalEvent(ctx, proof),
 		);
 	} catch (error) {
+		cleanupManagedOutputs();
 		params.activeAsyncCapacity?.rollback();
 		const message = error instanceof Error ? error.message : String(error);
 		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${message}`);
 	}
 
 	if (spawnResult.error) {
+		cleanupManagedOutputs();
 		if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId || (spawnResult.startupDidNotProceed && spawnResult.terminationObserved)) params.activeAsyncCapacity?.rollback();
 		else params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${spawnResult.error}`);
 	}
 	if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId) {
+		cleanupManagedOutputs();
 		params.activeAsyncCapacity?.rollback();
 		return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': runner identity unavailable`);
 	}
@@ -1568,7 +1594,7 @@ export function executeAsyncSingle(
 	let runFanoutBudget: RunFanoutBudgetDescriptor;
 	try {
 		runFanoutBudget = params.runFanoutBudget ?? createRunFanoutBudget(id, 64);
-		ensurePrivateDirectory(asyncDir);
+		ensurePrivateDirectory(asyncDir, { privateRoot: TEMP_ROOT_DIR });
 		writeRunFanoutBudgetDescriptor(asyncDir, runFanoutBudget);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -1581,7 +1607,6 @@ export function executeAsyncSingle(
 
 	const effectiveOutput = normalizeSingleOutputOverride(params.output, agentConfig.output);
 	const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, instructionCwd, params.outputBaseDir ?? (artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined));
-	prepareManagedSingleOutput(effectiveOutput, outputPath);
 	const managedOutput = typeof effectiveOutput === "string" && !path.isAbsolute(effectiveOutput);
 	systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath, agentConfig);
 	const outputMode = params.outputMode ?? agentConfig.outputMode ?? "inline";
@@ -1786,6 +1811,7 @@ export function executeAsyncSingle(
 			return formatAsyncStartError("single", `Failed to persist async recovery descriptor for '${id}': ${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
+	const managedOutputReservation = prepareManagedSingleOutput(effectiveOutput, outputPath);
 	let spawnResult: SpawnRunnerResult = {};
 	const initialStatusAt = Date.now();
 	const initialCompletionOwnerId = ctx.completionOwnerId ?? currentCompletionOwnerId();
@@ -1831,6 +1857,7 @@ export function executeAsyncSingle(
 						outputPath,
 						...(params.outputClaimPath ? { outputClaimPath: params.outputClaimPath } : {}),
 						managedOutput,
+						...(managedOutputReservation ? { managedOutputReservation } : {}),
 						outputMode,
 						...(!externalRunner && sessionFile ? { sessionFile } : {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
@@ -1917,17 +1944,20 @@ export function executeAsyncSingle(
 			params.requestedCwd ?? runnerCwd,
 		);
 	} catch (error) {
+		cleanupManagedSingleOutput(outputPath, managedOutputReservation);
 		params.activeAsyncCapacity?.rollback();
 		const message = error instanceof Error ? error.message : String(error);
 		return formatAsyncStartError("single", `Failed to start async run '${id}': ${message}`);
 	}
 
 	if (spawnResult.error) {
+		cleanupManagedSingleOutput(outputPath, managedOutputReservation);
 		if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId || (spawnResult.startupDidNotProceed && spawnResult.terminationObserved)) params.activeAsyncCapacity?.rollback();
 		else params.activeAsyncCapacity?.markStarted(spawnResult.runnerProcessInstanceId);
 		return formatAsyncStartError("single", `Failed to start async run '${id}': ${spawnResult.error}`);
 	}
 	if (!spawnResult.pid || !spawnResult.runnerProcessInstanceId) {
+		cleanupManagedSingleOutput(outputPath, managedOutputReservation);
 		params.activeAsyncCapacity?.rollback();
 		return formatAsyncStartError("single", `Failed to start async run '${id}': runner identity unavailable`);
 	}

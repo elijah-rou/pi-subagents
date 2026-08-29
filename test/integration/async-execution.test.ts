@@ -104,6 +104,7 @@ interface AsyncStatusPayload {
 	error?: string;
 	timeoutMs?: number;
 	deadlineAt?: number;
+	checkpointDelivered?: boolean;
 	timedOut?: boolean;
 	stopped?: boolean;
 	turnBudget?: { maxTurns: number; graceTurns: number; outcome: string; turnCount: number; wrapUpRequestedAtTurn?: number; terminationDeferredAtTurn?: number; exceededAtTurn?: number };
@@ -1468,6 +1469,30 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(childStatusEvents.some((event) => event.type === "subagent.child-status" && event.childId === "step:0" && event.status === "stopped"));
 	});
 
+	it("delivers a composite checkpoint to every active parallel child", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "one wrapped", waitForSteerInboxRequest: true });
+		mockPi.onCall({ output: "two wrapped", waitForSteerInboxRequest: true });
+		const id = `async-checkpoint-parallel-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ parallel: [{ agent: "one", task: "Wait" }, { agent: "two", task: "Wait" }], concurrency: 2 }],
+			resultMode: "parallel",
+			agents: [makeAgent("one"), makeAgent("two")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			checkpointAfterMs: 100,
+			timeoutMs: 2_000,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
+		assert.equal(payload.success, true);
+		assert.equal(status.checkpointDelivered, true);
+		assert.deepEqual(status.steps?.map((step) => step.status), ["complete", "complete"]);
+	});
+
 	it("marks async parallel runs that exceed timeoutMs as timed out", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "one done" });
 		mockPi.onCall({ delay: 5_000, output: "two done" });
@@ -2452,7 +2477,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
-		assert.equal(payload.success, true);
+		assert.equal(payload.success, true, JSON.stringify({ error: payload.error, results: payload.results }));
 		assert.equal(mockPi.callCount(), 4);
 		assert.match(readMockPiArgs(mockPi, 1).at(-1) ?? "", /Review src\/a\.ts/);
 		assert.match(readMockPiArgs(mockPi, 2).at(-1) ?? "", /Review src\/b\.ts/);

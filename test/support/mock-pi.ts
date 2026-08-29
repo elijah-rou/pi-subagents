@@ -10,6 +10,7 @@ interface MockPiResponse {
 	signal?: NodeJS.Signals;
 	delay?: number;
 	waitForPath?: string;
+	waitForSteerInboxRequest?: boolean;
 	keepAliveAfterFinalMessageMs?: number;
 	ignoreSigterm?: boolean;
 	jsonl?: unknown[];
@@ -28,6 +29,7 @@ interface MockPiResponse {
 	matchArgIncludes?: string | string[];
 	/** Files the mock child writes to disk before emitting output, standing in for its write-tool side effects. */
 	writeFiles?: Array<{ path: string; content: string }>;
+	replaceFiles?: Array<{ path: string; content: string }>;
 	/** Writes the structured-output capture file without emitting a structured_output tool event. */
 	structuredOutputCapture?: unknown;
 	structuredOutputAcceptanceReport?: unknown;

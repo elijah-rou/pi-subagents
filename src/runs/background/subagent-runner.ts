@@ -15,7 +15,7 @@ import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliver
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
-import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, prepareManagedSingleOutput, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type ActivityState,
 	type AcceptanceInput,
@@ -1408,6 +1408,7 @@ async function runSingleStepInner(
 	let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
 	if (ctx.outputs) task = resolveOutputReferences(task, ctx.outputs);
 	const taskForCompletionGuard = task;
+	const cleanupPreflightOutput = () => cleanupManagedSingleOutput(step.outputPath, step.managedOutputReservation);
 	let resolvedTaskToolPlan: ReturnType<typeof resolvePiLaunchToolPlan> | undefined;
 	if (!step.runner) {
 		resolvedTaskToolPlan = resolvePiLaunchToolPlan(omitUndefinedProperties({
@@ -1440,6 +1441,7 @@ async function runSingleStepInner(
 			completionGuard: step.completionGuard,
 		});
 		if (contractError) {
+			cleanupPreflightOutput();
 			return omitUndefinedProperties({
 				agent: step.agent,
 				context: step.context,
@@ -1493,7 +1495,7 @@ async function runSingleStepInner(
 					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
 		const runner = resolveExternalCliRunnerStatus({ ...step.runner, ...(adapterLaunch ? { args: adapterLaunch.args } : {}) });
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
+		const outputSnapshot = step.managedOutputReservation ?? captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		const external = await runExternalCli(omitUndefinedProperties({
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
@@ -1567,7 +1569,7 @@ async function runSingleStepInner(
 			options: step.runner.options ?? {},
 			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
+		const outputSnapshot = step.managedOutputReservation ?? captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		const external = await runExternalJob(omitUndefinedProperties({
 			provider: runner.provider,
 			options: runner.options,
@@ -1631,7 +1633,10 @@ async function runSingleStepInner(
 
 	const effectiveCwd = step.cwd ?? ctx.cwd;
 	const cwdError = preflightLaunchCwd(step.requestedCwd ?? effectiveCwd, effectiveCwd);
-	if (cwdError) return { agent: step.agent, output: cwdError, error: cwdError, exitCode: 1, context: step.context };
+	if (cwdError) {
+		cleanupPreflightOutput();
+		return { agent: step.agent, output: cwdError, error: cwdError, exitCode: 1, context: step.context };
+	}
 
 	const candidates = step.modelCandidates !== undefined
 		? step.modelCandidates.length > 0 ? step.modelCandidates : [undefined]
@@ -1676,6 +1681,7 @@ async function runSingleStepInner(
 		try {
 			assertThinkingWithinCeiling({ model: candidate, configThinking: step.thinking, ceiling: step.thinkingCeiling ?? decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]), agent: step.agent, runId: ctx.id });
 		} catch (error) {
+			cleanupPreflightOutput();
 			const message = error instanceof Error ? error.message : String(error);
 			return omitUndefinedProperties({ agent: step.agent, output: message, error: message, exitCode: 1, context: step.context, thinkingCeiling: step.thinkingCeiling });
 		}
@@ -1684,7 +1690,7 @@ async function runSingleStepInner(
 			thinking: resolveEffectiveThinking(candidate, step.thinking),
 			contextLimit: findModelInfo(candidate, step.modelVerificationRegistry)?.contextWindow,
 		}));
-		const outputSnapshot = captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
+		const outputSnapshot = step.managedOutputReservation ?? captureSingleOutputSnapshot(step.outputPath, step.managedOutput === true);
 		if (effectiveStructuredOutput) {
 			try {
 				if (fs.existsSync(effectiveStructuredOutput.outputPath)) fs.unlinkSync(effectiveStructuredOutput.outputPath);
@@ -3901,9 +3907,12 @@ async function runSubagent(
 	if (config.checkpointAt !== undefined) {
 		checkpointTimer = setInterval(() => {
 			if (Date.now() < config.checkpointAt! || statusPayload.checkpointDelivered) return;
-			const index = statusPayload.steps.findIndex((step) => step.status === "running");
-			if (index < 0) return;
-			enqueueStepSteer(asyncDir, index, { type: "steer", id: `duration-checkpoint-${id}-${index}`, ts: Date.now(), message: SOFT_CHECKPOINT_MESSAGE, targetIndex: index, source: "duration-checkpoint" });
+			const activeIndexes = statusPayload.steps.flatMap((step, index) => step.status === "running" ? [index] : []);
+			if (activeIndexes.length === 0) return;
+			const deliveredAt = Date.now();
+			for (const index of activeIndexes) {
+				enqueueStepSteer(asyncDir, index, { type: "steer", id: `duration-checkpoint-${id}-${index}`, ts: deliveredAt, message: SOFT_CHECKPOINT_MESSAGE, targetIndex: index, source: "duration-checkpoint" });
+			}
 			statusPayload.checkpointDelivered = true;
 			statusPayload.wrapUpRequested = true;
 			statusPayload.lastUpdate = Date.now();
@@ -4070,6 +4079,19 @@ async function runSubagent(
 				continue;
 			}
 
+			const dynamicOutputReservations: Array<{ outputPath: string; reservation: NonNullable<ReturnType<typeof prepareManagedSingleOutput>> }> = [];
+			try {
+				if (step.parallel.namespaceOutputPath && step.parallel.outputPath) {
+					for (const [itemIndex] of materialized.parallel.entries()) {
+						const outputPath = path.join(path.dirname(step.parallel.outputPath), `dynamic-${stepIndex}`, `${itemIndex}-${step.parallel.agent}`, path.basename(step.parallel.outputPath));
+						const reservation = prepareManagedSingleOutput(path.basename(outputPath), outputPath);
+						if (reservation) dynamicOutputReservations.push({ outputPath, reservation });
+					}
+				}
+			} catch (error) {
+				for (const entry of dynamicOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
+				throw error;
+			}
 			const dynamicSteps = materialized.parallel.map((task, itemIndex) => {
 				const thinkingOverride = step.thinkingOverrides?.[itemIndex];
 				const model = thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
@@ -4097,6 +4119,7 @@ async function runSubagent(
 					})),
 					systemPrompt: step.parallel.namespaceOutputPath ? injectOutputPathSystemPrompt(step.parallel.systemPrompt ?? "", outputPath, step.parallel) : step.parallel.systemPrompt,
 					outputPath,
+					...(step.parallel.namespaceOutputPath ? { managedOutput: true, managedOutputReservation: dynamicOutputReservations[itemIndex]?.reservation } : {}),
 					label: task.label ?? step.parallel.label,
 					...(step.sessionFiles?.[itemIndex] ? { sessionFile: step.sessionFiles[itemIndex] } : {}),
 					...(thinkingOverride ? {
@@ -4327,6 +4350,7 @@ async function runSubagent(
 		if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
 				return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: singleResult.output || (timeoutMessage ?? "Subagent timed out."), error: singleResult.error ?? timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
 			}, globalSemaphore);
+			for (const entry of dynamicOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
 
 			flatIndex += dynamicSteps.length;
 			for (const pr of parallelResults) {
@@ -5380,6 +5404,7 @@ async function runSubagent(
 	setOptionalProperty(statusPayload, "shareUrl", shareUrl);
 	setOptionalProperty(statusPayload, "gistUrl", gistUrl);
 	setOptionalProperty(statusPayload, "shareError", shareError);
+	for (const step of flattenSteps(steps)) cleanupManagedSingleOutput(step.outputPath, step.managedOutputReservation);
 	if ((statusPayload.state === "failed" || statusPayload.state === "partial") && !statusPayload.error) {
 		const concreteFailure = results.find(concreteFailureResult);
 		const failedStep = concreteFailure ? undefined : statusPayload.steps.find((s) => s.status === "failed");
