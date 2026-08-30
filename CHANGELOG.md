@@ -12,6 +12,7 @@
 - Add bounded project watchdog guidance from `WATCHDOG.md` and an explicit configured path.
 
 ### Changed
+- Remove core schedule execution, timers, writers, completion observation, retention coupling, and slash control. Trusted RPC retains bounded passive `schedule.list`, `schedule.show`, and `schedule.history` readers for one published-release compatibility horizon.
 - Add one packaged [pre-v0.59 fork migration guide](docs/migration-v059.md) covering required configuration, profile, workflow, storage, validation, and restart changes.
 - Keep `worktree.cleanup` public guidance plan-only by rejecting caller-supplied `planId` and removed `apply` mode, and remove the `pi-subagents/project-panes` package export while retaining host-selected Herdr project actions and passive observation.
 - Keep compatibility readers for persisted legacy acceptance contracts, inheritance recovery descriptors, turn-budget status fields, workflow artifacts, and cleanup metadata; new launches and public guidance use only the current canonical contracts.

@@ -40,7 +40,7 @@ import { cleanupResultIndexes, missionObserverResultCandidateFiles } from "../ru
 import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/background/async-retention.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createResultDeliveryOwnership } from "../runs/background/result-delivery-ownership.ts";
-import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
+import { createLegacyScheduleReader } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerMainWatchdog } from "../watchdog/register-main.ts";
@@ -495,29 +495,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 		}, { placement: fleetViewPlacement })
 		: undefined;
-	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
 	let parentSessionEnvValue: string | null = null;
 	const scheduledStoreRoot = config.scheduledRuns?.storeRoot === undefined ? undefined : resolveScheduledStoreRoot(config.scheduledRuns.storeRoot);
-	const scheduledRunManager = createScheduledRunManager({
-		config,
-		storeRoot: scheduledStoreRoot,
-		launch: (params, ctx, signal) => {
-			if (!executorScheduled) {
-				return Promise.resolve({
-					content: [{ type: "text", text: "Scheduled subagent launch is unavailable (executor not ready)." }],
-					isError: true,
-					details: { mode: "management" as const, results: [] },
-				});
-			}
-			return executorScheduled(randomUUID(), params, signal, ctx);
-		},
-		resolveCapabilityCeiling: (sessionId) => resolveCurrentSubagentCapabilityCeiling(sessionId),
-	});
+	const legacyScheduleReader = createLegacyScheduleReader({ storeRoot: scheduledStoreRoot });
 	let refreshResultDelivery = () => {};
 	const hasResultDeliveryDemand = () => {
 		if ([...state.asyncJobs.values()].some((job) => job.status === "queued" || job.status === "running")) return true;
 		if (state.foregroundControls.size > 0) return true;
-		if (scheduledRunManager.observedCompletionRunIds().size > 0) return true;
 		return missionObserverResultCandidateFiles(DIRS.results).length > 0;
 	};
 	const discoverAgentsForRuntime = (cwd: string, scope: AgentScope, preferredModelProvider?: string) => {
@@ -549,8 +533,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		{
 			notifier: completionNotifier,
 			ownership: resultDeliveryOwnership,
-			observeCompletion: (result) => scheduledRunManager.handleAsyncCompletion(result),
-			observedCompletionRunIds: () => scheduledRunManager.observedCompletionRunIds(),
 			hasDeliveryDemand: hasResultDeliveryDemand,
 			deliverIntercomResults: config.intercomBridge?.resultDelivery === true,
 			resultScanLogging: config.resultScanLogging,
@@ -568,7 +550,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				protectedRunIds: new Set([
 					...state.asyncJobs.keys(),
 					...(state.workflowControllers?.keys() ?? []),
-					...scheduledRunManager.referencedAsyncRunIds(),
 				]),
 			});
 		} catch (error) {
@@ -584,7 +565,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		asyncByDefault,
 		waitToolEnabled: waitToolConfig.enabled,
 		waitToolDefaultTimeoutMs: waitToolConfig.defaultTimeoutMs,
-		handleScheduledRunAction: (params, ctx) => scheduledRunManager.handleToolCall(params, ctx),
 		watchdog: mainWatchdog,
 		tempArtifactsDir,
 		getSubagentSessionRoot,
@@ -593,8 +573,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		activateSupervisorTransport: () => supervisorChannel.activateTransport(),
 		refreshResultDelivery: () => refreshResultDelivery(),
 	});
-	executorScheduled = executor.executeScheduled;
-
 	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
 		const details = resolveSlashMessageDetails(message.details);
 		if (!details) return undefined;
@@ -695,6 +673,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		events: pi.events,
 		getContext: () => state.lastUiContext,
 		execute: (id, params, signal, onUpdate, ctx) => executor.executeTrustedHost(id, params, signal, onUpdate, ctx),
+		executeLegacyScheduleRead: (params, ctx) => legacyScheduleReader.handleToolCall(params, ctx),
 		state,
 	});
 
@@ -795,7 +774,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		handleComplete(payload);
 		refreshResultDelivery();
 		refreshActiveAsyncCapacity();
-		scheduledRunManager.handleAsyncCompletion(payload);
 		fleetStatus?.refresh();
 	};
 	const eventUnsubscribes = [
@@ -916,9 +894,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		restoreActiveJobs(ctx);
 		logSlowPhase("active-job-restore", phaseStartedAt);
 		phaseStartedAt = Date.now();
-		scheduledRunManager.bindSession(ctx);
-		logSlowPhase("scheduled-runs", phaseStartedAt);
-		phaseStartedAt = Date.now();
 		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
 		logSlowPhase("slash-snapshots", phaseStartedAt);
 		phaseStartedAt = Date.now();
@@ -956,7 +931,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			resultDeliveryOwnership.clear();
 			completionNotifier.dispose();
 			mainWatchdog.dispose();
-			scheduledRunManager.stop();
 			supervisorChannel.dispose();
 			waitSubscriptionManager.dispose();
 			fleetStatus?.dispose();

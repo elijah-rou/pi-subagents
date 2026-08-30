@@ -20,7 +20,6 @@ import { findModelInfo, toModelInfo } from "../shared/model-info.ts";
 import { formatTokens, shortenPath } from "../shared/formatters.ts";
 import { listAsyncRuns, formatAsyncRunProgressLabel, type AsyncRunSummary } from "../runs/background/async-status.ts";
 import { encodeInspectReply, handleInspectRpcArgs, INSPECT_WIDGET_KEY } from "../runs/background/inspect-rpc.ts";
-import { listScheduledRunSummaries } from "../runs/background/scheduled-runs.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { resolveAsyncStatusChild } from "../runs/shared/child-identity.ts";
 import { readStatus } from "../shared/utils.ts";
@@ -173,7 +172,7 @@ async function withSlashStatus<T>(
 type Theme = ExtensionContext["ui"]["theme"];
 
 type StopSelectorTarget = {
-	kind: "async" | "scheduled";
+	kind: "async";
 	id: string;
 	label: string;
 	detail: string;
@@ -183,9 +182,7 @@ type StopSelectorTarget = {
 type StopSelectorResult = { confirmed: boolean; target?: StopSelectorTarget };
 
 function commandForTarget(target: StopSelectorTarget): string {
-	return target.kind === "scheduled"
-		? `subagent({ action: "schedule.pause", id: ${JSON.stringify(target.id)} })`
-		: `subagent({ action: "stop", id: ${JSON.stringify(target.id)} })`;
+	return `subagent({ action: "stop", id: ${JSON.stringify(target.id)} })`;
 }
 
 function formatAsyncStopTarget(run: AsyncRunSummary): StopSelectorTarget {
@@ -200,40 +197,23 @@ function formatAsyncStopTarget(run: AsyncRunSummary): StopSelectorTarget {
 	};
 }
 
-function scheduledStopTargets(ctx: ExtensionContext, _state: SubagentState): StopSelectorTarget[] {
-	try {
-		return listScheduledRunSummaries(ctx.cwd)
-			.filter((schedule) => !schedule.paused && !schedule.activeRunId && schedule.trigger.nextRunAt)
-			.sort((left, right) => left.trigger.nextRunAt!.localeCompare(right.trigger.nextRunAt!))
-			.map((schedule) => ({
-				kind: "scheduled" as const,
-				id: schedule.id,
-				label: `${schedule.id} · ${schedule.name}`,
-				detail: `scheduled · ${schedule.trigger.nextRunAt}`,
-				actionLabel: "pause schedule",
-			}));
-	} catch {
-		return [];
-	}
-}
-
 function discoverStopTargets(ctx: ExtensionContext, state: SubagentState): StopSelectorTarget[] {
 	const sessionId = state.currentSessionId ?? ctx.sessionManager.getSessionId() ?? undefined;
 	const asyncTargets = listAsyncRuns(DIRS.async, {
 		states: ["queued", "running"],
 		...(sessionId ? { sessionId } : {}),
 	}).map(formatAsyncStopTarget);
-	return [...asyncTargets, ...scheduledStopTargets(ctx, state)];
+	return asyncTargets;
 }
 
 function stopFallbackText(targets: StopSelectorTarget[]): string {
-	if (targets.length === 0) return "No active current-session async runs or scheduled subagent runs to stop.";
+	if (targets.length === 0) return "No active current-session async runs to stop.";
 	const lines = ["Subagent stop targets:", ""];
 	for (const target of targets) {
 		lines.push(`- ${target.label}`);
 		lines.push(`  ${target.detail}`);
 		lines.push(`  ${target.actionLabel}: ${commandForTarget(target)}`);
-		if (target.kind === "async") lines.push(`  slash: /subagents-stop ${target.id}`);
+		lines.push(`  slash: /subagents-stop ${target.id}`);
 	}
 	return lines.join("\n");
 }
@@ -305,7 +285,7 @@ class SubagentsStopSelector implements Component {
 
 	render(width: number): string[] {
 		const contentWidth = Math.max(0, Math.min(this.width, Math.floor(width)));
-		const lines = [this.theme.bold("Stop subagent run"), this.theme.fg("dim", "Select a current-session async run to stop, or a scheduled run to cancel."), ""];
+		const lines = [this.theme.bold("Stop subagent run"), this.theme.fg("dim", "Select a current-session async run to stop."), ""];
 		const maxRows = 10;
 		const start = Math.max(0, Math.min(this.selected - maxRows + 1, Math.max(0, this.targets.length - maxRows)));
 		for (let index = start; index < Math.min(this.targets.length, start + maxRows); index++) {
@@ -313,7 +293,7 @@ class SubagentsStopSelector implements Component {
 			const selected = index === this.selected;
 			const marker = selected ? "›" : " ";
 				const actionLabel = target.actionLabel;
-			const action = target.kind === "scheduled" ? this.theme.fg("warning", actionLabel) : this.theme.fg("accent", actionLabel);
+			const action = this.theme.fg("accent", actionLabel);
 			const labelWidth = Math.max(0, contentWidth - marker.length - actionLabel.length - 2);
 			lines.push(`${marker} ${action} ${target.label.slice(0, labelWidth)}`);
 			if (selected) lines.push(this.theme.fg("dim", `  ${target.detail}`.slice(0, contentWidth)));
@@ -323,7 +303,7 @@ class SubagentsStopSelector implements Component {
 		if (this.confirming) {
 			const target = this.targets[this.selected]!;
 			lines.push(this.theme.fg("warning", `Confirm: ${target.actionLabel} ${target.id}?`));
-			if (target.kind === "async") lines.push(this.theme.fg("dim", "Stop ends this run; use interrupt for a resumable pause."));
+			lines.push(this.theme.fg("dim", "Stop ends this run; use interrupt for a resumable pause."));
 			lines.push(this.theme.fg("dim", "Enter/Y confirms · N returns · Esc cancels"));
 		} else {
 			lines.push(this.theme.fg("dim", "↑↓/jk select · Enter confirm · Esc cancel"));
@@ -1051,7 +1031,7 @@ export function registerSlashCommands(
 				return;
 			}
 			if (targets.length === 0) {
-				ctx.ui.notify("No active current-session async runs or scheduled subagent runs to stop.", "info");
+				ctx.ui.notify("No active current-session async runs to stop.", "info");
 				return;
 			}
 
@@ -1060,10 +1040,6 @@ export function registerSlashCommands(
 				{ overlay: true, overlayOptions: { anchor: "center", width: 88, maxHeight: "80%" } },
 			);
 			if (!result?.confirmed || !result.target) return;
-			if (result.target.kind === "scheduled") {
-				await runCommand(ctx, { action: "schedule.pause", id: result.target.id });
-				return;
-			}
 			await runCommand(ctx, { action: "stop", id: result.target.id });
 		},
 	});

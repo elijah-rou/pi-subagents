@@ -52,26 +52,29 @@ describe("slash subagent bridge requester context", () => {
     await done;
   });
 
-  it("passes trusted human administration removed from the model surface", async () => {
-    const events = eventBus();
-    let executedParams: any;
-    registerSlashSubagentBridge({
-      events,
-      getContext: () => ({ cwd: "/repo" }) as any,
-      execute: async (_id, params) => {
-        executedParams = params;
-        return { content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } } as any;
-      },
-    });
-    const done = new Promise<void>((resolve, reject) => events.on(RESPONSE, (data: any) => {
-      try {
-        assert.equal(data.isError, false);
-        assert.equal(executedParams.action, "schedule.list");
-        resolve();
-      } catch (error) { reject(error); }
-    }));
-    events.emit(REQUEST, { requestId: "trusted-admin", params: { action: "schedule.list" } });
-    await done;
+  it("rejects legacy schedule reads before non-RPC trusted-host dispatch", async () => {
+    for (const action of ["schedule.list", "schedule.show", "schedule.history"]) {
+      const events = eventBus();
+      let executeCalls = 0;
+      registerSlashSubagentBridge({
+        events,
+        getContext: () => ({ cwd: "/repo" }) as any,
+        execute: async () => {
+          executeCalls++;
+          return { content: [{ type: "text", text: "unexpected" }], details: { mode: "management", results: [] } } as any;
+        },
+      });
+      const done = new Promise<void>((resolve, reject) => events.on(RESPONSE, (data: any) => {
+        try {
+          assert.equal(data.isError, true);
+          assert.match(data.result.content[0].text, /Unknown trusted host action/);
+          assert.equal(executeCalls, 0);
+          resolve();
+        } catch (error) { reject(error); }
+      }));
+      events.emit(REQUEST, { requestId: `trusted-${action}`, params: { action, id: "legacy" } });
+      await done;
+    }
   });
 
   it("rejects internal append-step compatibility before executor dispatch", async () => {

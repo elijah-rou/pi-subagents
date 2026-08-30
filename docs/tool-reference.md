@@ -10,7 +10,7 @@ The model-facing actions are exactly:
 
 Omit `action` for execution. Use `{ agent, task? }` for one direct child, or `workflowScript`/`workflowScriptPath` for orchestration. `validate` accepts a workflow script without launching children.
 
-Agent authoring uses the human `/subagents` interface. Refinement uses `/subagents-refine`. Watchdog administration uses `/subagents-watchdog`. Provider profiles use `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, and `/subagents-check-profile`. Fleet inspection uses `/subagents-fleet`. Existing RPC schedule-management methods remain supported for trusted RPC clients.
+Agent authoring uses the human `/subagents` interface. Refinement uses `/subagents-refine`. Watchdog administration uses `/subagents-watchdog`. Provider profiles use `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, and `/subagents-check-profile`. Fleet inspection uses `/subagents-fleet`. Trusted RPC clients retain only passive legacy `schedule.list`, `schedule.show`, and `schedule.history` readers for one release.
 
 Package 2a removed mission and goal administration and all new mission writes. Only one-release passive legacy readers and completion merge remain. Lane merge/supersession policy, broad worktree cleanup, and optional pane administration still have no model-facing access. Models must not attempt removed action names or fields.
 

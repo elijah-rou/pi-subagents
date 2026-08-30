@@ -103,7 +103,7 @@ describe("subagent extension RPC bridge", () => {
 		);
 		assert.deepEqual(
 			(reply as { data: { capabilities?: { managementActions?: unknown } } }).data.capabilities?.managementActions,
-			["schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.delete"],
+			["schedule.list", "schedule.show", "schedule.history"],
 		);
 		assert.deepEqual(
 			(reply as { data: { capabilities?: { fleetStatus?: unknown } } }).data.capabilities?.fleetStatus,
@@ -166,31 +166,36 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
-	it("delegates allowlisted schedule management through the active session", async () => {
+	it("dispatches passive legacy schedule reads only through the dedicated RPC seam", async () => {
 		const events = new FakeEvents();
-		const executed: unknown[] = [];
+		const managed: unknown[] = [];
 		const bridge = registerSubagentRpcBridge({
 			events,
 			getContext: () => ctx(),
-			execute: async (_id, params) => {
-				executed.push(params);
+			execute: async () => assert.fail("legacy schedule reads must bypass the trusted-host executor"),
+			executeLegacyScheduleRead: async (params) => {
+				managed.push(params);
 				return { content: [{ type: "text", text: "ok" }], details: { mode: "management", results: [] } } satisfies AgentToolResult<Details>;
 			},
 		});
 
 		assert.equal((await request(events, "manage-list", "manage", { action: "schedule.list" })).success, true);
-		assert.equal((await request(events, "manage-pause", "manage", { action: "schedule.pause", id: "nightly" })).success, true);
-		assert.deepEqual(executed, [
+		assert.equal((await request(events, "manage-show", "manage", { action: "schedule.show", id: "nightly" })).success, true);
+		assert.equal((await request(events, "manage-history", "manage", { action: "schedule.history", id: "nightly" })).success, true);
+		assert.deepEqual(managed, [
 			{ action: "schedule.list" },
-			{ action: "schedule.pause", id: "nightly" },
+			{ action: "schedule.show", id: "nightly" },
+			{ action: "schedule.history", id: "nightly" },
 		]);
 
 		const denied = await request(events, "manage-denied", "manage", { action: "mission.close", id: "mission-1" });
 		assert.equal(denied.success, false);
 		assert.equal((denied as { error: { code: string } }).error.code, "invalid_params");
-		const missingId = await request(events, "manage-missing", "manage", { action: "schedule.run" });
-		assert.equal(missingId.success, false);
-		assert.equal((missingId as { error: { code: string } }).error.code, "invalid_params");
+		for (const action of ["schedule.create", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]) {
+			const rejected = await request(events, `manage-${action}`, "manage", { action, id: "nightly" });
+			assert.equal(rejected.success, false);
+			assert.equal((rejected as { error: { code: string } }).error.code, "invalid_params");
+		}
 
 		bridge.dispose();
 	});

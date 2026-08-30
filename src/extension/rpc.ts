@@ -66,10 +66,6 @@ export const SUBAGENT_RPC_MANAGEMENT_ACTIONS = [
 	"schedule.list",
 	"schedule.show",
 	"schedule.history",
-	"schedule.pause",
-	"schedule.resume",
-	"schedule.run",
-	"schedule.delete",
 ] as const;
 
 type SubagentRpcManagementAction = typeof SUBAGENT_RPC_MANAGEMENT_ACTIONS[number];
@@ -309,6 +305,8 @@ interface RegisterSubagentRpcBridgeOptions {
 		onUpdate: ((result: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
+	/** Dedicated RPC-only compatibility dispatch; never route through trusted-host execution. */
+	executeLegacyScheduleRead?: (params: { action: SubagentRpcManagementAction; id?: string }, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
 	asyncDirRoot?: string;
 	resultsDir?: string;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -444,7 +442,7 @@ async function executeChecked(
 	return dataFromToolResult(result);
 }
 
-function manageParams(params: unknown): SubagentParamsLike {
+function manageParams(params: unknown): { action: SubagentRpcManagementAction; id?: string } {
 	const input = assertRecordParams(params, "manage");
 	if (typeof input.action !== "string" || !(SUBAGENT_RPC_MANAGEMENT_ACTIONS as readonly string[]).includes(input.action)) {
 		throw new SubagentRpcError(
@@ -465,7 +463,7 @@ function manageParams(params: unknown): SubagentParamsLike {
 		...(typeof input.id === "string" ? { id: input.id.trim() } : {}),
 	};
 	assertSubagentParams(output, "RPC manage params");
-	return output;
+	return output as { action: SubagentRpcManagementAction; id?: string };
 }
 
 function spawnParams(params: unknown): SubagentParamsLike {
@@ -683,7 +681,11 @@ async function handleRequest(
 	if (!ctx) throw new SubagentRpcError("no_active_session", "No active extension context for subagent RPC.");
 
 	if (request.method === "manage") {
-		return executeChecked(options, ctx, request.requestId, request.method, manageParams(request.params));
+		const params = manageParams(request.params);
+		if (!options.executeLegacyScheduleRead) throw new SubagentRpcError("execution_failed", "Legacy schedule reader is unavailable.");
+		const result = await options.executeLegacyScheduleRead(params, ctx);
+		failIfToolError(result);
+		return dataFromToolResult(result);
 	}
 	if (request.method === "spawn") {
 		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params));

@@ -7,8 +7,8 @@ import {
 import { SUBAGENT_ACTIONS, SUBAGENT_INTERNAL_ACTIONS } from "../../src/shared/types.ts";
 
 describe("public subagent execution normalization", () => {
-	it("rejects removed mission fields on public and trusted surfaces", () => {
-		for (const params of [{ missionId: "old" }, { mission: false }, { missionUpdate: {} }]) {
+	it("rejects removed mission fields and new schedule origin on public and trusted surfaces", () => {
+		for (const params of [{ missionId: "old" }, { mission: false }, { missionUpdate: {} }, { scheduleOrigin: { id: "legacy" } }]) {
 			assert.equal(normalizePublicSubagentExecution(params).ok, false);
 			assert.equal(normalizeTrustedHostSubagentExecution(params).ok, false);
 		}
@@ -18,8 +18,8 @@ describe("public subagent execution normalization", () => {
 			"list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status",
 			"status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor",
 		]);
-		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 49);
-		assert.ok(SUBAGENT_INTERNAL_ACTIONS.includes("schedule.create"));
+		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 40);
+		assert.deepEqual(SUBAGENT_INTERNAL_ACTIONS.filter((action) => action.startsWith("schedule.")), []);
 		assert.ok(!SUBAGENT_INTERNAL_ACTIONS.includes("append-step"));
 	});
 
@@ -82,7 +82,6 @@ describe("public subagent execution normalization", () => {
 	it("rejects administration removed from the model surface but accepts it for trusted hosts", () => {
 		for (const params of [
 			{ action: "create" },
-			{ action: "schedule.create", every: "1h", workflowScript: "return 1" },
 			{ action: "watchdog.status" },
 			{ action: "worktree.cleanup", mode: "plan" },
 			{ action: "lane.recordMerge" },
@@ -91,6 +90,10 @@ describe("public subagent execution normalization", () => {
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.match(result.error, /human administration|removed from the model surface/i);
 			assert.equal(normalizeTrustedHostSubagentExecution(params).ok, true, params.action);
+		}
+		for (const action of ["schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]) {
+			assert.equal(normalizePublicSubagentExecution({ action }).ok, false);
+			assert.equal(normalizeTrustedHostSubagentExecution({ action }).ok, false);
 		}
 		for (const normalize of [normalizePublicSubagentExecution, normalizeTrustedHostSubagentExecution]) {
 			const appendStep = normalize({ action: "append-step", id: "run", step: { agent: "worker" } });

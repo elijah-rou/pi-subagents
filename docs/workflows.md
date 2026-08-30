@@ -61,7 +61,7 @@ subagent({ workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" })
 subagent({ action: "validate", workflowScriptPath: "workflows/review.js" });
 ```
 
-The fields are mutually exclusive. Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation, schedule creation, or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
+The fields are mutually exclusive. Relative paths resolve against the request `cwd`; absolute paths pass through. The host reads the file before validation or workflow sandbox execution. The sandbox still has no filesystem access. Missing, unreadable, and empty files return file input errors instead of script syntax errors.
 
 ### Opt-in bounded workflows
 

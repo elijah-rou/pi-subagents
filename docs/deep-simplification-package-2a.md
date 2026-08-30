@@ -16,7 +16,7 @@ Corrupt records and bindings remain untouched. Existing status/Fleet/Herdr displ
 
 ## Authoritative recovery
 
-New runs recover from async `status.json`, `events.jsonl`, result files/indexes, process-terminal proof, workflow receipts, workflow-child summaries, wait subscriptions, and native stop/steer/resume controls. Package 2a does not change acceptance, identity, capability/resource ceilings, visibility, schedules, or ordinary retention.
+New runs recover from async `status.json`, `events.jsonl`, result files/indexes, process-terminal proof, workflow receipts, workflow-child summaries, wait subscriptions, and native stop/steer/resume controls. Package 2a did not change acceptance, identity, capability/resource ceilings, visibility, schedules, or ordinary retention. Package 2b subsequently removed schedule execution and schedule-based retention.
 
 ## Follow-up RED-GREEN evidence
 
@@ -63,4 +63,4 @@ GREEN evidence:
 | Idle watcher start | 1 realpath + 1 watch | 1 realpath + 1 watch | 0 |
 | Empty healthy scan | 3 readdir / 60 s | 3 readdir / 60 s | 0 |
 
-Local timing variation is not an SLO. Production code remains materially net-negative while schedules and core recovery remain intact.
+Local timing variation is not an SLO. Production code remains materially net-negative while schedules were still intact; Package 2b subsequently removed them from execution.

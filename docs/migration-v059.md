@@ -5,7 +5,7 @@ This is the upgrade checklist for users moving from the fork before the v0.46–
 ## Common upgrade actions
 
 1. **Reload Pi after installing the new package.** Settings and agent/profile files are loaded into the live runtime; after editing either, reload Pi again. Existing running or persisted launches retain their saved contracts rather than being reinterpreted with new defaults.
-2. **Move project-scoped state you still need** from `<project>/.pi-subagents/` to `<project>/.pi/subagents/` before relying on it. New project artifacts, schedules, refinements, views, cleanup plans, and workflow artifacts configured with `artifactDir: "project"` use `.pi/subagents/`. There is no general automatic migration from `.pi-subagents/`.
+2. **Move project-scoped state you still need** from `<project>/.pi-subagents/` to `<project>/.pi/subagents/` before relying on it. Project artifacts, refinements, views, cleanup plans, and workflow artifacts configured with `artifactDir: "project"` use `.pi/subagents/`. Package 2b no longer creates schedules; passive readers inspect only existing records at `.pi/subagents/schedules/`. There is no general automatic migration from `.pi-subagents/`.
 3. **Review concurrency settings.** Omitted `maxActiveAsyncRunsPerSession` now means `4`. To retain the old unlimited active top-level async behavior, set this exact compatibility override in the extension config and reload Pi:
 
    ```json

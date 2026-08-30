@@ -121,7 +121,7 @@ WorkflowScript calls use background execution when the request omits `async`. Se
 
 Sets `fresh` or `fork` for every subagent launch that omits `context`. This global preference replaces each agent-level `defaultContext`. Explicit `context: "fresh"` or `context: "fork"` still wins.
 
-With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. Scheduled runs continue to set fresh context explicitly. A runner or provider that does not support fork context keeps its existing rejection behavior.
+With `"fork"`, the setting uses the existing implicit-fork behavior. A launch starts fresh when the parent session file or current leaf is not available. `"fresh"` starts fresh even when the selected agent defaults to fork. A runner or provider that does not support fork context keeps its existing rejection behavior.
 
 ## `forkContext`
 
@@ -299,19 +299,7 @@ This override affects only active top-level async runs in one parent session. It
 
 ## `scheduledRuns`
 
-```json
-{ "scheduledRuns": { "enabled": false, "maxPending": 20 } }
-```
-
-Durable schedules are enabled by default and stored per project under `.pi/subagents/schedules/<id>/`. See [Schedules](schedules.md) for usage.
-
-Set `storeRoot` to keep durable schedules outside project repositories. It must be an absolute path or a `~/` path, which expands from the user home directory. Each project is stored under a hash of its resolved working directory, so projects do not share schedules.
-
-```json
-{ "scheduledRuns": { "storeRoot": "~/.local/share/pi-subagents/schedules" } }
-```
-
-When `storeRoot` is omitted, schedules remain at `<cwd>/.pi/subagents/schedules`.
+Package 2b accepts this object only for one-release legacy read compatibility. `storeRoot` locates existing project-keyed schedule records and must be absolute or start with `~/`. `enabled` and `maxPending` are accepted but inert. No key enables scheduling, timers, writes, launches, or retention. When `storeRoot` is omitted, passive lookup uses `<cwd>/.pi/subagents/schedules`. See [Legacy schedules](schedules.md).
 
 ## `parallel`
 
@@ -454,7 +442,7 @@ Deprecated compatibility setting. Package 2a stopped mission creation and missio
 }
 ```
 
-Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is intentionally a small action map, not a generic policy language. Confirm-required control actions fail closed without an interactive UI.
+Each fixed action resolves to `"auto"`, `"confirm"`, or `"forbid"`. This is intentionally a small action map, not a generic policy language. Confirm-required control actions fail closed without an interactive UI. `scheduleCreate` is accepted but inert after Package 2b.
 
 ## `artifactDir`
 

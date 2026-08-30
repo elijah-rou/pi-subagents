@@ -42,6 +42,7 @@ export interface PublicSubagentExecutionParams {
 	missionUpdate?: unknown;
 	missionStatus?: unknown;
 	missionScope?: unknown;
+	scheduleOrigin?: unknown;
 }
 
 export type PublicSubagentExecutionMode = "workflow" | "management";
@@ -66,6 +67,9 @@ export function normalizeTrustedHostSubagentExecution<T extends PublicSubagentEx
 function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, trustedHost: boolean): PublicSubagentExecutionNormalization<T> {
 	if (params.missionId !== undefined || params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) {
 		return { ok: false, error: "Mission fields were removed. Workflow recovery uses run status, events, results, receipts, and workflow-owned state.", mode: params.action === undefined ? "workflow" : "management" };
+	}
+	if (params.scheduleOrigin !== undefined) {
+		return { ok: false, error: "Schedule origin is historical artifact metadata and cannot be emitted by new launches.", mode: params.action === undefined ? "workflow" : "management" };
 	}
 	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
 		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
@@ -149,17 +153,8 @@ function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(par
 			}
 			return { ok: true, params: { ...params, action: normalizedAction } };
 		}
-		if (trustedHost && normalizedAction === "schedule.create") {
-			if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
-				return { ok: false, error: "schedule.create requires workflowScript or workflowScriptPath and does not accept direct agent, task, or step execution fields.", mode: "management" };
-			}
-			if (!hasValidWorkflowInput) {
-				return { ok: false, error: "schedule.create requires a non-empty workflowScript or workflowScriptPath.", mode: "management" };
-			}
-			return { ok: true, params: { ...params, action: normalizedAction } };
-		}
 		if (hasWorkflowInput) {
-			return { ok: false, error: `Workflow execution must omit action; only validate${trustedHost ? " and schedule.create" : ""} accepts action with workflowScript or workflowScriptPath.`, mode: "management" };
+			return { ok: false, error: "Workflow execution must omit action; only validate accepts action with workflowScript or workflowScriptPath.", mode: "management" };
 		}
 		if (params.task !== undefined) {
 			return { ok: false, error: "Structured single-child task cannot be combined with a management/control action.", mode: "management" };

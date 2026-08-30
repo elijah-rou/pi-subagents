@@ -14,7 +14,7 @@ Do not call agent authoring, refinement, profile, schedule, watchdog, mission, p
 - Diagnostics and guides: `/subagents-doctor`, `/subagents-guide`
 - Models: `/subagents-models`
 
-Existing trusted RPC schedule-management methods remain supported for their current RPC consumers. RPC spawn still accepts only current direct or workflow execution and rejects removed public execution shapes.
+Trusted RPC retains only one-release passive `schedule.list`, `schedule.show`, and `schedule.history` compatibility readers. Schedule mutation and execution are removed. RPC spawn still accepts only current direct or workflow execution and rejects removed public execution shapes.
 
 Package 2a removed mission administration and all new mission writes; only bounded legacy reading and completion synchronization remain for one release. Lane merge/supersession policy, broad cleanup, and optional pane administration still have no supported human replacement. Do not invent or recommend a mission slash interface.
 

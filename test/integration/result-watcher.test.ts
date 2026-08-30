@@ -10,7 +10,6 @@ import { createResultWatcher as createRawResultWatcher } from "../../src/runs/ba
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
-import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { readMission, resolveMissionStoreLocation } from "../../src/missions/store.ts";
 
 function writeLegacyMissionFixture(projectRoot: string, root: string, asyncDir: string, title: string) {
@@ -220,28 +219,6 @@ describe("result watcher", () => {
 		}
 	});
 
-	it("includes scheduled observer ids while priming current-session results", async () => {
-		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-current-prime-"));
-		try {
-			const state = createState();
-			state.currentSessionId = "session-current";
-			let observedRunIdLookups = 0;
-			writeIndexedResult(path.join(resultsDir, "current.json"), { id: "current", sessionId: "session-current", success: true, summary: "done" });
-			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-				deliverIntercomResults: false,
-				observedCompletionRunIds() {
-					observedRunIdLookups += 1;
-					return ["scheduled-a"];
-				},
-			});
-			watcher.primeExistingResults();
-			assert.equal(observedRunIdLookups, 1);
-			watcher.stopResultWatcher();
-		} finally {
-			fs.rmSync(resultsDir, { recursive: true, force: true });
-		}
-	});
-
 	it("skips full parsing for unrelated sessions during priming, safety scans, and native watch events", async () => {
 		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-filter-"));
 		try {
@@ -252,7 +229,6 @@ describe("result watcher", () => {
 			let safetyScan: (() => void) | undefined;
 			let watchEvent: ((event: string, file: string | Buffer | null) => void) | undefined;
 			let safetyScanIntervalMs: number | undefined;
-			let observedRunIdScans = 0;
 			const fakeWatcher = {
 				on() { return fakeWatcher; },
 				close() {},
@@ -276,10 +252,6 @@ describe("result watcher", () => {
 				},
 			}, state, resultsDir, 60_000, {
 				deliverIntercomResults: false,
-				observedCompletionRunIds() {
-					observedRunIdScans += 1;
-					return [];
-				},
 				parseResult(raw) {
 					const parsed = JSON.parse(raw) as { id: string };
 					parsedIds.push(parsed.id);
@@ -316,15 +288,13 @@ describe("result watcher", () => {
 				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "scan-current.json"))), true);
 				assert.deepEqual(parsedIds, ["startup-current", "scan-current"]);
 
-				const scansBeforeWatchEvents = observedRunIdScans;
 				watchEvent?.("rename", "watch-current.json");
 				writeResult("watch-current", "session-current");
 				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "watch-current.json"))), true);
-				assert.equal(observedRunIdScans, scansBeforeWatchEvents);
 
 				writeResult("watch-stale", "session-stale");
 				watchEvent?.("rename", "watch-stale.json");
-				assert.equal(await waitForPredicate(() => observedRunIdScans > scansBeforeWatchEvents), true);
+				await new Promise((resolve) => setTimeout(resolve, 25));
 				assert.deepEqual(parsedIds, ["startup-current", "scan-current", "watch-current"]);
 			} finally {
 				watcher.stopResultWatcher();
@@ -426,17 +396,15 @@ describe("result watcher", () => {
 			const state = createState();
 			state.currentSessionId = "different-session";
 			let parsed = 0;
-			let observed = 0;
 			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
 				parseResult(raw) {
 					parsed += 1;
 					return JSON.parse(raw);
 				},
-				observeCompletion() { observed += 1; },
 			});
 			try {
 				watcher.primeExistingResults();
-				assert.equal(await waitForPredicate(() => observed === 1), true);
+				assert.equal(await waitForPredicate(() => readMission(binding.location, binding.missionId).runs.some((run) => run.runId === runId)), true);
 				watcher.primeExistingResults();
 				await new Promise((resolve) => setTimeout(resolve, 25));
 			} finally {
@@ -444,7 +412,6 @@ describe("result watcher", () => {
 			}
 
 			assert.equal(parsed, 1);
-			assert.equal(observed, 1);
 			assert.equal(fs.existsSync(pendingPath), true);
 			assert.equal((JSON.parse(fs.readFileSync(pendingPath, "utf-8")) as { notificationDeliveredAt?: unknown }).notificationDeliveredAt, undefined);
 			assert.equal(readMission(binding.location, binding.missionId).runs.some((run) => run.runId === runId), true);
@@ -453,150 +420,6 @@ describe("result watcher", () => {
 			console.error = originalError;
 			t.mock.restoreAll();
 			syncBuiltinESMExports();
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("keeps result files until failed completion observers retry successfully", async () => {
-		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-observer-retry-"));
-		const originalError = console.error;
-		try {
-			console.error = () => {};
-			const resultPath = path.join(resultsDir, "observer-retry.json");
-			writeIndexedResult(resultPath, { id: "observer-retry", runId: "observer-retry", sessionId: "session-current", success: true, summary: "done" });
-			const state = createState();
-			state.currentSessionId = "session-current";
-			let observerCalls = 0;
-			let deliveries = 0;
-			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-				observeCompletion: () => {
-					observerCalls += 1;
-					if (observerCalls === 1) throw new Error("observer unavailable");
-				},
-				notifier: { deliver: async () => { deliveries += 1; return true; } },
-			});
-			try {
-				watcher.primeExistingResults();
-				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath) && observerCalls >= 2), true);
-			} finally {
-				watcher.stopResultWatcher();
-			}
-
-			assert.equal(observerCalls, 2);
-			assert.equal(deliveries, 1);
-		} finally {
-			console.error = originalError;
-			fs.rmSync(resultsDir, { recursive: true, force: true });
-		}
-	});
-
-	it("does not redeliver user notification after reload while observer retry is pending", async () => {
-		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-observer-reload-"));
-		const originalError = console.error;
-		try {
-			console.error = () => {};
-			const resultPath = path.join(resultsDir, "observer-reload.json");
-			writeIndexedResult(resultPath, { id: "observer-reload", runId: "observer-reload", sessionId: "session-current", success: true, summary: "done" });
-			let observerCalls = 0;
-			let deliveries = 0;
-			let emitted = 0;
-			const pi = { events: { on: () => () => {}, emit: () => { emitted += 1; } } };
-			const firstState = createState();
-			firstState.currentSessionId = "session-current";
-			const firstWatcher = createResultWatcher(pi, firstState, resultsDir, 60_000, {
-				observeCompletion: () => {
-					observerCalls += 1;
-					throw new Error("observer unavailable");
-				},
-				notifier: { deliver: async () => { deliveries += 1; return true; } },
-			});
-			try {
-				firstWatcher.primeExistingResults();
-				assert.equal(await waitForPredicate(() => {
-					if (deliveries !== 1 || !fs.existsSync(resultPath)) return false;
-					return typeof (JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { notificationDeliveredAt?: unknown }).notificationDeliveredAt === "number";
-				}), true);
-			} finally {
-				firstWatcher.stopResultWatcher();
-			}
-
-			const secondState = createState();
-			secondState.currentSessionId = "session-current";
-			const secondWatcher = createResultWatcher(pi, secondState, resultsDir, 60_000, {
-				observeCompletion: () => { observerCalls += 1; },
-				notifier: { deliver: async () => { deliveries += 1; return true; } },
-			});
-			try {
-				secondWatcher.primeExistingResults();
-				assert.equal(await waitForPredicate(() => !fs.existsSync(resultPath)), true);
-			} finally {
-				secondWatcher.stopResultWatcher();
-			}
-
-			assert.equal(observerCalls, 2);
-			assert.equal(deliveries, 1);
-			assert.equal(emitted, 1);
-		} finally {
-			console.error = originalError;
-			fs.rmSync(resultsDir, { recursive: true, force: true });
-		}
-	});
-
-	it("observes retained-project completions without changing active-session delivery", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scheduled-"));
-		const resultsDir = path.join(root, "results");
-		const project = path.join(root, "project-a");
-		fs.mkdirSync(resultsDir);
-		fs.mkdirSync(project);
-		const ctx = {
-			cwd: project,
-			sessionManager: {
-				getSessionId: () => "session-a",
-				getSessionFile: () => path.join(project, "session-a.jsonl"),
-			},
-		} as unknown as ExtensionContext;
-		const manager = createScheduledRunManager({
-			config: { scheduledRuns: { enabled: true } },
-			storeRoot: path.join(root, "stores"),
-			launch: async () => ({ content: [{ type: "text", text: "Async" }], details: { mode: "single", results: [], asyncId: "scheduled-a" } }),
-		});
-		try {
-			manager.bindSession(ctx);
-			await manager.handleToolCall({ action: "schedule.create", id: "retained", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })" }, ctx);
-			await manager.handleToolCall({ action: "schedule.run", id: "retained" }, ctx);
-			const scheduleDir = path.join(scheduledRunStorePath(project, undefined, path.join(root, "stores")), "retained");
-			assert.equal(fs.existsSync(path.join(scheduleDir, "active.lock")), true);
-
-			const emitted: Array<{ event: string; data: unknown }> = [];
-			const state = createState();
-			state.currentSessionId = "session-b";
-			const resultPath = path.join(resultsDir, "scheduled-a.json");
-			writeIndexedResult(resultPath, { id: "scheduled-a", sessionId: "session-a", success: true, summary: "done" });
-			const watcher = createResultWatcher({
-				events: {
-					on: () => () => {},
-					emit(event: string, data: unknown) { emitted.push({ event, data }); },
-				},
-			}, state, resultsDir, 60_000, {
-				observeCompletion: (result) => manager.handleAsyncCompletion(result),
-				observedCompletionRunIds: () => manager.observedCompletionRunIds(),
-				notifier: { deliver: async () => assert.fail("inactive-session completion must not reach the live notifier") },
-			});
-			try {
-				watcher.startResultWatcher();
-				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			} finally {
-				watcher.stopResultWatcher();
-			}
-
-			assert.equal(state.currentSessionId, "session-b");
-			assert.equal(emitted.length, 0);
-			assert.equal(fs.existsSync(path.join(scheduleDir, "active.lock")), false);
-			assert.match(fs.readFileSync(path.join(scheduleDir, "history.json"), "utf-8"), /"state": "completed"/);
-			assert.equal(fs.existsSync(resultPath), true, "the owning session keeps delivery ownership of its result file");
-		} finally {
-			manager.stop();
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
@@ -671,118 +494,6 @@ describe("result watcher", () => {
 				watcher.stopResultWatcher();
 			}
 			assert.deepEqual(parsedIds, ["current"]);
-			assert.equal(fs.existsSync(path.join(resultsDir, "stale-0.json")), true);
-		} finally {
-			fs.rmSync(resultsDir, { recursive: true, force: true });
-		}
-	});
-
-	it("includes observer-known run ids when current-session results are also indexed", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-mixed-observer-"));
-		try {
-			const resultsDir = path.join(root, "results");
-			writeIndexedResult(path.join(resultsDir, "current.json"), { id: "current", runId: "current", sessionId: "session-current", success: true, summary: "current" });
-			writeIndexedResult(path.join(resultsDir, "scheduled-a.json"), { id: "scheduled-a", runId: "scheduled-a", sessionId: "session-a", success: true, summary: "scheduled" });
-			let observations = 0;
-			const state = createState();
-			state.currentSessionId = "session-current";
-			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-				observedCompletionRunIds: () => ["scheduled-a"],
-				observeCompletion: (result) => { if (result.runId === "scheduled-a") observations += 1; },
-				notifier: { deliver: async () => true },
-			});
-			try {
-				watcher.primeExistingResults();
-				assert.equal(await waitForPredicate(() => observations === 1), true);
-				assert.equal(await waitForPredicate(() => !fs.existsSync(path.join(resultsDir, "current.json"))), true);
-			} finally {
-				watcher.stopResultWatcher();
-			}
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it("delivers observed indexed pending results when public promotion is blocked", async () => {
-		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-observed-pending-"));
-		const originalError = console.error;
-		try {
-			console.error = () => {};
-			for (let i = 0; i < 300; i += 1) {
-				fs.writeFileSync(path.join(resultsDir, `stale-${i}.json`), JSON.stringify({ id: `stale-${i}`, sessionId: "session-stale", success: true, summary: "done" }), "utf-8");
-			}
-			const resultPath = path.join(resultsDir, "scheduled-pending.json");
-			fs.mkdirSync(resultPath, { recursive: true });
-			writePendingAsyncResultFile(resultPath, {
-				id: "scheduled-pending",
-				runId: "scheduled-pending",
-				sessionId: "session-a",
-				completionOwnerId: COMPLETION_OWNER_ID,
-				success: true,
-				state: "complete",
-				summary: "scheduled pending done",
-			});
-			let observations = 0;
-			const state = createState();
-			state.currentSessionId = "session-b";
-			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-				observedCompletionRunIds: () => ["scheduled-pending"],
-				observeCompletion: (result) => {
-					if (result.runId === "scheduled-pending") observations += 1;
-				},
-				notifier: { deliver: async () => assert.fail("observer-owned completion must not reach active delivery") },
-			});
-			try {
-				watcher.primeExistingResults();
-				assert.equal(await waitForPredicate(() => observations === 1), true);
-			} finally {
-				watcher.stopResultWatcher();
-			}
-
-			assert.equal(fs.existsSync(pendingResultPath(resultsDir, "session-a", "scheduled-pending")), true);
-			assert.equal(fs.statSync(resultPath).isDirectory(), true);
-			assert.equal(fs.existsSync(path.join(resultsDir, "stale-0.json")), true);
-		} finally {
-			console.error = originalError;
-			fs.rmSync(resultsDir, { recursive: true, force: true });
-		}
-	});
-
-	it("uses observed run ids directly without scanning a stale result pile", async () => {
-		const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-observed-index-"));
-		try {
-			for (let i = 0; i < 300; i += 1) {
-				fs.writeFileSync(path.join(resultsDir, `stale-${i}.json`), JSON.stringify({ id: `stale-${i}`, sessionId: "session-stale", success: true, summary: "done" }), "utf-8");
-			}
-			const resultPath = path.join(resultsDir, "scheduled-a.json");
-			writeIndexedResult(resultPath, { id: "scheduled-a", runId: "scheduled-a", sessionId: "session-a", success: true, summary: "done" });
-			let observations = 0;
-			let observed = true;
-			const makeWatcher = () => {
-				const state = createState();
-				state.currentSessionId = "session-b";
-				return createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-					observedCompletionRunIds: () => observed ? ["scheduled-a"] : [],
-					observeCompletion: () => { observations += 1; observed = false; },
-					notifier: { deliver: async () => assert.fail("observer-owned completion must not reach active delivery") },
-				});
-			};
-			let watcher = makeWatcher();
-			try {
-				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			} finally {
-				watcher.stopResultWatcher();
-			}
-			watcher = makeWatcher();
-			try {
-				watcher.primeExistingResults();
-				await new Promise((resolve) => setTimeout(resolve, 10));
-			} finally {
-				watcher.stopResultWatcher();
-			}
-			assert.equal(observations, 1);
-			assert.equal(fs.existsSync(resultPath), true);
 			assert.equal(fs.existsSync(path.join(resultsDir, "stale-0.json")), true);
 		} finally {
 			fs.rmSync(resultsDir, { recursive: true, force: true });
@@ -2339,13 +2050,15 @@ describe("result watcher", () => {
 		const runScan = (deps: Record<string, unknown>) => {
 			const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-scanlog-"));
 			const state = createState();
-			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-				observedCompletionRunIds: slowScan,
-				...deps,
-			} as Parameters<typeof createRawResultWatcher>[4]);
+			state.currentSessionId = "session-current";
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, deps as Parameters<typeof createRawResultWatcher>[4]);
+			const originalNow = Date.now;
+			let now = originalNow();
+			Date.now = () => (now += 600);
 			try {
 				watcher.primeExistingResults();
 			} finally {
+				Date.now = originalNow;
 				watcher.stopResultWatcher();
 				fs.rmSync(resultsDir, { recursive: true, force: true });
 			}
@@ -2388,15 +2101,16 @@ describe("result watcher", () => {
 			state.currentSessionId = "session-current";
 			writeIndexedResult(path.join(resultsDir, "activity-run.json"), { id: "activity-run", sessionId: "session-current", runId: "activity-run", success: true, summary: "done" });
 			const { errors, restore } = captureScanErrors();
-			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-				observedCompletionRunIds: slowScan,
-				resultScanLogging: "activity",
-			});
+			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, { resultScanLogging: "activity" });
+			const originalNow = Date.now;
+			let now = originalNow();
+			Date.now = () => (now += 600);
 			try {
 				watcher.primeExistingResults();
 				assert.ok(errors.length >= 1, "expected a scan log for a scan that found work");
 				assert.match(errors[0], /inspected [1-9]/);
 			} finally {
+				Date.now = originalNow;
 				watcher.stopResultWatcher();
 				restore();
 				fs.rmSync(resultsDir, { recursive: true, force: true });
@@ -2410,7 +2124,7 @@ describe("result watcher", () => {
 			writeIndexedResult(path.join(resultsDir, "off-run.json"), { id: "off-run", sessionId: "session-current", runId: "off-run", success: true, summary: "done" });
 			const { errors, restore } = captureScanErrors();
 			const watcher = createResultWatcher({ events: { on: () => () => {}, emit() {} } }, state, resultsDir, 60_000, {
-				observedCompletionRunIds: slowScan,
+				hasDeliveryDemand: () => { slowScan(); return false; },
 				resultScanLogging: "off",
 			});
 			try {

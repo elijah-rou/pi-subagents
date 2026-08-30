@@ -46,10 +46,6 @@ type ResultWatcherDeps = {
 	fs?: ResultWatcherFs;
 	timers?: ResultWatcherTimers;
 	notifier?: Pick<CompletionNotifier, "deliver">;
-	/** Receives persisted completions before active-session delivery filtering. */
-	observeCompletion?: (result: CompletionNotification & { runId: string }) => void;
-	/** Returns cross-session run ids that the completion observer currently owns. */
-	observedCompletionRunIds?: () => Iterable<string>;
 	/** Parses a relevant result payload after its lightweight identity check. */
 	parseResult?: (raw: string) => ResultFileData;
 	/** External grouped-result transport. Disable when native completion notifications own delivery. */
@@ -302,26 +298,15 @@ export function createResultWatcher(
 		}
 	};
 
-	const observedRunIds = (): ReadonlySet<string> => {
-		try {
-			return new Set(deps.observedCompletionRunIds?.() ?? []);
-		} catch (error) {
-			console.error("Failed to inspect observed subagent completion ids:", error);
-			return new Set();
-		}
-	};
-
-	const shouldProcessResult = (file: string, observed?: ReadonlySet<string>, knownSignature?: string): boolean => {
-		const inspected = inspectResult(file, knownSignature, observed);
+	const shouldProcessResult = (file: string, knownSignature?: string): boolean => {
+		const inspected = inspectResult(file, knownSignature);
 		if (!inspected) return false;
 		const { identity } = inspected;
 		// Missing identity stays on the normal parser path so malformed or legacy
 		// files keep their existing diagnostics and compatibility behavior.
 		if (!identity.sessionId) return true;
 		if (ownsResult(identity.sessionId, identity.completionOwnerId)) return true;
-		if (identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE))) return true;
-		if (identity.runId && (observed ?? observedRunIds()).has(identity.runId)) return true;
-		return Boolean(deps.observeCompletion && !deps.observedCompletionRunIds);
+		return Boolean(identity.asyncDir && fsApi.existsSync(path.join(identity.asyncDir, MISSION_BINDING_FILE)));
 	};
 
 	const removeDeliveredResult = (file: string, sessionId: string, runId: string, toolCallId: string | undefined): boolean => {
@@ -340,13 +325,8 @@ export function createResultWatcher(
 	};
 	const handleResult = async (file: string, triggerTurn: boolean) => {
 		if (processing.has(file)) return;
-		let observed: ReadonlySet<string> | undefined;
 		try {
-			if (!shouldProcessResult(file)) {
-				const runId = file === path.basename(file) && file.endsWith(".json") ? file.replace(/\.json$/i, "") : undefined;
-				observed = observedRunIds();
-				if (!runId || !observed.has(runId) || !shouldProcessResult(file, observed)) return;
-			}
+			if (!shouldProcessResult(file)) return;
 		} catch (error) {
 			if (!isAccessDenied(error)) throw error;
 			console.error(`Failed to inspect subagent result file '${publicResultPath(file)}'; will retry:`, error);
@@ -369,7 +349,7 @@ export function createResultWatcher(
 			return { state, timestamp };
 		};
 		try {
-			const payloadPath = resultPayloadPath(file, observed);
+			const payloadPath = resultPayloadPath(file);
 			if (!payloadPath) return;
 			resultPath = payloadPath;
 			let raw = fsApi.readFileSync(resultPath, "utf-8");
@@ -416,12 +396,6 @@ export function createResultWatcher(
 			} catch (error) {
 				observerSucceeded = false;
 				console.error(`Mission completion sync failed for '${resultPath}':`, error);
-			}
-			try {
-				deps.observeCompletion?.({ ...data, runId });
-			} catch (error) {
-				observerSucceeded = false;
-				console.error(`Completion observer failed for '${resultPath}':`, error);
 			}
 			if (observerSucceeded) removeMissionObserverIndex(resultsDir, runId);
 			const epoch = deliveryEpoch;
@@ -630,7 +604,7 @@ export function createResultWatcher(
 		if (resultScanLogging === "activity" && stats.files === 0 && stats.scheduled === 0) return;
 		console.error(`Subagent result scan inspected ${stats.files} indexed result file(s), scheduled ${stats.scheduled} in ${elapsed}ms (${resultsDir}).`);
 	};
-	const indexedResultCandidates = (observed: ReadonlySet<string>): string[] => {
+	const indexedResultCandidates = (): string[] => {
 		const files = new Set<string>();
 		for (const sessionId of [state.currentSessionId, ...claimedSessionIds()]) {
 			if (!sessionId) continue;
@@ -638,19 +612,17 @@ export function createResultWatcher(
 		}
 		for (const runId of state.asyncJobs.keys()) files.add(`${runId}.json`);
 		for (const file of missionObserverResultCandidateFiles(resultsDir)) files.add(file);
-		for (const runId of observed) files.add(`${runId}.json`);
 		return [...files];
 	};
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		try {
 			const triggerTurn = options.triggerTurn !== false;
 			const stats: ResultScanStats = { files: 0, scheduled: 0, startedAt: Date.now() };
-			const observed = observedRunIds();
-			for (const file of indexedResultCandidates(observed)) {
+			for (const file of indexedResultCandidates()) {
 				stats.files += 1;
-				const signature = resultSignature(file, observed);
+				const signature = resultSignature(file);
 				if (!signature) continue;
-				if (!shouldProcessResult(file, observed, signature)) continue;
+				if (!shouldProcessResult(file, signature)) continue;
 				stats.scheduled += 1;
 				scheduleResult(file, triggerTurn);
 			}

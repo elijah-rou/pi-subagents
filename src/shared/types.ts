@@ -656,7 +656,7 @@ export type ProcessTerminalV1 =
 		diagnostic?: string;
 	});
 
-/** Identifies the durable schedule that launched a run, so its completion is attributable. */
+/** Historical attribution parsed only from artifacts written before Package 2b. */
 export interface ScheduleOrigin {
 	id: string;
 	name?: string;
@@ -1456,7 +1456,7 @@ export interface Details {
 		globalEntries?: GlobalMissionIndexRecord[];
 		warnings: string[];
 	};
-	/** Project-scoped recurring schedule records and run history for management actions. */
+	/** Passive legacy schedule records and history returned by compatibility readers. */
 	schedules?: {
 		records?: unknown[];
 		runs?: unknown[];
@@ -1813,7 +1813,7 @@ export interface AsyncStatus {
 	parentWorkflowRunId?: string;
 	workflowKey?: string;
 	lane?: WorkflowLaneMetadata;
-	/** Set when a durable schedule launched this run, so completions can name their origin. */
+	/** Historical attribution accepted from artifacts written before Package 2b. */
 	scheduleOrigin?: ScheduleOrigin;
 	steps?: Array<{
 		/** Stable caller-facing child identity for inspect/status/stop. */
@@ -2429,9 +2429,11 @@ export type ToolDescriptionMode = "full" | "compact" | "custom";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
+	/** Accepted but inert for one-release configuration compatibility. */
 	enabled?: boolean;
+	/** Accepted but inert for one-release configuration compatibility. */
 	maxPending?: number;
-	/** Absolute or `~/` root for per-project durable schedules. */
+	/** Absolute or `~/` root used only to locate legacy project-keyed schedule records. */
 	storeRoot?: string;
 }
 
@@ -2682,7 +2684,7 @@ export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status", "status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor"] as const;
 
 /** Full trusted host dispatch surface. Not registered with model-facing tools. */
-export const SUBAGENT_INTERNAL_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"] as const;
+export const SUBAGENT_INTERNAL_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

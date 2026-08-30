@@ -45,7 +45,7 @@ export interface SubagentNotifyDetails {
 	sessionLabel?: string;
 	sessionValue?: string;
 	handoffPath?: string;
-	/** Present when a durable schedule launched the run. */
+	/** Historical attribution parsed from artifacts written before Package 2b. */
 	scheduleOrigin?: ScheduleOrigin;
 }
 
@@ -278,7 +278,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const match = (lines[0] ?? "").match(/^(Background task|Detached foreground task) (completed|failed|paused|stopped): \*\*(.+?)\*\*(?:\s+(\([^)]*\)))?$/);
 	if (!match) return undefined;
 	let body = lines.slice(2);
-	// Restore the schedule origin so a re-rendered notice keeps its attribution and
+	// Restore historical attribution so a re-rendered pre-Package-2b notice keeps it and
 	// does not fold the line into the result preview.
 	const scheduleMatch = (body[0] ?? "").match(/^Scheduled run from \*\*(.+?)\*\* \(schedule (.+?)\)\.$/);
 	let parsedScheduleOrigin: ScheduleOrigin | undefined;

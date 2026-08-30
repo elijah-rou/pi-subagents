@@ -7,7 +7,6 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { registerAgent } from "../../src/api/agents.ts";
 import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry.ts";
-import { scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
@@ -628,23 +627,19 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 
 	it("/subagents-stop keeps the selector within its allocated width", async () => {
 		await withTempProject("pi-stop-selector-width-", async (root) => {
-			const id = "scheduled-width-check";
-			const nextRunAt = "2099-01-01T00:00:00.000Z";
-			const scheduleDir = path.join(scheduledRunStorePath(root), id);
-			fs.mkdirSync(scheduleDir, { recursive: true });
-			fs.writeFileSync(path.join(scheduleDir, "schedule.json"), JSON.stringify({
-				schemaVersion: 1,
-				id,
-				name: "A very long scheduled run name with wide characters 中文🙂",
-				cwd: root,
-				trigger: { kind: "once", at: nextRunAt, nextRunAt },
-				target: { agent: "scout", task: "Inspect" },
-				overlap: "skip",
-				catchUp: "latest",
-				paused: false,
-				createdAt: "2026-08-06T00:00:00.000Z",
-				updatedAt: "2026-08-06T00:00:00.000Z",
+			const id = "async-width-check";
+			const asyncDir = path.join(ASYNC_DIR, id);
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: id,
+				sessionId: "session-test",
+				mode: "workflow",
+				state: "running",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{ agent: "A very long async run name with wide characters 中文🙂", status: "running" }],
 			}), "utf-8");
+			updateActiveRunIndex(asyncDir, "running");
 
 			const commands = new Map<string, RegisteredSlashCommand>();
 			const pi = {
