@@ -1068,7 +1068,7 @@ export interface RunWorkflowScriptOptions {
 	oneUsePermit?: { claim: (key: string) => string | undefined };
 	timeoutMs?: number;
 	signal?: AbortSignal;
-	/** Maximum children executing concurrently within this workflow. Defaults to 20. */
+	/** Per-run child concurrency for this workflow. Compatibility key; defaults to 20. */
 	globalConcurrencyLimit?: number;
 	admit?: (calls: Array<{ key: string; params: Record<string, unknown> }>) => void | Promise<void>;
 	launch: (key: string, params: Record<string, unknown>, signal: AbortSignal, admission: { admitted: boolean; batch: boolean }) => Promise<WorkflowScriptChildResult>;
@@ -1519,7 +1519,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 	if (!options.script.trim()) throw new Error("workflowScript must not be empty.");
 	if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new Error("workflow script timeout must be a positive integer.");
 	if (options.globalConcurrencyLimit !== undefined && (!Number.isInteger(options.globalConcurrencyLimit) || options.globalConcurrencyLimit < 1)) {
-		throw new Error("workflow script global concurrency limit must be a positive integer.");
+		throw new Error("workflow script per-run child concurrency (globalConcurrencyLimit) must be a positive integer.");
 	}
 	const launchSemaphore = new Semaphore(options.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 

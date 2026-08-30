@@ -155,8 +155,8 @@ export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 20;
 
 /**
  * A promise-based semaphore for limiting concurrent access across multiple
- * mapConcurrent calls within a single run. Enforces a global cap on the total
- * number of subagent tasks executing simultaneously, regardless of each step's
+ * mapConcurrent calls within a single run. Enforces the per-run child concurrency
+ * cap across that run's subagent tasks, regardless of each step's
  * per-step concurrency limit.
  */
 export class Semaphore {

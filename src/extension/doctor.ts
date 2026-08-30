@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { discoverAgentsAll, type AgentSource } from "../agents/agents.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared/spawn-budget.ts";
+import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT } from "../runs/shared/parallel-utils.ts";
 import { getActiveAsyncCapacitySnapshot, resolveAbandonedSlotReleaseAfterMs, resolveMaxActiveAsyncRunsPerSession } from "../runs/background/active-async-capacity.ts";
 import { decodeRunFanoutBudgetDescriptor, formatRunFanoutBudget, getRunFanoutBudgetSnapshot, RUN_FANOUT_BUDGET_ENV } from "../runs/shared/run-fanout-budget.ts";
 import { diagnoseIntercomBridge, type IntercomBridgeDiagnostic } from "../intercom/intercom-bridge.ts";
@@ -207,6 +208,16 @@ function formatActiveAsyncCapacitySection(input: DoctorReportInput): string[] {
 	];
 }
 
+function formatPerRunChildConcurrencySection(input: DoctorReportInput): string[] {
+	const configured = input.config.globalConcurrencyLimit;
+	const limit = configured ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT;
+	return [
+		`- configured limit: ${limit} (${configured === undefined ? "default; " : ""}compatibility key: globalConcurrencyLimit)`,
+		"- scope: children running within each top-level run; not shared across runs, parent sessions, or machines",
+		"- accounting: each top-level run owns its own semaphore; the 64-child per-run cumulative budget remains separate",
+	];
+}
+
 function formatPermissionSystemSection(): string[] {
 	const lines: string[] = [];
 	const parentSession = process.env["PI_SUBAGENT_PARENT_SESSION"] ?? "";
@@ -259,6 +270,9 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		"",
 		"Active async capacity",
 		...formatActiveAsyncCapacitySection(input),
+		"",
+		"Per-run child concurrency",
+		...formatPerRunChildConcurrencySection(input),
 		"",
 		"Workflow script",
 		...formatWorkflowScriptSection(),

@@ -2521,11 +2521,11 @@ export interface ExtensionConfig {
 	maxSubagentSpawnsPerSession?: number;
 	/** Cumulative logical-child cap for one top-level run tree. Defaults to 64. */
 	maxSubagentSpawnsPerRun?: number;
-	/** Optional active top-level async run cap per parent session. Unset or 0 means unlimited. */
+	/** Active top-level async run cap per parent session. Defaults to 4; 0 means unlimited. */
 	maxActiveAsyncRunsPerSession?: number;
 	/** Active-capacity cleanup policy. */
 	capacity?: ActiveAsyncCapacityConfig;
-	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
+	/** Per-run child concurrency. Compatibility key retained as globalConcurrencyLimit; defaults to 20. */
 	globalConcurrencyLimit?: number;
 	/**
 	 * Global default runtime deadline in milliseconds. It replaces the built-in

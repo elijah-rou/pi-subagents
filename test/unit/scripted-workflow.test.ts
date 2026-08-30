@@ -728,7 +728,7 @@ describe("scripted workflow runtime", () => {
 				},
 				async status(key) { return { key, ok: true, output: "ok", artifactPaths: [] }; },
 			}),
-			/workflow script global concurrency limit must be a positive integer/,
+			/workflow script per-run child concurrency \(globalConcurrencyLimit\) must be a positive integer/,
 		);
 		assert.equal(launches, 0);
 	});

@@ -48,6 +48,22 @@ function makeChain(name: string, source: ChainConfig["source"]): ChainConfig {
 }
 
 describe("buildDoctorReport", () => {
+	it("reports the default active-run cap and explicit per-run child concurrency scope", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-capacity-default-"));
+		try {
+			const report = buildDoctorReport({
+				cwd: root,
+				config: {},
+				state: makeState(root),
+				currentSessionId: "session-default-cap",
+			});
+			assert.match(report, /Active async capacity\n- usage: 0\/4 used/);
+			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; compatibility key: globalConcurrencyLimit\)/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("formats a bounded successful environment summary", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-success-"));
 		try {
@@ -120,6 +136,9 @@ describe("buildDoctorReport", () => {
 			assert.match(report, /Run fan-out budget\n- configured limit: 64 \(default\)/);
 			assert.match(report, /cumulative claims are never released; a new top-level run creates a new budget/);
 			assert.match(report, /Active async capacity\n- usage: 0\/2 used/);
+			assert.match(report, /scope: top-level async runs in the current parent session/);
+			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; compatibility key: globalConcurrencyLimit\)/);
+			assert.match(report, /scope: children running within each top-level run; not shared across runs, parent sessions, or machines/);
 			assert.match(report, /terminal state plus matching observed process-terminal proof, or abandoned-timeout for failed runs with a dead runner PID and stale activity when enabled; false keeps unknown-proof slots/);
 			assert.match(report, /Workflow script\n- helpers: runs\.run, runs\.all, runs\.steer, runs\.status, runs\.ref\/refs, emit, console/);
 			assert.match(report, /if runs\.all is missing, reload or update pi-subagents; await Promise\.all\(\[runs\.run\(\.\.\.\)\]\) is also supported/);

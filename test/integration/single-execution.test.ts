@@ -4555,7 +4555,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const status = await executor.execute("status", { action: "status" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
-		assert.match(status.content[0]?.text ?? "", /^Status target: active runs\nSpawn budget: 3\/5 used, 2 remaining/);
+		assert.match(status.content[0]?.text ?? "", /^Status target: active runs\nSpawn budget: 3\/5 used, 2 remaining.*\nActive async capacity: 0\/4 used\nPer-run child concurrency: 20 \(globalConcurrencyLimit compatibility key; not shared across runs, parent sessions, or machines\)/);
 		assert.deepEqual(status.details?.spawnBudget, {
 			used: 3,
 			configuredLimit: 4,

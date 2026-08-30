@@ -4587,7 +4587,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(payload.results[0].attemptedModels, ["github-copilot/gpt-5-mini"]);
 	});
 
-	it("rejects an over-cap top-level async launch before creating run artifacts", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+	it("rejects the fifth top-level async launch under the default before creating run artifacts", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey("session-cap")), { recursive: true, force: true });
 		const state = {
 			baseCwd: tempDir,
@@ -4597,15 +4597,17 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			foregroundControls: new Map(),
 			lastForegroundControlId: null,
 		};
-		const occupied = acquireActiveAsyncCapacity({
-			sessionId: "session-cap",
-			limit: 1,
-			runId: "held-run",
-			kind: "runner",
-			asyncDir: path.join(tempDir, "held-run"),
-		});
-		assert.ok(occupied);
-		occupied.markStarted("held-runner");
+		for (let index = 0; index < 4; index++) {
+			const occupied = acquireActiveAsyncCapacity({
+				sessionId: "session-cap",
+				limit: 4,
+				runId: `held-run-${index}`,
+				kind: "runner",
+				asyncDir: path.join(tempDir, `held-run-${index}`),
+			});
+			assert.ok(occupied);
+			occupied.markStarted(`held-runner-${index}`);
+		}
 		const rejectedAsyncDir = path.join(ASYNC_DIR, "cap-rejected");
 		const rejectedResultPath = path.join(RESULTS_DIR, "cap-rejected.json");
 		fs.rmSync(rejectedAsyncDir, { recursive: true, force: true });
@@ -4613,7 +4615,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const executor = createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state,
-			config: { maxActiveAsyncRunsPerSession: 1, artifactDir: "project" },
+			config: { artifactDir: "project" },
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
@@ -4629,7 +4631,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		if (previousDepth === undefined) delete process.env.PI_SUBAGENT_DEPTH;
 		else process.env.PI_SUBAGENT_DEPTH = previousDepth;
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Active async run capacity exhausted: 1\/1 used/);
+		assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Active async run capacity exhausted: 4\/4 used/);
 		assert.equal(fs.existsSync(rejectedAsyncDir), false);
 		assert.equal(fs.existsSync(rejectedResultPath), false);
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi", "subagents")), false);

@@ -235,13 +235,13 @@ Without a configured value, Pi still applies a five-minute hard timeout to known
 
 The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. `contact_supervisor`, `intercom`, and `subagent_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or child run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
 
-## `globalConcurrencyLimit`
+## Per-run child concurrency (`globalConcurrencyLimit`)
 
 ```json
 { "globalConcurrencyLimit": 20 }
 ```
 
-Caps simultaneously running children inside one run, including durable legacy multi-child runs and `workflowScript` launches through `runs.run`/`runs.all`. Queued workflow children retain their stable keys and begin when a running sibling releases capacity. The default is `20`.
+Caps simultaneously running children inside each top-level run, including durable legacy multi-child runs and `workflowScript` launches through `runs.run`/`runs.all`. The key name is retained for compatibility; this is not a cross-run, parent-session-wide, machine-wide, or cross-process semaphore. Every top-level run receives its own allowance. Queued workflow children retain their stable keys and begin when a running sibling in that run releases capacity. The default remains `20`.
 
 ## `maxSubagentSpawnsPerSession`
 
@@ -269,7 +269,7 @@ The budget counts single launches, expanded `tasks`/`count`, static chain steps 
 { "maxActiveAsyncRunsPerSession": 4 }
 ```
 
-Optionally caps concurrently active top-level async runs owned by one parent session. Unset or `0` keeps the existing unlimited behavior. A positive integer reserves one slot before an async single, parallel, chain, or workflow creates run artifacts or starts children. Foreground runs and nested/workflow children do not reserve another slot.
+Caps concurrently active top-level async runs owned by one parent session. The default is `4`. Set it explicitly to `0` to make active top-level async runs unlimited. A positive integer reserves one slot before an async single, parallel, chain, or workflow creates run artifacts or starts children. Foreground runs and nested/workflow children do not reserve another slot.
 
 Queued, running, paused, and needs-attention runs retain capacity. Runner-backed slots release only after terminal logical state and matching observed process-terminal proof from #1030. Missing, malformed, or unknown cleanup proof retains the slot. A terminal async workflow releases after its controller is gone and every launched child is accounted for: awaited foreground children are covered by workflow settlement, while actual background children still require observed process-terminal proof. Resume transfers the source slot without a second charge. Dismissal and history cleanup do not release capacity.
 
@@ -281,9 +281,19 @@ When the runner is gone but process cleanup proof remains unknown, configure a b
 
 The default is `1200000` milliseconds (20 minutes). The policy releases only a failed terminal run whose runner PID is dead and whose last activity is older than the threshold. A live or unknown PID, a non-failed terminal state, a recent run, or missing activity timestamp retains the slot. Set the value to `false` to keep strict retention. Valid configured durations range from 5 minutes through 24 hours. Policy release is reported as `abandoned-timeout` with `processProof: unknown`; it is not observed process-terminal proof and may reclaim capacity while an orphan child still exists.
 
-This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, `maxSubagentSpawnsPerRun`, and `globalConcurrencyLimit`.
+This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, the default-`64` cumulative `maxSubagentSpawnsPerRun`, and per-run child concurrency (`globalConcurrencyLimit`, default `20`). `maxSubagentSpawnsPerSession` remains unlimited by default.
 
-`subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, and remaining active capacity. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
+`subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used and effective active capacity. Status and doctor also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
+
+### Migration: retaining unlimited active async runs
+
+Before this release, omitting `maxActiveAsyncRunsPerSession` left top-level async runs unlimited. The omitted default is now `4`. Users who intentionally need the old unlimited active-run behavior must set:
+
+```json
+{ "maxActiveAsyncRunsPerSession": 0 }
+```
+
+This override affects only active top-level async runs in one parent session. It does not change the per-run child concurrency default (`globalConcurrencyLimit: 20`), the cumulative per-run child limit (`maxSubagentSpawnsPerRun: 64`), or the unlimited-by-default cumulative session spawn policy.
 
 ## `scheduledRuns`
 

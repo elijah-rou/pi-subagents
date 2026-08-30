@@ -207,7 +207,7 @@ interface SubagentRunConfig {
 	usageBudget?: UsageBudgetConfig;
 	revivalLease?: SessionLeaseRequest;
 	revivalLeaseToken?: string;
-	/** Global cap on simultaneously-running subagent tasks within this run. */
+	/** Per-run child concurrency for this run (globalConcurrencyLimit compatibility key). */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	runFanoutBudget?: RunFanoutBudgetDescriptor;

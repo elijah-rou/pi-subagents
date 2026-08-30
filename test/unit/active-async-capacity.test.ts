@@ -8,6 +8,7 @@ import {
 	ActiveAsyncCapacityError,
 	getActiveAsyncCapacitySnapshot,
 	inspectActiveAsyncCapacityOwner,
+	resolveMaxActiveAsyncRunsPerSession,
 	transferActiveAsyncCapacity,
 } from "../../src/runs/background/active-async-capacity.ts";
 
@@ -38,6 +39,13 @@ function observedProof(runId: string, runnerProcessInstanceId: string) {
 }
 
 describe("active async capacity", () => {
+	it("defaults active top-level async capacity to four while preserving explicit zero as unlimited", () => {
+		assert.equal(resolveMaxActiveAsyncRunsPerSession(undefined), 4);
+		assert.equal(resolveMaxActiveAsyncRunsPerSession(4), 4);
+		assert.equal(resolveMaxActiveAsyncRunsPerSession(9), 9);
+		assert.equal(resolveMaxActiveAsyncRunsPerSession(0), undefined);
+	});
+
 	it("admits exactly to the limit and rolls back only its own unstarted slot", () => {
 		const rootDir = tempRoot();
 		try {

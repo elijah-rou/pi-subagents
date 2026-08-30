@@ -197,7 +197,7 @@ interface AsyncChainParams {
 	configToolTimeoutMs?: number;
 	/** PI_SUBAGENT_TOOL_TIMEOUT_MS override (lowest precedence). */
 	toolTimeoutMsEnv?: string | undefined;
-	/** Global cap on simultaneously-running subagent tasks within the async run. */
+	/** Per-run child concurrency for this async run (globalConcurrencyLimit compatibility key). */
 	globalConcurrencyLimit?: number;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	thinkingCeiling?: ThinkingLevel;

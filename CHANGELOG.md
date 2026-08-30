@@ -12,6 +12,7 @@
 - Add bounded project watchdog guidance from `WATCHDOG.md` and an explicit configured path.
 
 ### Changed
+- Default active top-level async runs to four per parent session, with admission before run artifacts or child startup; set `maxActiveAsyncRunsPerSession: 0` to retain unlimited active runs. Clarify `globalConcurrencyLimit` as the compatibility key for per-run child concurrency (still defaulting to 20), while keeping the 64-child cumulative per-run bound and unlimited cumulative session launches by default.
 - Restore authoritative operator-global instruction inheritance when an agent inherits project context and omits `inheritGlobalContext`; explicit `false` remains the isolation and token-saving control.
 - Make Fleet rendering state-driven with a static running glyph, and schedule soft checkpoints with one deadline timer instead of fixed short-interval polling.
 - Enforce inferred acceptance evidence for omitted and `auto` contracts: mutating work requires checked writer evidence, read-only work uses lightweight attestation, and explicit opt-out remains available through `false` or a reasoned `none` contract.

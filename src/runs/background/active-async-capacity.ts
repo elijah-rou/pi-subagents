@@ -8,6 +8,7 @@ import { checkPidLiveness, type PidLiveness } from "./stale-run-reconciler.ts";
 import { readProcessTerminal } from "./process-terminal.ts";
 
 export const ACTIVE_ASYNC_CAPACITY_DIR = path.join(TEMP_ROOT_DIR, "session-active-async-capacity");
+export const DEFAULT_MAX_ACTIVE_ASYNC_RUNS_PER_SESSION = 4;
 export const DEFAULT_ABANDONED_SLOT_RELEASE_AFTER_MS = 20 * 60 * 1000;
 export const MIN_ABANDONED_SLOT_RELEASE_AFTER_MS = 5 * 60 * 1000;
 export const MAX_ABANDONED_SLOT_RELEASE_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -76,8 +77,9 @@ export class ActiveAsyncCapacityError extends Error {
 }
 
 export function resolveMaxActiveAsyncRunsPerSession(value: unknown): number | undefined {
-	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return undefined;
-	return value === 0 ? undefined : value;
+	if (value === 0) return undefined;
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return DEFAULT_MAX_ACTIVE_ASYNC_RUNS_PER_SESSION;
+	return value;
 }
 
 export function resolveAbandonedSlotReleaseAfterMs(value: unknown): number | false {
