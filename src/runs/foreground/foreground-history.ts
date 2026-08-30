@@ -5,6 +5,7 @@ import { DIRS } from "../../shared/types.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { utf8Tail } from "../../shared/utf8.ts";
 import { validateAcceptanceInput } from "../shared/acceptance.ts";
+import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
 export const MAX_REMEMBERED_FOREGROUND_RUNS = 50;
 const HISTORY_VERSION = 1;
@@ -54,6 +55,7 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 		...(child.transcriptPath ? { transcriptPath: child.transcriptPath } : {}),
 		...(child.transcriptError ? { transcriptError: child.transcriptError } : {}),
 		...(child.acceptance ? { acceptance: child.acceptance } : {}),
+		...(child.childProfile ? { childProfile: child.childProfile } : {}),
 		...(child.resumeContract ? { resumeContract: child.resumeContract } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
 		...(child.extensionBindings ? { extensionBindings: child.extensionBindings } : {}),
@@ -75,11 +77,14 @@ function isRestorableResumeContract(value: unknown): boolean {
 		return false;
 	}
 	const contract = value as NonNullable<ForegroundResumeChild["resumeContract"]>;
-	if (Object.keys(contract).some((key) => !["outputSchema", "agentContract", "acceptance", "output", "outputMode"].includes(key))) return false;
+	if (Object.keys(contract).some((key) => !["outputSchema", "agentContract", "acceptance", "output", "outputMode", "childProfile"].includes(key))) return false;
 	if (contract.outputSchema !== undefined && (!contract.outputSchema || typeof contract.outputSchema !== "object" || Array.isArray(contract.outputSchema))) return false;
 	if (contract.agentContract !== undefined && (!contract.agentContract || typeof contract.agentContract !== "object" || Array.isArray(contract.agentContract) || contract.agentContract.version !== 1)) return false;
 	if (validateAcceptanceInput(contract.acceptance).length > 0) return false;
 	if (contract.output !== undefined && typeof contract.output !== "string" && typeof contract.output !== "boolean") return false;
+	if (contract.childProfile !== undefined) {
+		try { parseChildProfileProvenance(contract.childProfile, "foreground resume contract childProfile"); } catch { return false; }
+	}
 	return contract.outputMode === undefined || contract.outputMode === "inline" || contract.outputMode === "file-only";
 }
 
@@ -113,6 +118,13 @@ function readIndex(resultsDir: string): ForegroundHistoryIndex {
 function isRestorableRun(value: unknown): value is ForegroundResumeRun {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const run = value as Partial<ForegroundResumeRun>;
+	try {
+		for (const child of run.children ?? []) {
+			if ((child as Partial<ForegroundResumeChild>).childProfile !== undefined) parseChildProfileProvenance((child as Partial<ForegroundResumeChild>).childProfile, "foreground history childProfile");
+		}
+	} catch {
+		return false;
+	}
 	return typeof run.runId === "string" && Boolean(run.runId)
 		&& (run.mode === "single" || run.mode === "parallel" || run.mode === "chain")
 		&& typeof run.cwd === "string" && Boolean(run.cwd)

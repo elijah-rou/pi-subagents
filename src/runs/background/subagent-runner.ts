@@ -140,6 +140,7 @@ import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChai
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
+import { checkpointSteeringTargetIndexes } from "../shared/checkpoint.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
@@ -3931,7 +3932,7 @@ async function runSubagentInner(
 	if (config.checkpointAt !== undefined) {
 		checkpointTimer = setInterval(() => {
 			if (Date.now() < config.checkpointAt! || statusPayload.checkpointDelivered) return;
-			const activeIndexes = statusPayload.steps.flatMap((step, index) => step.status === "running" ? [index] : []);
+			const activeIndexes = checkpointSteeringTargetIndexes(statusPayload.steps);
 			if (activeIndexes.length === 0) return;
 			const deliveredAt = Date.now();
 			for (const index of activeIndexes) {

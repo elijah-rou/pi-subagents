@@ -445,6 +445,113 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
+	it("preserves routed child-profile provenance through retained foreground revival", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first routed child" });
+		mockPi.onCall({ output: "revived routed child" });
+		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);
+		const sessionId = `profile-retained-${Date.now()}`;
+		const childProfile = { profile: "standard", source: "profile-router", confidence: 93 };
+		const handle = registerSubagentChildProfileResolver({ sessionId, source: childProfile.source, resolve: () => ({ profile: childProfile.profile, model: "test/routed", thinking: "high", confidence: childProfile.confidence }) });
+		try {
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => sessionId;
+			const firstResult = await executor.execute("profile-retained-first", { workflowScript: "return runs.run('first', { agent: 'worker', task: 'Inspect' })", async: false }, new AbortController().signal, undefined, ctx);
+			const first = firstResult.details.workflow?.value as { runId?: string };
+			assert.ok(first.runId);
+			assert.deepEqual(firstResult.details.results[0]?.childProfile, childProfile);
+
+			const resumedResult = await executor.execute("profile-retained-resume", { workflowScript: `return runs.run('resumed', { resume: ${JSON.stringify(first.runId)}, task: 'Continue' })`, async: false }, new AbortController().signal, undefined, ctx);
+			assert.equal(resumedResult.isError, undefined, resumedResult.content[0]?.text ?? "resume failed");
+			assert.deepEqual(resumedResult.details.results[0]?.childProfile, childProfile);
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("preserves routed child-profile provenance through actual async revival", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "async routed child" });
+		mockPi.onCall({ output: "revived async routed child" });
+		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);
+		const sessionId = `profile-async-${Date.now()}`;
+		const childProfile = { profile: "standard", source: "profile-router", confidence: 94 };
+		const handle = registerSubagentChildProfileResolver({ sessionId, source: childProfile.source, resolve: () => ({ profile: childProfile.profile, model: "test/routed", thinking: "high", confidence: childProfile.confidence }) });
+		const waitForTerminal = async (runId: string) => {
+			const deadline = Date.now() + 10_000;
+			while (Date.now() < deadline) {
+				try {
+					const status = JSON.parse(fs.readFileSync(path.join(DIRS.async, runId, "status.json"), "utf-8")) as AsyncStatus;
+					if (status.state !== "running" && status.state !== "queued") return status;
+				} catch {}
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+			assert.fail(`Timed out waiting for async run ${runId}`);
+		};
+		try {
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => sessionId;
+			const first = await executor.execute("profile-async-first", { agent: "worker", task: "Inspect", async: true, output: "report.md" }, new AbortController().signal, undefined, ctx);
+			const firstRunId = first.details.asyncId;
+			assert.ok(firstRunId);
+			await waitForTerminal(firstRunId);
+			const sourceDescriptor = JSON.parse(fs.readFileSync(path.join(DIRS.async, firstRunId, "recovery-descriptor.json"), "utf-8")) as { managedOutput?: boolean; outputPath?: string };
+			assert.equal(sourceDescriptor.managedOutput, true);
+			assert.equal(path.isAbsolute(sourceDescriptor.outputPath ?? ""), true);
+			assert.deepEqual(resolveAsyncResumeTarget({ id: firstRunId }, { asyncDirRoot: DIRS.async, resultsDir: DIRS.results }).childProfile, childProfile);
+
+			const revived = await executor.execute("profile-async-resume", { action: "resume", id: firstRunId, message: "Continue" }, new AbortController().signal, undefined, ctx);
+			const revivedRunId = revived.details.asyncId;
+			assert.ok(revivedRunId);
+			const revivedStatus = await waitForTerminal(revivedRunId);
+			assert.deepEqual(revivedStatus.steps?.[0]?.childProfile, childProfile);
+			const revivedDescriptor = JSON.parse(fs.readFileSync(path.join(DIRS.async, revivedRunId, "recovery-descriptor.json"), "utf-8")) as { managedOutput?: boolean; outputPath?: string };
+			assert.equal(revivedDescriptor.managedOutput, true);
+			assert.notEqual(revivedDescriptor.outputPath, sourceDescriptor.outputPath);
+			assert.match(revivedDescriptor.outputPath ?? "", new RegExp(`${revivedRunId}.*report\\.md`));
+		} finally {
+			handle.dispose();
+		}
+	});
+
+	it("fails revived managed-output runs on deletion and substitution", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("worker", { model: "test/static", completionGuard: false })]);
+		const ctx = makeMinimalCtx(tempDir);
+		const sessionId = `managed-revival-${Date.now()}`;
+		ctx.sessionManager.getSessionId = () => sessionId;
+		const waitForTerminal = async (runId: string) => {
+			const deadline = Date.now() + 10_000;
+			while (Date.now() < deadline) {
+				try {
+					const status = JSON.parse(fs.readFileSync(path.join(DIRS.async, runId, "status.json"), "utf-8")) as AsyncStatus;
+					if (status.state !== "running" && status.state !== "queued") return status;
+				} catch {}
+				await new Promise((resolve) => setTimeout(resolve, 25));
+			}
+			assert.fail(`Timed out waiting for async run ${runId}`);
+		};
+
+		for (const scenario of ["deleted", "substituted"] as const) {
+			mockPi.onCall({ output: `source ${scenario}` });
+			mockPi.onCall({ output: `revived ${scenario}`, delay: 500 });
+			const source = await executor.execute(`managed-source-${scenario}`, { agent: "worker", task: "Inspect", async: true, output: `${scenario}.md`, acceptance: false }, new AbortController().signal, undefined, ctx);
+			const sourceRunId = source.details.asyncId;
+			assert.ok(sourceRunId);
+			await waitForTerminal(sourceRunId);
+
+			const revived = await executor.execute(`managed-resume-${scenario}`, { action: "resume", id: sourceRunId, message: "Continue", acceptance: false }, new AbortController().signal, undefined, ctx);
+			const revivedRunId = revived.details.asyncId;
+			assert.ok(revivedRunId, JSON.stringify(revived));
+			const descriptor = JSON.parse(fs.readFileSync(path.join(DIRS.async, revivedRunId, "recovery-descriptor.json"), "utf-8")) as { managedOutput?: boolean; outputPath?: string };
+			assert.equal(descriptor.managedOutput, true);
+			assert.ok(descriptor.outputPath);
+			fs.rmSync(descriptor.outputPath, { force: true });
+			if (scenario === "substituted") fs.writeFileSync(descriptor.outputPath, "substitute", "utf-8");
+
+			const status = await waitForTerminal(revivedRunId);
+			assert.equal(status.state, "failed");
+			assert.match(status.steps?.[0]?.error ?? "", scenario === "deleted" ? /managed output|ENOENT/i : /managed output|substitut|changed/i);
+		}
+	});
+
 	it("fails open to the static model when a routed model is unavailable", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "static child" });
 		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);
@@ -7977,6 +8084,22 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "timeout");
 		assert.equal(result.acceptance?.verifyRuns?.length, 0);
 		assert.equal(fs.existsSync(markerPath), false);
+	});
+
+	it("keeps the foreground run deadline active through near-deadline verification", async () => {
+		mockPi.onCall({ output: "done" });
+		const startedAt = Date.now();
+		const result = await runSync(tempDir, makeAgentConfigs(["worker"]), "worker", "Finish near the deadline", {
+			timeoutMs: 250,
+			acceptance: {
+				verify: [{ id: "slow", command: "node -e \"setTimeout(() => {}, 5000)\"", timeoutMs: 10_000 }],
+			},
+		});
+
+		assert.equal(result.timedOut, true);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "timeout");
+		assert.ok(Date.now() - startedAt < 2_000, `deadline should bound verification, took ${Date.now() - startedAt}ms`);
 	});
 
 	it("soft-interrupts the current turn and returns a paused result", async () => {

@@ -2258,10 +2258,23 @@ async function runSyncCompletionInner(
 					? { content: childWrittenOutput, path: options.outputPath, authoritative: options.outputMode === "file-only" }
 					: undefined,
 				cwd: options.cwd ?? runtimeCwd,
+				deadlineAt: options.deadlineAt,
+				abortMessage: "Acceptance verification timed out because the subagent run deadline was exhausted.",
 				reportOptional: isAgentContractV1(options.agentContract),
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,
 			});
+			if (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt) {
+				const message = "Acceptance did not complete before the subagent run deadline.";
+				result.timedOut = true;
+				result.exitCode = 1;
+				result.error = result.error ? `${result.error}\n${message}` : message;
+				result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "timeout", message });
+				if (result.progress) {
+					result.progress.status = "failed";
+					result.progress.error = result.error;
+				}
+			}
 		}
 	} catch (error) {
 		const message = `Acceptance evaluation failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -2348,6 +2361,7 @@ export async function runSync(
 	// Capture the strict contract before consumer-owned objects can be mutated
 	// after a detached receipt is published.
 	const strictContract = isAgentContractV1(options.agentContract);
+	const absoluteDeadlineAt = options.deadlineAt ?? (options.timeoutMs !== undefined ? Date.now() + options.timeoutMs : undefined);
 	let detachedReason: string | undefined;
 	let publishedReceipt: SingleResult | undefined;
 	let activeDetachAttempt: ((reason?: string) => boolean) | undefined;
@@ -2364,6 +2378,7 @@ export async function runSync(
 
 	const completion = runSyncCompletion(runtimeCwd, agents, agentName, task, {
 		...options,
+		...(absoluteDeadlineAt !== undefined ? { deadlineAt: absoluteDeadlineAt } : {}),
 		signal: originController.signal,
 		onDetachedExit: undefined,
 		onDetachReceipt: (detachedReceipt) => {

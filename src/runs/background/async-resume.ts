@@ -327,7 +327,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	const allowedFields = new Set([
 		"version", "launchContractDigest", "sourceRunId", "agentContract", "agent", "sessionFile", "cwd", "model", "modelProvider", "modelOverrideFromParent", "fallbackModels", "thinking", "thinkingCeiling", "tools", "allowNestedSubagents", "extensions",
 		"subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
-		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
+		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "managedOutput", "managedOutputRelativePath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
 		"launchResolvedExtensions", "childProfile", "runFanoutBudget", "lane",
 		"extensionBindings",
@@ -357,6 +357,8 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	}
 	if (parsed.systemPromptMode !== "append" && parsed.systemPromptMode !== "replace") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': systemPromptMode is invalid.`);
 	if (parsed.outputMode !== "inline" && parsed.outputMode !== "file-only") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': outputMode is invalid.`);
+	if (parsed.managedOutput !== undefined && typeof parsed.managedOutput !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': managedOutput must be a boolean.`);
+	if (parsed.managedOutputRelativePath !== undefined && (typeof parsed.managedOutputRelativePath !== "string" || !parsed.managedOutputRelativePath || path.isAbsolute(parsed.managedOutputRelativePath))) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': managedOutputRelativePath must be a non-empty relative path.`);
 	if (parsed.context !== undefined && parsed.context !== "fresh" && parsed.context !== "fork") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': context is invalid.`);
 	if (parsed.modelOverrideFromParent !== undefined && typeof parsed.modelOverrideFromParent !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': modelOverrideFromParent must be a boolean.`);
 	for (const field of ["inheritProjectContext", "inheritSkills", "share"] as const) {

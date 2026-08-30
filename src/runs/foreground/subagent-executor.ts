@@ -718,6 +718,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				acceptance: input.params.acceptance,
 				output: input.effectiveOutput,
 				outputMode: input.effectiveOutputMode,
+				childProfile: result.childProfile,
 			});
 			const child = {
 				agent: result.agent,
@@ -751,6 +752,7 @@ function rememberForegroundRun(state: SubagentState, input: { runId: string; mod
 				...(result.detachedReason ? { detachedReason: result.detachedReason } : {}),
 				...(result.acceptance ? { acceptance: result.acceptance } : {}),
 				...(result.acceptanceInput !== undefined ? { acceptanceInput: result.acceptanceInput } : {}),
+				...(result.childProfile ? { childProfile: result.childProfile } : {}),
 				...(Object.keys(resumeContract).length ? { resumeContract } : {}),
 				...(result.launchContractDigest ? { launchContractDigest: result.launchContractDigest } : {}),
 				...(input.extensionBindings ? { extensionBindings: input.extensionBindings } : {}),
@@ -834,6 +836,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		...(input.result.detachedReason ? { detachedReason: input.result.detachedReason } : {}),
 		...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
 		...(input.result.acceptanceInput !== undefined ? { acceptanceInput: input.result.acceptanceInput } : {}),
+		...(input.result.childProfile ? { childProfile: input.result.childProfile } : {}),
 		...(input.result.launchContractDigest ? { launchContractDigest: input.result.launchContractDigest } : {}),
 		...(input.result.launchResolvedExtensions ? { launchResolvedExtensions: input.result.launchResolvedExtensions } : {}),
 		...(input.result.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: input.result.runtimeAcknowledgedExtensions } : {}),
@@ -873,7 +876,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; acceptance?: AcceptanceInput; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; childProfile?: import("../../shared/types.ts").ChildProfileProvenance; acceptance?: AcceptanceInput; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const direct = state.foregroundRuns.get(requested);
@@ -904,6 +907,7 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 		...(child.model ? { model: child.model } : {}),
 		...(child.thinking ? { thinking: child.thinking } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
+		...(child.childProfile ?? child.resumeContract?.childProfile ? { childProfile: child.childProfile ?? child.resumeContract?.childProfile } : {}),
 		...(child.acceptanceInput !== undefined ? { acceptance: child.acceptanceInput } : {}),
 		...(child.resumeContract ? { resumeContract: child.resumeContract } : {}),
 		...(child.extensionBindings ? { extensionBindings: normalizeExtensionBindings(child.extensionBindings)!.value } : {}),
@@ -2075,8 +2079,13 @@ async function resumeAsyncRun(input: {
 		controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
 		childIntercomTarget: intercomBridge.active ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index) : undefined,
 		availableModels,
-		output: input.params.output !== undefined ? input.params.output : foregroundContract?.output ?? recoveryDescriptor?.outputPath,
+		output: input.params.output !== undefined
+			? input.params.output
+			: foregroundContract?.output ?? (recoveryDescriptor?.managedOutput
+				? recoveryDescriptor.managedOutputRelativePath ?? (recoveryDescriptor.outputPath ? path.basename(recoveryDescriptor.outputPath) : undefined)
+				: recoveryDescriptor?.outputPath),
 		outputMode: input.params.outputMode ?? foregroundContract?.outputMode ?? recoveryDescriptor?.outputMode,
+		...("childProfile" in target && target.childProfile ? { childProfile: target.childProfile } : {}),
 		...(agentContract ? { agentContract } : {}),
 		...(outputSchema ? { structuredOutputSchema: outputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
@@ -2145,6 +2154,7 @@ async function resumeAsyncRun(input: {
 			...(completed.stopped ? { stopped: true } : {}),
 			...(completed.sessionFile ? { sessionFile: completed.sessionFile } : {}),
 			...(completed.model ? { model: completed.model } : {}),
+			...(completed.childProfile ? { childProfile: completed.childProfile } : {}),
 			...(completed.attemptedModels ? { attemptedModels: completed.attemptedModels } : {}),
 			...(completed.modelAttempts ? { modelAttempts: completed.modelAttempts } : {}),
 			...(completed.contextOverflow ? { contextOverflow: true } : {}),

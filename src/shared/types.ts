@@ -780,6 +780,9 @@ export interface SteeringRecoveryDescriptor {
 	completionGuard?: boolean;
 	memory?: { scope: "project" | "user"; path: string };
 	outputPath?: string;
+	/** Preserves runtime ownership when the persisted path is absolute. */
+	managedOutput?: boolean;
+	managedOutputRelativePath?: string;
 	outputMode: "inline" | "file-only";
 	structuredOutputSchema?: JsonSchemaObject;
 	acceptance?: AcceptanceInput;
@@ -2006,6 +2009,7 @@ export interface ForegroundResumeChild {
 	acceptance?: AcceptanceLedger;
 	acceptanceInput?: AcceptanceInput;
 	agentContract?: AgentContract;
+	childProfile?: ChildProfileProvenance;
 	/** Private bounded launch fields needed to preserve the child contract on resume. */
 	resumeContract?: {
 		outputSchema?: JsonSchemaObject;
@@ -2013,6 +2017,7 @@ export interface ForegroundResumeChild {
 		acceptance?: AcceptanceInput;
 		output?: string | boolean;
 		outputMode?: OutputMode;
+		childProfile?: ChildProfileProvenance;
 	};
 	launchContractDigest?: string;
 	/** Private retained launch authority. Never project into status or result output. */

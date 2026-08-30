@@ -98,7 +98,8 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `async` | boolean | default-on | Background execution. Workflows default to background. `async:false` blocks the parent until completion. |
 | `chatProgress` | `auto \| off \| live-card` | `auto` | WorkflowScript chat projection. `auto` renders a live in-chat card only for watched foreground workflows in the same Git repository, including managed worktrees; it is off otherwise. Explicit `live-card` requires `async:false` and the same Git repository. Async workflows have no inline live card, so omit `chatProgress` or use `auto`/`off`; use `async:false` only when the parent must block. |
 | `isolation` | `none \| worktree` | - | Workflow child isolation. `none` runs in the shared cwd and does not need Git. `worktree` requires a managed Git worktree. Do not combine it with a contradictory `worktree` value. |
-| `timeoutMs` / `maxRuntimeMs` | number | config `timeoutMs`, else 30 min foreground / single-agent async | Optional run-level max runtime in milliseconds. When omitted, the global [`timeoutMs`](configuration.md#timeoutms) config provides the default; absent that, foreground and plain single-agent async runs fall back to 30 minutes, while composite async runs (chains, parallel tasks, workflows) stay unbounded at the top level. |
+| `timeoutMs` / `maxRuntimeMs` | number | config `timeoutMs`, else 30 min foreground / single-agent async | Optional run-level max runtime in milliseconds. When omitted, the global [`timeoutMs`](configuration.md#timeoutms) config provides the default; absent that, foreground and plain single-agent async runs fall back to 30 minutes, while async workflows stay unbounded at the top level. The foreground deadline includes acceptance verification. |
+| `checkpointAfterMs` | number | - | Optional soft checkpoint before `timeoutMs`. Native Pi children that support steering receive a bounded wrap-up request; external runners are not targeted, and delivery is reported only when at least one supported active child receives it. Must be less than the hard timeout. |
 | `toolTimeoutMs` | number | fast-tool default | Optional positive hard per-tool-call deadline in milliseconds. Precedence: call value → agent frontmatter → config → `PI_SUBAGENT_TOOL_TIMEOUT_MS`. The timer starts on `tool_execution_start`, clears on the matching `tool_execution_end`, and terminates the run with `timedOut: true` if the tool remains open. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It never extends the run deadline; `contact_supervisor`, `intercom`, and `subagent_wait` are exempt. |
 | `toolBudget` | object | none | Optional child tool-call budget `{ soft?, hard, block? }`. At `soft` the child is nudged to finalize. After `hard`, configured tools are blocked; `block` defaults to `read`, `grep`, `find`, and `ls`, while `"*"` blocks every tool call. Final assistant text is never blocked. |
 | `usageBudget` | object | none | Optional root-only reported-usage budget `{ tokens?: { soft?, hard }, costUsd?: { soft?, hard } }`. Soft limits are status-only. Hard limits prevent later child launches after reported usage is reconciled; already-running children are not stopped and no reservations are made. |
@@ -349,70 +350,44 @@ The `/subagents-steer <run-id> [--child <child-id>] <message>` slash command is 
 
 ## Acceptance gates
 
-Every run resolves an effective acceptance policy. Callers may omit `acceptance` for the inferred default, or set it on single runs, top-level parallel task items, chain steps, static parallel tasks, and dynamic fanout templates.
+Acceptance is a composable contract with independent report, host verification, optional review, and failure-policy dimensions. Configure only the dimensions the run needs:
 
 ```ts
 {
   agent: "worker",
   task: "Implement the fix",
   acceptance: {
-    level: "verified",
-    criteria: ["Patch the bug without widening scope"],
-    evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
-    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }]
+    report: {
+      criteria: ["Patch the bug without widening scope"],
+      evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"]
+    },
+    verify: [{ id: "focused", command: "npm test", timeoutMs: 120000 }],
+    onFailure: "fail"
   }
 }
 ```
 
+`report: false`, `verify: []`, and `review: false` clear individual dimensions. `acceptance: false` disables the complete contract. `acceptance: "none"` remains a deprecated compatibility spelling for `false`; `{ level: "none", reason? }` is also accepted for compatibility. Omitted acceptance and `"auto"` do not silently install gates: role, task, and risk inference is advisory and appears as recommendations only. With `agentContract: { version: 1 }`, omitted and auto acceptance produce no recommendations or gates.
+
+Canonical dimensions compose across workflow defaults and `runs.run`/`runs.all` child overrides. A child object inherits omitted dimensions, replaces supplied dimensions, and can clear each dimension explicitly. Legacy level/criteria/evidence inputs remain compatibility adapters, but new callers should use `report`, `verify`, `review`, and `onFailure` directly.
+
+Review is optional-only in this execution contract. The only valid review configuration is `{ required: false, agent?, focus? }`; a run cannot claim that it supplied its own independent required review. Orchestrate any required reviewer as a separate workflow child and use its result explicitly. An optional review with no reviewer result does not reject the run.
+
 ### One-command gates
 
-When one host-run command is the entire verification contract, use the `gate` shorthand instead of a full `acceptance` object:
+Use `gate` when one host command is the whole verification contract:
 
 ```js
 { workflowScript: `return runs.run("impl", { agent: "worker", task: "Implement the fix", gate: "npm test" })` }
 ```
 
-`gate` normalizes to verified acceptance with that single command, so the runtime executes it on the host and records the result as evidence. Verification results are memoized per tracked workspace state and effective environment, so an unchanged tree does not rerun the same command. Use explicit `acceptance.verify` when you need multiple commands, timeouts, or custom criteria. `gate` cannot be combined with `acceptance` and is rejected on retained `resume` items. With `worktree: true`, the gate runs inside the child's managed worktree.
+`gate` creates a verify-only contract. Verification results are memoized per tracked workspace state and effective environment. Explicit command timeouts remain authoritative when shorter than the enclosing run deadline; verification never extends a foreground deadline. `gate` cannot be combined with `acceptance` and is rejected on retained `resume` items.
 
-### Levels and inference
+### Evidence and reports
 
-Acceptance evidence levels are `auto`, `none`, `attested`, `checked`, and `verified`. `acceptance: "auto"` is the default.
+A configured `report` asks the child for a fenced `acceptance-report` JSON block. A configured `verify` runs commands on the host; child-reported command success does not count. The resulting ledger records evidence progress as `claimed`, `attested`, `checked`, `verified`, `reviewed`, or `rejected`, while disabled or absent dimensions are `not-required`.
 
-Review is a separate gate configured with `acceptance.review`:
-
-- Async, risky, and dynamic writer contexts infer checked evidence plus `review: { agent: "reviewer", required: true }`.
-- Read-only tasks infer lightweight attestation.
-- Normal writer tasks infer checked evidence without review.
-
-Agent frontmatter or `subagents.agentOverrides` may set `acceptanceRole: "read-only" | "writer"` for ambiguous tasks. Explicit task mutation or no-edit intent wins over that role, while omitted metadata preserves the existing reviewer/scout/worker name heuristics. The role affects acceptance inference only and does not change tool access.
-
-Edge cases:
-
-- The bare string `"none"` is rejected; use `{ level: "none", reason: "..." }` instead.
-- `acceptance: false` is accepted only as a deprecated shorthand for disabling gates.
-- For reviewer/read-only calls, omit `acceptance`.
-- The explicit value `"reviewed"` is not a policy level: it remains schema-recognized only so semantic preflight can explain the mistake without spawning a child. To require review of a writer result, use `acceptance: { level: "checked", review: { required: true, agent: "reviewer" } }` and orchestrate the reviewer separately.
-- With `agentContract: { version: 1 }`, omitted, `"auto"`, and `false` mean no acceptance request for that run; explicit acceptance is reported separately from execution.
-
-### Evidence status
-
-Acceptance provenance is stored separately from child prose. `evidenceStatus` preserves evidence progress when the overall status is waiting on or has completed review:
-
-- `claimed`: child finished but did not provide structured evidence.
-- `attested`: child returned a structured acceptance report.
-- `checked`: runtime structural checks passed, such as required evidence and no staged files.
-- `verified`: configured runtime verification commands passed. Child-reported command success does not count.
-- `review-required`: required evidence passed, but no independent reviewer result has been supplied.
-- `reviewed`: an independent reviewer result is present and has no blockers.
-- `rejected`: attestation, structural checks, verification, or review failed.
-
-### The acceptance report
-
-For `attested` or stricter levels, the child prompt includes a standardized acceptance section and asks for a fenced `acceptance-report` JSON block.
-
-The parser canonicalizes known enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous keys and enum values fail with field-level diagnostics. Explicit empty `changedFiles` and `testsAddedOrUpdated` arrays are recorded as not applicable; missing fields and empty required command or validation evidence still fail.
-
-Acceptance fences are removed from normal output artifacts, while the raw child transcript remains intact and per-child metadata stores the complete acceptance ledger and parsed report. Explicit failed gates fail the run. Inferred gates remain observable without failing the run.
+The parser canonicalizes supported enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous fields fail with field-level diagnostics. Acceptance fences are removed from normal output artifacts, while the raw transcript and complete ledger remain available. A rejected explicit contract blocks only when `onFailure: "fail"`; advisory inference never fails a run.
 
 ## Herdr project panes
 

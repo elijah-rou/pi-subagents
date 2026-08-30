@@ -37,6 +37,19 @@ describe("private runtime state", () => {
 		}
 	});
 
+	it("accepts the canonical macOS /var temp-root alias", { skip: process.platform !== "darwin" }, () => {
+		const canonicalTmp = fs.realpathSync.native(os.tmpdir());
+		const aliasTmp = canonicalTmp.startsWith("/private/var/") ? canonicalTmp.replace(/^\/private/, "") : os.tmpdir();
+		const root = fs.mkdtempSync(path.join(canonicalTmp, "pi-private-state-darwin-"));
+		try {
+			const aliasRoot = root.replace(canonicalTmp, aliasTmp);
+			ensurePrivateDirectory(path.join(aliasRoot, "run"), { privateRoot: root });
+			assert.equal(fs.statSync(path.join(root, "run")).isDirectory(), true);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects symlink path components", { skip: process.platform === "win32" }, () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-private-state-"));
 		const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-private-state-outside-"));
@@ -45,6 +58,19 @@ describe("private runtime state", () => {
 			assert.throws(() => ensurePrivateDirectory(path.join(root, "linked", "run")), /must not be a symlink/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(outside, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a symlink used as the app-controlled private root", { skip: process.platform === "win32" }, () => {
+		const parent = fs.mkdtempSync(path.join(os.tmpdir(), "pi-private-state-root-link-"));
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pi-private-state-root-outside-"));
+		try {
+			const linkedRoot = path.join(parent, "app");
+			fs.symlinkSync(outside, linkedRoot, "dir");
+			assert.throws(() => ensurePrivateDirectory(path.join(linkedRoot, "run"), { privateRoot: linkedRoot }), /must not be a symlink/);
+		} finally {
+			fs.rmSync(parent, { recursive: true, force: true });
 			fs.rmSync(outside, { recursive: true, force: true });
 		}
 	});

@@ -114,6 +114,29 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("bounds verification by the remaining run deadline without extending shorter command timeouts", async () => {
+		const cwd = tempRepo();
+		try {
+			const deadlineBound = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { verify: [{ id: "deadline", command: "node -e \"setTimeout(() => {}, 1000)\"", timeoutMs: 5_000 }] },
+			});
+			const deadlineLedger = await evaluateAcceptance({ acceptance: deadlineBound, output: "", cwd, deadlineAt: Date.now() + 50 });
+			assert.equal(deadlineLedger.verifyRuns[0]?.status, "timed-out");
+			assert.ok((deadlineLedger.verifyRuns[0]?.durationMs ?? 1_000) < 1_000);
+
+			const commandBound = resolveEffectiveAcceptance({
+				agentName: "worker",
+				explicit: { verify: [{ id: "command", command: "node -e \"setTimeout(() => {}, 1000)\"", timeoutMs: 25 }] },
+			});
+			const commandLedger = await evaluateAcceptance({ acceptance: commandBound, output: "", cwd, deadlineAt: Date.now() + 5_000 });
+			assert.equal(commandLedger.verifyRuns[0]?.status, "timed-out");
+			assert.ok((commandLedger.verifyRuns[0]?.durationMs ?? 1_000) < 1_000);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("blocks only rejected fail-policy contracts", async () => {
 		const cwd = tempRepo();
 		try {

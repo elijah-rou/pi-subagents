@@ -1790,6 +1790,7 @@ export function executeAsyncSingle(
 		...(recoveryAgentConfig.completionGuard !== undefined ? { completionGuard: recoveryAgentConfig.completionGuard } : {}),
 		...(recoveryAgentConfig.memory ? { memory: { ...recoveryAgentConfig.memory } } : {}),
 		...(outputPath ? { outputPath } : {}),
+		...(managedOutput ? { managedOutput: true, managedOutputRelativePath: effectiveOutput as string } : {}),
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),

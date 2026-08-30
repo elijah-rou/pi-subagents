@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
 import type { AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, ModelAttempt, Usage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
+import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
 export interface ImportedAsyncRoot {
 	runId: string;
@@ -22,6 +23,7 @@ export interface ImportedAsyncRootResult {
 	sessionFile?: string;
 	intercomTarget?: string;
 	model?: string;
+	childProfile?: import("../../shared/types.ts").ChildProfileProvenance;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	contextOverflow?: boolean;
@@ -61,6 +63,7 @@ interface AsyncResultFile {
 		sessionFile?: string;
 		intercomTarget?: string;
 		model?: string;
+		childProfile?: import("../../shared/types.ts").ChildProfileProvenance;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		contextOverflow?: boolean;
@@ -158,6 +161,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		...(step?.sessionName ? { sessionName: step.sessionName } : {}),
 		...(step?.sessionFile ?? status.sessionFile ? { sessionFile: step?.sessionFile ?? status.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
+		...(step?.childProfile ? { childProfile: step.childProfile } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 		...(step?.modelAttempts ? { modelAttempts: step.modelAttempts } : {}),
 		...(step?.contextOverflow ? { contextOverflow: true } : {}),
@@ -186,6 +190,7 @@ function outputFromTimeout(root: ImportedAsyncRoot, status: AsyncStatus | null, 
 		...(step?.sessionName ? { sessionName: step.sessionName } : {}),
 		...(step?.sessionFile ?? status?.sessionFile ? { sessionFile: step?.sessionFile ?? status?.sessionFile } : {}),
 		...(step?.model ? { model: step.model } : {}),
+		...(step?.childProfile ? { childProfile: step.childProfile } : {}),
 		...(step?.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 		...(step?.modelAttempts ? { modelAttempts: step.modelAttempts } : {}),
 		...(step?.contextOverflow ? { contextOverflow: true } : {}),
@@ -207,6 +212,9 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 	const error = child?.error ?? (success ? undefined : stopped ? "Subagent stopped by user." : result.error ?? result.summary ?? status?.error ?? `Attached async root ${root.runId} did not complete successfully.`);
 	const execution = state ? { status: state === "complete" ? "completed" as const : state, success, exitCode: success ? 0 : 1, ...(error ? { error } : {}) } : undefined;
 	const usage = child?.usage ?? usageFromAttempts(step?.modelAttempts);
+	const childProfile = child?.childProfile !== undefined
+		? parseChildProfileProvenance(child.childProfile, `imported async result '${root.resultPath}' childProfile`)
+		: step?.childProfile;
 	return {
 		agent,
 		output: success ? output : (output || error || ""),
@@ -219,6 +227,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile ? { sessionFile: child?.sessionFile ?? step?.sessionFile ?? status?.sessionFile } : {}),
 		...(child?.intercomTarget ? { intercomTarget: child.intercomTarget } : {}),
 		...(child?.model ?? step?.model ? { model: child?.model ?? step?.model } : {}),
+		...(childProfile ? { childProfile } : {}),
 		...(child?.attemptedModels ?? step?.attemptedModels ? { attemptedModels: child?.attemptedModels ?? step?.attemptedModels } : {}),
 		...(child?.modelAttempts ?? step?.modelAttempts ? { modelAttempts: child?.modelAttempts ?? step?.modelAttempts } : {}),
 		...(child?.contextOverflow || step?.contextOverflow ? { contextOverflow: true } : {}),

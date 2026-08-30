@@ -1385,10 +1385,20 @@ function isCachedVerifyResult(value: unknown): value is AcceptanceVerifyResult {
 async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: {
 	signal?: AbortSignal;
 	abortMessage?: string;
+	deadlineAt?: number;
 	artifactsDir?: string;
 	runId?: string;
 } = {}): Promise<AcceptanceVerifyResult> {
 	const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
+	if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) return {
+		id: command.id,
+		command: command.command,
+		cwd,
+		exitCode: null,
+		status: "timed-out",
+		durationMs: 0,
+		stderr: options.abortMessage ?? "Acceptance verification timed out because the run deadline was exhausted.",
+	};
 	let workspaceState: VerifyWorkspaceState | undefined;
 	try {
 		workspaceState = readVerifyWorkspaceState(cwd);
@@ -1475,10 +1485,16 @@ export function quoteExecutableForShell(command: string, platform: string = proc
 }
 
 
-function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string } = {}): Promise<AcceptanceVerifyResult> {
+function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, options: { signal?: AbortSignal; abortMessage?: string; deadlineAt?: number } = {}): Promise<AcceptanceVerifyResult> {
 	return new Promise((resolve) => {
 		const startedAt = Date.now();
 		const cwd = command.cwd ? path.resolve(defaultCwd, command.cwd) : defaultCwd;
+		const commandTimeoutMs = command.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS;
+		const remainingDeadlineMs = options.deadlineAt === undefined ? commandTimeoutMs : Math.max(0, options.deadlineAt - Date.now());
+		if (remainingDeadlineMs === 0) {
+			resolve({ id: command.id, command: command.command, cwd, exitCode: null, status: "timed-out", durationMs: 0, stderr: options.abortMessage ?? "Acceptance verification timed out because the run deadline was exhausted." });
+			return;
+		}
 		const stdout = createBoundedVerifyOutput();
 		const stderr = createBoundedVerifyOutput();
 		let timedOut = false;
@@ -1534,7 +1550,7 @@ function runVerifyCommand(command: AcceptanceVerifyCommand, defaultCwd: string, 
 			}, 100);
 			hardKill.unref?.();
 		};
-		const timeout = setTimeout(abortVerification, command.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS);
+		const timeout = setTimeout(abortVerification, Math.min(commandTimeoutMs, remainingDeadlineMs));
 		timeout.unref?.();
 		if (options.signal?.aborted) abortVerification();
 		else options.signal?.addEventListener("abort", abortVerification, { once: true });
@@ -1578,6 +1594,8 @@ export async function evaluateAcceptance(input: {
 	reviewResult?: AcceptanceReviewResult;
 	signal?: AbortSignal;
 	abortMessage?: string;
+	/** Absolute enclosing run deadline. Verification cannot extend it. */
+	deadlineAt?: number;
 	reportOptional?: boolean;
 	artifactsDir?: string;
 	runId?: string;
@@ -1632,7 +1650,7 @@ export async function evaluateAcceptance(input: {
 	}
 
 	for (const command of acceptance.verify) {
-		ledger.verifyRuns.push(await runMemoizedVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage, artifactsDir: input.artifactsDir, runId: input.runId }));
+		ledger.verifyRuns.push(await runMemoizedVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage, deadlineAt: input.deadlineAt, artifactsDir: input.artifactsDir, runId: input.runId }));
 		if (input.signal?.aborted) break;
 	}
 	const verifyPassed = !ledger.verifyRuns.some((run) => run.status === "failed" || run.status === "timed-out");

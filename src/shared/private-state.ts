@@ -6,6 +6,19 @@ function assertOwnedByCurrentUser(stat: fs.Stats, target: string): void {
 	if (uid !== undefined && stat.uid !== uid) throw new Error(`Private state path '${target}' has the wrong owner.`);
 }
 
+function canonicalizeThroughExistingAncestor(target: string): string {
+	const absolute = path.resolve(target);
+	const missing: string[] = [];
+	let existing = absolute;
+	while (!fs.existsSync(existing)) {
+		missing.unshift(path.basename(existing));
+		const parent = path.dirname(existing);
+		if (parent === existing) break;
+		existing = parent;
+	}
+	return path.join(fs.realpathSync.native(existing), ...missing);
+}
+
 export function assertNoSymlinkPathComponents(target: string): void {
 	const absolute = path.resolve(target);
 	const root = path.parse(absolute).root;
@@ -13,7 +26,10 @@ export function assertNoSymlinkPathComponents(target: string): void {
 	for (const segment of absolute.slice(root.length).split(path.sep).filter(Boolean)) {
 		current = path.join(current, segment);
 		try {
-			if (fs.lstatSync(current).isSymbolicLink()) throw new Error(`Private state path '${current}' must not be a symlink.`);
+			if (fs.lstatSync(current).isSymbolicLink()) {
+				const canonicalMacVarAlias = process.platform === "darwin" && current === "/var" && fs.realpathSync.native(current) === "/private/var";
+				if (!canonicalMacVarAlias) throw new Error(`Private state path '${current}' must not be a symlink.`);
+			}
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
 			throw error;
@@ -39,13 +55,16 @@ function securePrivateDirectory(target: string): void {
 export function ensurePrivateDirectory(target: string, options: { privateRoot?: string } = {}): void {
 	const absolute = path.resolve(target);
 	const privateRoot = path.resolve(options.privateRoot ?? absolute);
-	const relative = path.relative(privateRoot, absolute);
-	if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`Private state path '${absolute}' escapes private root '${privateRoot}'.`);
+	const canonicalPrivateRoot = canonicalizeThroughExistingAncestor(privateRoot);
+	const canonicalAbsolute = canonicalizeThroughExistingAncestor(absolute);
+	const canonicalRelative = path.relative(canonicalPrivateRoot, canonicalAbsolute);
+	if (canonicalRelative === ".." || canonicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(canonicalRelative)) throw new Error(`Private state path '${absolute}' escapes private root '${privateRoot}'.`);
 	assertNoSymlinkPathComponents(absolute);
-	fs.mkdirSync(privateRoot, { recursive: true, mode: 0o700 });
-	securePrivateDirectory(privateRoot);
-	let current = privateRoot;
-	for (const segment of relative.split(path.sep).filter(Boolean)) {
+	assertNoSymlinkPathComponents(privateRoot);
+	fs.mkdirSync(canonicalPrivateRoot, { recursive: true, mode: 0o700 });
+	securePrivateDirectory(canonicalPrivateRoot);
+	let current = canonicalPrivateRoot;
+	for (const segment of canonicalRelative.split(path.sep).filter(Boolean)) {
 		current = path.join(current, segment);
 		fs.mkdirSync(current, { recursive: true, mode: 0o700 });
 		securePrivateDirectory(current);
