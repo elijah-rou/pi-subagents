@@ -14,7 +14,8 @@ This is the upgrade checklist for users moving from the fork before the v0.46–
 
 4. **Review custom agent isolation.** When `inheritProjectContext` resolves to `true`, omitted `inheritGlobalContext` now also resolves to `true`. Set `inheritGlobalContext: false` explicitly only for an agent that must exclude operator-global instructions.
 5. **Replace removed launch shapes and vendor builtins.** Rewrite legacy multi-child inputs as `workflowScript`; define or install every external CLI profile you intend to use.
-6. **Run the read-only diagnostic command** `/subagents-doctor` (the same report is available through `subagent({ action: "doctor" })`). Agent listing, management actions, and diagnostics are separate: use `subagent({ action: "list" })` to list agents, and do not expect `doctor` to appear there.
+6. **Remove retired Orca configuration.** Package 3b no longer discovers or invokes Orca. `orcaProgressTabs` is tolerated inertly for one published Package 3b release, and existing `.pi/subagents/views/orca` or temporary mirror artifacts are left untouched.
+7. **Run the read-only diagnostic command** `/subagents-doctor` (the same report is available through `subagent({ action: "doctor" })`). Agent listing, management actions, and diagnostics are separate: use `subagent({ action: "list" })` to list agents, and do not expect `doctor` to appear there.
 
 ## Acceptance is enforced when inferred
 

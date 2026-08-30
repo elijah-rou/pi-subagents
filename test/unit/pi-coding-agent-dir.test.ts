@@ -380,16 +380,13 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.mainWindowRenderer\.compactResultMaxLines must be a positive integer/);
 	});
 
-	it("loads and validates experimental Orca progress-tab config", () => {
+	it("tolerates the retired observer config key inertly for one release", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true } }));
-		assert.deepEqual(loadConfig().orcaProgressTabs, { enabled: true });
-
-		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: "yes" } }));
-		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.enabled must be a boolean/);
-
-		writeFile(configPath, JSON.stringify({ orcaProgressTabs: { enabled: true, focus: true } }));
-		assert.throws(() => updateConfig((config) => config), /config\.orcaProgressTabs\.focus is not supported/);
+		const retiredConfig = { enabled: "formerly-invalid", nested: { preserve: true } };
+		writeFile(configPath, JSON.stringify({ orcaProgressTabs: retiredConfig }));
+		assert.deepEqual((loadConfig() as Record<string, unknown>).orcaProgressTabs, retiredConfig);
+		updateConfig((config) => ({ ...config, asyncByDefault: false }));
+		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")).orcaProgressTabs, retiredConfig);
 	});
 
 	it("hardens and redacts existing run history while recording", () => {

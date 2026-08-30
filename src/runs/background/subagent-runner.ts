@@ -152,7 +152,6 @@ import { resolveCodexExecLaunch } from "../shared/codex-exec-adapter.ts";
 import { resolveCursorAgentLaunch } from "../shared/cursor-agent-adapter.ts";
 import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { runExternalJob } from "../shared/external-job-runner.ts";
-import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 
 const INTERCOM_DETACH_RECEIPT = "Detached for intercom coordination before task completion.";
@@ -620,7 +619,6 @@ function runPiStreaming(
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
 	toolTimeoutMs?: number,
 	runDeadlineAt?: number,
-	orcaProgressTab?: OrcaProgressTab,
 	expectedModelForVerification?: string,
 	modelVerificationRegistry?: Array<{ provider: string; id: string; fullId: string }>,
 	mutationTools?: readonly string[],
@@ -717,7 +715,6 @@ function runPiStreaming(
 		const writeOutputLine = (line: string) => {
 			if (!line.trim()) return;
 			outputStream.write(`${line}\n`);
-			orcaProgressTab?.append(`${line}\n`);
 		};
 
 		const writeOutputText = (text: string) => {
@@ -899,7 +896,6 @@ function runPiStreaming(
 			stderrTail.push(chunk);
 			stderrReader.push(chunk);
 			outputStream.write(chunk);
-			orcaProgressTab?.append(chunk.toString("utf-8"));
 		});
 		registerInterrupt?.(() => {
 			if (settled || timedOut || stopped) return;
@@ -1247,7 +1243,6 @@ interface SingleStepContext {
 	usageBudgetExhausted?: () => boolean;
 	/** False when sibling work in the same Git worktree could have caused the tracked diff. */
 	trackedMutationEvidenceForCompletionGuard?: boolean;
-	orcaProgressTab?: OrcaProgressTab;
 }
 
 /** Run a single pi agent step, returning output and metadata */
@@ -1452,8 +1447,6 @@ async function runSingleStepInner(
 			timeoutMessage: ctx.timeoutMessage,
 			stopMessage: ctx.stopMessage,
 			onProcess: ctx.onExternalProcess,
-			onStdout: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
-			onStderr: (chunk) => ctx.orcaProgressTab?.append(chunk.toString("utf-8")),
 		}));
 		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
 		const resolvedOutput = step.outputPath && external.exitCode === 0
@@ -1758,7 +1751,6 @@ async function runSingleStepInner(
 			ctx.onWriterProcess,
 			ctx.toolTimeoutMs,
 			ctx.deadlineAt,
-			ctx.orcaProgressTab,
 			expectedModelForVerification,
 			step.modelVerificationRegistry,
 			step.mutationTools,
@@ -2209,7 +2201,6 @@ async function runSingleStep(
 	step: SubagentStep,
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
-	if (!step.importAsyncRoot) ctx.orcaProgressTab?.section({ agent: step.agent, index: ctx.flatIndex, count: ctx.flatStepCount });
 	try {
 		return await runSingleStepInner(step, ctx);
 	} catch (error) {
@@ -2634,19 +2625,6 @@ async function runSubagentInner(
 			step.processTerminal = { version: 1, state: "pending", runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId };
 		}
 	}
-	const initialAgentLabel = initialStatusSteps.length === 1
-		? initialStatusSteps[0]!.agent
-		: (config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single")) === "parallel"
-			? `parallel:${initialStatusSteps.map((step) => step.agent).join("+")}`
-			: `chain:${initialStatusSteps.map((step) => step.agent).join("->")}`;
-	const orcaProgressTab = flatSteps.every((step) => step.importAsyncRoot) ? undefined : createOrcaProgressTab({
-		cwd,
-		runId: id,
-		agent: initialAgentLabel,
-		index: 0,
-		stepCount: Math.max(initialStatusSteps.length, 1),
-	});
-
 	const statusPayload: RunnerStatusPayload = omitUndefinedProperties({
 		lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
 		runId: id,
@@ -4267,7 +4245,6 @@ async function runSubagentInner(
 					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 					skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
 					usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
-					orcaProgressTab,
 				}), config.deadlineAt);
 				const taskEndTime = Date.now();
 				const childInterrupted = singleResult.interrupted === true;
@@ -4669,7 +4646,6 @@ async function runSubagentInner(
 							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
 							skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
 							usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
-							orcaProgressTab,
 						}), config.deadlineAt);
 						if (task.sessionFile) {
 							latestSessionFile = task.sessionFile;
@@ -5030,7 +5006,6 @@ async function runSubagentInner(
 				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
 				skipAcceptance: () => timedOut || stopped || childStopRequests.has(flatIndex),
 				usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
-				orcaProgressTab,
 				}), config.deadlineAt);
 			} catch (error) {
 				if (singleWorktreeSetup) cleanupWorktrees(singleWorktreeSetup);
@@ -5497,7 +5472,6 @@ async function runSubagentInner(
 		statusPayload.lastUpdate = Date.now();
 	}
 	writeStatusPayload();
-	orcaProgressTab?.finish(statusPayload.state === "complete" ? "completed" : statusPayload.state === "stopped" ? "stopped" : "failed", effectiveSessionFile);
 	appendJsonl(
 		eventsPath,
 		JSON.stringify({

@@ -2381,8 +2381,6 @@ export interface RunSyncOptions {
 	};
 	/** Private live callback for the exact child prompt after runtime acceptance injection. */
 	onEffectivePrompt?: (prompt: string) => void;
-	/** Internal lifecycle hook for the observer shared across retries of one logical child. */
-	onOrcaProgressTabCreated?: (tab: import("../runs/shared/orca-progress-tabs.ts").OrcaProgressTab) => void;
 }
 
 export type IntercomBridgeMode = "off" | "fork-only" | "always";
@@ -2451,11 +2449,6 @@ export const FLEET_KEYBINDING_ACTIONS = [
 export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
 export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
 
-export interface OrcaProgressTabsConfig {
-	/** Create one Orca observer tab per top-level subagent call. Experimental and opt-in. */
-	enabled?: boolean;
-}
-
 export interface MainWindowRendererConfig {
 	/** Unit of horizontal space in main chat subagent call/result rows. Omit to preserve current spacing. Set 0 for no extra padding. */
 	horizontalSpacing?: number;
@@ -2499,8 +2492,6 @@ export interface ExtensionConfig {
 	inlineToolDisplay?: InlineToolDisplay;
 	/** Density controls for the main chat subagent call/result renderer. */
 	mainWindowRenderer?: MainWindowRendererConfig;
-	/** Experimental observer: mirror each native subagent's progress into a new Orca tab. */
-	orcaProgressTabs?: OrcaProgressTabsConfig;
 	forceTopLevelAsync?: boolean;
 	waitTool?: WaitToolConfig;
 	defaultSessionDir?: string;

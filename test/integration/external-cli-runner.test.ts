@@ -7,27 +7,12 @@ import { afterEach, describe, it } from "node:test";
 import { handleList } from "../../src/agents/agent-management.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { resultFilesForSession } from "../../src/runs/background/result-files.ts";
-import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { writeNodeCommand } from "../support/node-command.ts";
 
 const tempDirs: string[] = [];
 afterEach(() => {
 	for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-	const progressDir = path.join(TEMP_ROOT_DIR, "orca-progress");
-	if (fs.existsSync(progressDir)) {
-		for (const name of fs.readdirSync(progressDir)) {
-			if (name.startsWith("orca-observer-external-")) fs.rmSync(path.join(progressDir, name), { force: true });
-		}
-	}
 });
-
-async function waitForFile(file: string): Promise<void> {
-	const deadline = Date.now() + 5_000;
-	while (!fs.existsSync(file)) {
-		if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-}
 
 function runProcess(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
 	return new Promise((resolve, reject) => {
@@ -166,52 +151,70 @@ describe("external CLI async lifecycle", () => {
 		assert.deepEqual(result.results[0].childProfile, childProfile);
 	});
 
-	it("mirrors a child into Orca without replacing its configured runner", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-orca-observer-"));
+	it("keeps retired observer config inert during native background execution", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-retired-observer-native-"));
 		tempDirs.push(dir);
 		const asyncDir = path.join(dir, "async");
 		const agentDir = path.join(dir, "agent-dir");
-		const capture = path.join(dir, "orca-args.json");
-		const fakeOrca = writeNodeCommand(dir, "orca", "require('fs').writeFileSync(process.env.ORCA_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)))");
+		const invocationMarker = path.join(dir, "observer-invoked");
+		const fakeObserver = writeNodeCommand(dir, "orca", `require('fs').writeFileSync(${JSON.stringify(invocationMarker)}, 'invoked')`);
+		const childEvents = [
+			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "native Pi result" }], stopReason: "stop", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+			{ type: "agent_settled" },
+		];
+		const fakePi = writeNodeCommand(dir, "pi", `for (const event of ${JSON.stringify(childEvents)}) process.stdout.write(JSON.stringify(event)+'\\n')`);
 		fs.mkdirSync(asyncDir);
 		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
 		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
 		const resultPath = path.join(dir, "result.json");
 		const configPath = path.join(dir, "config.json");
 		fs.writeFileSync(configPath, JSON.stringify({
-			id: "orca-observer-external",
-			sessionId: "session-orca-external",
-			steps: [{
-				agent: "external",
-				task: "Task text",
-				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('native runner output')"] },
-				systemPrompt: "System text",
-				systemPromptMode: "replace",
-				inheritProjectContext: false,
-				inheritSkills: false,
-			}],
-			resultPath,
-			cwd: dir,
-			placeholder: "{previous}",
-			artifactConfig: { enabled: false },
-			asyncDir,
-			resultMode: "single",
+			id: "retired-observer-native", sessionId: "session-native",
+			steps: [{ agent: "worker", task: "Read", systemPrompt: "Use native Pi", systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false }],
+			resultPath, cwd: dir, placeholder: "{previous}", artifactConfig: { enabled: false }, asyncDir, resultMode: "single",
 		}));
 		const repo = path.resolve(import.meta.dirname, "../..");
-		const exitCode = await runProcess(
-			process.execPath,
-			[path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath],
-			repo,
-			{ ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_SUBAGENT_ORCA_BINARY: fakeOrca, ORCA_TEST_CAPTURE: capture },
-		);
+		const exitCode = await runProcess(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], repo, {
+			...process.env, PI_CODING_AGENT_DIR: agentDir, PI_SUBAGENT_ORCA_BINARY: fakeObserver, PI_SUBAGENT_PI_BINARY: fakePi,
+		});
+		assert.equal(exitCode, 0);
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(result.success, true);
+		assert.match(result.results[0].output, /native Pi result/);
+		assert.equal(fs.existsSync(invocationMarker), false);
+	});
+
+	it("keeps retired observer config inert during external execution", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-retired-observer-"));
+		tempDirs.push(dir);
+		const asyncDir = path.join(dir, "async");
+		const agentDir = path.join(dir, "agent-dir");
+		const invocationMarker = path.join(dir, "observer-invoked");
+		const fakeObserver = writeNodeCommand(dir, "orca", `require('fs').writeFileSync(${JSON.stringify(invocationMarker)}, 'invoked')`);
+		const legacyArtifacts = path.join(dir, ".pi", "subagents", "views", "orca");
+		fs.mkdirSync(asyncDir);
+		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+		fs.mkdirSync(legacyArtifacts, { recursive: true });
+		fs.writeFileSync(path.join(legacyArtifacts, "existing.json"), "legacy artifact\n");
+		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
+		const resultPath = path.join(dir, "result.json");
+		const configPath = path.join(dir, "config.json");
+		fs.writeFileSync(configPath, JSON.stringify({
+			id: "retired-observer-external",
+			sessionId: "session-external",
+			steps: [{ agent: "external", task: "Task text", runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('native runner output')"] }, inheritProjectContext: false, inheritSkills: false }],
+			resultPath, cwd: dir, placeholder: "{previous}", artifactConfig: { enabled: false }, asyncDir, resultMode: "single",
+		}));
+		const repo = path.resolve(import.meta.dirname, "../..");
+		const exitCode = await runProcess(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], repo, {
+			...process.env, PI_CODING_AGENT_DIR: agentDir, PI_SUBAGENT_ORCA_BINARY: fakeObserver,
+		});
 		assert.equal(exitCode, 0);
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(result.results[0].runner.type, "external-cli");
 		assert.match(result.results[0].output, /native runner output/);
-		await waitForFile(capture);
-		const args = JSON.parse(fs.readFileSync(capture, "utf-8")) as string[];
-		assert.deepEqual(args.slice(0, 2), ["terminal", "create"]);
-		assert.equal(args[args.indexOf("--worktree") + 1], `path:${path.resolve(dir)}`);
-		assert.match(args[args.indexOf("--title") + 1], /subagents · external/);
+		assert.equal(fs.existsSync(invocationMarker), false);
+		assert.equal(fs.readFileSync(path.join(legacyArtifacts, "existing.json"), "utf-8"), "legacy artifact\n");
+		assert.deepEqual(fs.readdirSync(legacyArtifacts), ["existing.json"]);
 	});
 });

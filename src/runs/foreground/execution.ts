@@ -63,7 +63,6 @@ import { arbitrateCompletionGuardRescue } from "../shared/llm-intent-arbiter.ts"
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
-import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV, type SubagentTaskDelivery } from "../shared/pi-args.ts";
@@ -314,7 +313,6 @@ async function runSingleAttempt(
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
 		taskDelivery?: SubagentTaskDelivery;
-		orcaProgressTab?: OrcaProgressTab;
 		launchWarnings: { emitted: boolean };
 		verifyModel: boolean;
 	},
@@ -990,12 +988,10 @@ async function runSingleAttempt(
 			} catch {
 				rawStdoutTail.push(`${line}\n`);
 				shared.transcriptWriter?.writeStdoutLine(line);
-				shared.orcaProgressTab?.append(`${line}\n`);
 				// Non-JSON stdout lines are expected; only structured events are parsed.
 				return;
 			}
 			shared.transcriptWriter?.writeChildEvent(evt);
-			shared.orcaProgressTab?.event(evt);
 			if (evt.type === "compaction_start") compactionStartedReceived = true;
 			if (evt.type === "compaction_end" && evt.willRetry === true) {
 				compactionStartedReceived = false;
@@ -1307,7 +1303,6 @@ async function runSingleAttempt(
 		proc.stderr.on("data", (chunk: Buffer) => {
 			stderrTail.push(chunk);
 			stderrReader.push(chunk);
-			shared.orcaProgressTab?.append(chunk.toString("utf-8"));
 		});
 		proc.on("exit", () => {
 			childExited = true;
@@ -1891,13 +1886,6 @@ async function runSyncCompletionInner(
 		}
 	}
 
-	const orcaProgressTab = createOrcaProgressTab({
-		cwd: options.cwd ?? runtimeCwd,
-		runId: options.runId,
-		agent: agentName,
-		index: options.index ?? 0,
-	});
-	if (orcaProgressTab) options.onOrcaProgressTabCreated?.(orcaProgressTab);
 
 	const persistResultMetadata = (target: SingleResult): void => {
 		persistSingleResultMetadata({
@@ -1972,7 +1960,6 @@ async function runSyncCompletionInner(
 				outputSnapshot,
 				originalTask: task,
 				taskDelivery: taskDeliveryOverride,
-				orcaProgressTab,
 				launchWarnings,
 				verifyModel,
 			});
@@ -2267,18 +2254,7 @@ async function runSyncCompletion(
 	task: string,
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
-	let orcaProgressTab: OrcaProgressTab | undefined;
-	try {
-		const result = await runSyncCompletionInner(runtimeCwd, agents, agentName, task, {
-			...options,
-			onOrcaProgressTabCreated: (tab) => { orcaProgressTab = tab; },
-		});
-		orcaProgressTab?.finish(result.stopped ? "stopped" : result.exitCode === 0 && !result.error ? "completed" : "failed", result.sessionFile);
-		return result;
-	} catch (error) {
-		orcaProgressTab?.finish("failed");
-		throw error;
-	}
+	return runSyncCompletionInner(runtimeCwd, agents, agentName, task, options);
 }
 
 /**

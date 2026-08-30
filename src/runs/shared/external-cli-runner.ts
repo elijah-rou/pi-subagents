@@ -170,8 +170,6 @@ export function runExternalCli(input: {
 	stopMessage?: string;
 	onProcess?: (process: ExternalProcessStatus) => void;
 	onParserProgress?: (progress: ExternalCliParserProgress) => void;
-	onStdout?: (chunk: Buffer) => void;
-	onStderr?: (chunk: Buffer) => void;
 }): Promise<ExternalCliRunResult> {
 	const limits = {
 		stdoutLogBytes: narrowLimit(input.limits?.stdoutLogBytes, MAX_RAW_LOG_BYTES, "stdoutLogBytes"),
@@ -350,12 +348,10 @@ export function runExternalCli(input: {
 		child.stdout.on("data", (chunk: Buffer) => {
 			parseChunk(chunk);
 			writeBoundedLog(child.stdout, stdoutStream, chunk, stdoutLog, limits.stdoutLogBytes);
-			input.onStdout?.(chunk);
 			stdoutTail.push(chunk);
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
 			writeBoundedLog(child.stderr, stderrStream, chunk, stderrLog, limits.stderrLogBytes);
-			input.onStderr?.(chunk);
 			stderrTail.push(chunk);
 		});
 		input.registerTimeout?.(() => terminate("timeout"));

@@ -361,6 +361,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
+	it("keeps retired observer config inert during foreground execution", async () => {
+		mockPi.onCall({ output: "foreground output" });
+		const invocationMarker = path.join(tempDir, "observer-invoked");
+		const observerPath = path.join(tempDir, "orca");
+		fs.writeFileSync(observerPath, `#!/bin/sh\nprintf invoked > ${JSON.stringify(invocationMarker)}\n`, { mode: 0o700 });
+		const legacyArtifacts = path.join(tempDir, ".pi", "subagents", "views", "orca");
+		fs.mkdirSync(legacyArtifacts, { recursive: true });
+		fs.writeFileSync(path.join(legacyArtifacts, "existing.json"), "legacy artifact\n");
+		fs.mkdirSync(path.join(agentDir, "extensions", "subagent"), { recursive: true });
+		fs.writeFileSync(path.join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ orcaProgressTabs: { enabled: true } }));
+		const previousObserver = process.env.PI_SUBAGENT_ORCA_BINARY;
+		process.env.PI_SUBAGENT_ORCA_BINARY = observerPath;
+		try {
+			const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Say hello", {});
+			assert.equal(result.exitCode, 0);
+			assert.equal(getFinalOutput(result.messages), "foreground output");
+			assert.equal(fs.existsSync(invocationMarker), false);
+			assert.deepEqual(fs.readdirSync(legacyArtifacts), ["existing.json"]);
+			assert.equal(fs.readFileSync(path.join(legacyArtifacts, "existing.json"), "utf-8"), "legacy artifact\n");
+		} finally {
+			if (previousObserver === undefined) delete process.env.PI_SUBAGENT_ORCA_BINARY;
+			else process.env.PI_SUBAGENT_ORCA_BINARY = previousObserver;
+		}
+	});
+
 	it("routes a parallel workflow child through the parent child-profile resolver", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "routed child" });
 		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);

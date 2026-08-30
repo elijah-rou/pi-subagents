@@ -40,7 +40,7 @@ writer only its assigned implementation stage.
 
 Use async/background by default. Set `async:false` only when the parent must
 block. Final reviews, validation gates, oracle checks, and publication checks
-stay async.
+stay async. Use Fleet, status, and results for visibility.
 
 In an ordinary interactive session, yield after launching or triaging useful
 async lanes and let Pi wake the parent on completion; do not call blocking

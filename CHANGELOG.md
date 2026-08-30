@@ -11,6 +11,7 @@
 - Add a parent-only `/candidate-panel` recipe for independent structured proposals and advisory comparison.
 
 ### Changed
+- Remove Orca observer integration from core, including process discovery/spawn, native and external mirroring hooks, manifests, temporary logs, counters, locks, and cleanup writers. The old `orcaProgressTabs` config key is inert for one published Package 3b release, and existing observer artifacts remain untouched.
 - Remove the optional main and child model-review watchdog from core, including startup hooks, child tail delays, model/configuration actions, slash UI, LSP review coupling, and settings writers. Explicit reviewer workflows remain. Child permission `ask` now deterministically denies rather than delegating authority to a model. Old watchdog settings, result fields, and status events are accepted inert for one published Package 3a release.
 - Remove core schedule execution, timers, writers, completion observation, retention coupling, and slash control. Trusted RPC retains bounded passive `schedule.list`, `schedule.show`, and `schedule.history` readers for one published-release compatibility horizon.
 - Add one packaged [pre-v0.59 fork migration guide](docs/migration-v059.md) covering required configuration, profile, workflow, storage, validation, and restart changes.
