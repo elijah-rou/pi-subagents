@@ -465,7 +465,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		return createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config,
+			config: { maxActiveAsyncRunsPerSession: 0, ...config },
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,

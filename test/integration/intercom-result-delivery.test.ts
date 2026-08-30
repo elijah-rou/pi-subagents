@@ -234,7 +234,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					mode: options.bridgeMode ?? "always",
 					...(options.resultDelivery === undefined ? {} : { resultDelivery: options.resultDelivery }),
 				},
-				...(options.maxActiveAsyncRunsPerSession === undefined ? {} : { maxActiveAsyncRunsPerSession: options.maxActiveAsyncRunsPerSession }),
+				maxActiveAsyncRunsPerSession: options.maxActiveAsyncRunsPerSession ?? 0,
 			},
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
@@ -1084,6 +1084,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				tools: ["read"],
 				systemPrompt: "Original persisted prompt",
 				intercomBridge: { mode: "off" },
+				inheritProjectContext: true,
 				maxSubagentDepth: 1,
 			});
 			const { executor } = makeExecutor({ agents: [] });
@@ -1105,6 +1106,9 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(args[args.indexOf("--tools") + 1], "read");
 			assert.equal(args.includes("--system-prompt"), true);
 			assert.equal(args.includes("--append-system-prompt"), false);
+			const revivedDescriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, revivedId, "recovery-descriptor.json"), "utf-8")) as { inheritProjectContext?: boolean; inheritGlobalContext?: boolean };
+			assert.equal(revivedDescriptor.inheritProjectContext, true);
+			assert.equal(revivedDescriptor.inheritGlobalContext, true);
 			await waitForFile(path.join(RESULTS_DIR, `${revivedId}.json`));
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });

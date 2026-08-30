@@ -387,7 +387,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				foregroundControls: new Map(),
 				lastForegroundControlId: null,
 			},
-			config,
+			config: { maxActiveAsyncRunsPerSession: 0, ...config },
 			asyncByDefault,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => path.join(tempDir, ".pi/subagents", "sessions"),
@@ -4551,7 +4551,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("reports structured spawn-budget usage through status", async () => {
 		const spawnState = { sessionId: "session-123", count: 3, configuredLimit: 4, granted: 1, grantHistory: [] };
-		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 4 }, false, spawnState);
+		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 4, maxActiveAsyncRunsPerSession: undefined }, false, spawnState);
 
 		const status = await executor.execute("status", { action: "status" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
@@ -4565,6 +4565,35 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			grantRemaining: 3,
 			grantHistory: [],
 		});
+	});
+
+	it("keeps unlimited shared fixtures from consuming omitted-default active capacity", async () => {
+		const releasePath = path.join(tempDir, "release-unlimited-fixture");
+		mockPi.onCall({ waitForPath: releasePath, output: "detached fixture complete" });
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionId = () => "session-fixture-isolation";
+		context.sessionManager.getSessionFile = () => null;
+
+		const fixtureExecutor = makeExecutor([makeAgent("echo")]);
+		const launch = await fixtureExecutor.execute(
+			"unlimited-fixture-launch",
+			{ agent: "echo", task: "Remain detached while capacity is inspected", async: true },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "fixture launch failed");
+
+		const defaultCapacityExecutor = makeExecutor([makeAgent("echo")], { maxActiveAsyncRunsPerSession: undefined });
+		const status = await defaultCapacityExecutor.execute("default-capacity-status", { action: "status" }, new AbortController().signal, undefined, context);
+		assert.match(status.content[0]?.text ?? "", /Active async capacity: 0\/4 used/);
+
+		fs.writeFileSync(releasePath, "release", "utf-8");
+		assert.ok(launch.details.asyncId);
+		const resultPath = path.join(DIRS.results, `${launch.details.asyncId}.json`);
+		const deadline = Date.now() + 10_000;
+		while (!fs.existsSync(resultPath) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+		assert.equal(fs.existsSync(resultPath), true);
 	});
 
 	it("preflights static chains before creating run artifacts", async () => {
