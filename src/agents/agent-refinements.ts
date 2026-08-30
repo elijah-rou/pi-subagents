@@ -11,6 +11,7 @@ const REFINEMENT_DIR = "refinements";
 const CURRENT_FENCE = "pi-subagents-refinement-current";
 const SNAPSHOTS_FENCE = "pi-subagents-refinement-snapshots-json";
 const MAX_EVIDENCE_ITEMS = 8;
+const MAX_EVIDENCE_CANDIDATES_PER_SOURCE = 32;
 const MAX_AGE_DAYS = 14;
 const MAX_ITEM_BYTES = 2_048;
 const MAX_PACKET_BYTES = 16_384;
@@ -295,15 +296,92 @@ function withinAge(at: string | undefined, now = Date.now()): boolean {
 	return Number.isFinite(parsed) && now - parsed <= MAX_AGE_DAYS * 24 * 60 * 60 * 1_000;
 }
 
+function headBytes(value: string, maxBytes: number): string {
+	const buffer = Buffer.from(value, "utf-8");
+	if (buffer.byteLength <= maxBytes) return value;
+	let end = maxBytes;
+	while (end > 0 && (buffer[end]! & 0xc0) === 0x80) end--;
+	return buffer.subarray(0, end).toString("utf-8");
+}
+
 function tailBytes(value: string, maxBytes: number): string {
 	const buffer = Buffer.from(value, "utf-8");
 	if (buffer.byteLength <= maxBytes) return value;
-	return buffer.subarray(buffer.byteLength - maxBytes).toString("utf-8");
+	let start = buffer.byteLength - maxBytes;
+	while (start < buffer.byteLength && (buffer[start]! & 0xc0) === 0x80) start++;
+	return buffer.subarray(start).toString("utf-8");
 }
 
-function pushCapped(items: RefinementEvidenceItem[], item: RefinementEvidenceItem): void {
-	if (items.length >= MAX_EVIDENCE_ITEMS) return;
-	items.push({ ...item, outputTail: item.outputTail ? tailBytes(item.outputTail, MAX_ITEM_BYTES) : undefined });
+function readUtf8FileTail(filePath: string, maxBytes: number): string {
+	const descriptor = fs.openSync(filePath, "r");
+	try {
+		const size = fs.fstatSync(descriptor).size;
+		const readBytes = Math.min(size, maxBytes + 3);
+		const buffer = Buffer.allocUnsafe(readBytes);
+		const bytesRead = fs.readSync(descriptor, buffer, 0, readBytes, Math.max(0, size - readBytes));
+		let start = 0;
+		while (start < bytesRead && (buffer[start]! & 0xc0) === 0x80) start++;
+		return tailBytes(buffer.subarray(start, bytesRead).toString("utf-8"), maxBytes);
+	} finally {
+		fs.closeSync(descriptor);
+	}
+}
+
+function boundedEvidenceStrings(values: string[] | undefined, maxItems: number, maxBytes: number): string[] | undefined {
+	if (!values?.length) return undefined;
+	const bounded = values.slice(0, maxItems).map((value) => headBytes(value, maxBytes)).filter(Boolean);
+	return bounded.length > 0 ? bounded : undefined;
+}
+
+function serializedItemBytes(item: RefinementEvidenceItem): number {
+	return Buffer.byteLength(JSON.stringify(item), "utf-8");
+}
+
+function compactEvidenceItem(item: RefinementEvidenceItem): RefinementEvidenceItem {
+	const reviewFindings = boundedEvidenceStrings(item.reviewFindings, 2, 160);
+	const residualRisks = boundedEvidenceStrings(item.residualRisks, 2, 160);
+	const errors = boundedEvidenceStrings(item.errors, 2, 160);
+	const signals = boundedEvidenceStrings(item.controlSignals, 2, 160);
+	let result: RefinementEvidenceItem = {
+		id: headBytes(item.id, 320),
+		source: item.source,
+		...(item.runId ? { runId: headBytes(item.runId, 256) } : {}),
+		agent: headBytes(item.agent, 128),
+		...(item.at ? { at: headBytes(item.at, 64) } : {}),
+		...(item.status ? { status: headBytes(item.status, 64) } : {}),
+		...(item.model ? { model: headBytes(item.model, 256) } : {}),
+		...(item.thinking ? { thinking: headBytes(item.thinking, 64) } : {}),
+		...(item.acceptanceStatus ? { acceptanceStatus: headBytes(item.acceptanceStatus, 64) } : {}),
+		...(reviewFindings ? { reviewFindings } : {}),
+		...(residualRisks ? { residualRisks } : {}),
+		...(errors ? { errors } : {}),
+		...(signals ? { controlSignals: signals } : {}),
+		...(item.outputTail ? { outputTail: tailBytes(item.outputTail, 768) } : {}),
+		refs: item.refs.slice(0, 2).map((ref) => headBytes(ref, 256)).filter(Boolean),
+	};
+	if (serializedItemBytes(result) <= MAX_ITEM_BYTES) return result;
+	delete result.outputTail;
+	if (serializedItemBytes(result) <= MAX_ITEM_BYTES) return result;
+	for (const field of ["reviewFindings", "residualRisks", "errors", "controlSignals"] as const) {
+		if (result[field]?.length) result[field] = result[field]!.slice(0, 1);
+	}
+	result.refs = result.refs.slice(0, 1);
+	if (serializedItemBytes(result) <= MAX_ITEM_BYTES) return result;
+	for (const field of ["reviewFindings", "residualRisks", "errors", "controlSignals"] as const) {
+		if (result[field]?.length) result[field] = result[field]!.map((value) => headBytes(value, 96));
+	}
+	result.refs = result.refs.map((ref) => headBytes(ref, 160));
+	if (serializedItemBytes(result) <= MAX_ITEM_BYTES) return result;
+	delete result.model;
+	delete result.thinking;
+	delete result.controlSignals;
+	if (serializedItemBytes(result) <= MAX_ITEM_BYTES) return result;
+	throw new Error(`Refinement evidence item '${result.id}' exceeds ${MAX_ITEM_BYTES} bytes after compaction.`);
+}
+
+function pushCandidate(items: RefinementEvidenceItem[], item: RefinementEvidenceItem): void {
+	if (items.length >= MAX_EVIDENCE_CANDIDATES_PER_SOURCE) return;
+	items.push(compactEvidenceItem(item));
 }
 
 function acceptanceFields(value: unknown): Pick<RefinementEvidenceItem, "acceptanceStatus" | "reviewFindings" | "residualRisks"> {
@@ -334,12 +412,30 @@ function controlSignals(value: unknown): string[] {
 	}).filter((entry): entry is string => entry !== null);
 }
 
+function evidencePriority(item: RefinementEvidenceItem): number {
+	const failedAcceptance = item.acceptanceStatus === "rejected";
+	return (failedAcceptance ? 1_000 : 0)
+		+ (item.reviewFindings?.length ? 800 : 0)
+		+ (item.errors?.length ? 700 : 0)
+		+ (item.residualRisks?.length ? 600 : 0)
+		+ (item.status === "failed" || item.status === "rejected" || item.status === "stopped" ? 500 : 0)
+		+ (item.controlSignals?.length ? 300 : 0)
+		+ (item.outputTail ? 10 : 0);
+}
+
 function evidencePacket(items: RefinementEvidenceItem[]): RefinementEvidenceItem[] {
+	const ranked = items.map((item, index) => ({ item, index })).sort((left, right) => {
+		const priority = evidencePriority(right.item) - evidencePriority(left.item);
+		if (priority !== 0) return priority;
+		const recency = (Date.parse(right.item.at ?? "") || 0) - (Date.parse(left.item.at ?? "") || 0);
+		return recency !== 0 ? recency : left.index - right.index;
+	});
 	const packet: RefinementEvidenceItem[] = [];
 	let bytes = 2;
-	for (const item of items) {
-		const encoded = Buffer.byteLength(JSON.stringify(item), "utf-8") + 1;
-		if (bytes + encoded > MAX_PACKET_BYTES) break;
+	for (const { item } of ranked) {
+		if (packet.length >= MAX_EVIDENCE_ITEMS) break;
+		const encoded = serializedItemBytes(item) + 1;
+		if (bytes + encoded > MAX_PACKET_BYTES) continue;
 		packet.push(item);
 		bytes += encoded;
 	}
@@ -347,17 +443,18 @@ function evidencePacket(items: RefinementEvidenceItem[]): RefinementEvidenceItem
 }
 
 export function collectBoundedRefinementEvidence(cwd: string, agentName: string, state: SubagentState): RefinementEvidenceItem[] {
-	const items: RefinementEvidenceItem[] = [];
+	const liveItems: RefinementEvidenceItem[] = [];
 	const jobs = [...state.asyncJobs.values()]
 		.filter((job) => !job.cwd || path.resolve(job.cwd) === path.resolve(cwd))
 		.filter((job) => job.agents?.includes(agentName) || job.steps?.some((step) => step.agent === agentName))
 		.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 	for (const job of jobs) {
+		if (liveItems.length >= MAX_EVIDENCE_CANDIDATES_PER_SOURCE) break;
 		const at = isoTime(job.updatedAt ?? job.startedAt);
 		if (!withinAge(at)) continue;
 		const matchingSteps = job.steps?.filter((step) => step.agent === agentName) ?? [];
 		if (matchingSteps.length === 0) {
-			pushCapped(items, {
+			pushCandidate(liveItems, {
 				id: `live:${job.asyncId}`,
 				source: "live-state",
 				runId: job.asyncId,
@@ -370,7 +467,7 @@ export function collectBoundedRefinementEvidence(cwd: string, agentName: string,
 		}
 		for (const [index, step] of matchingSteps.entries()) {
 			const stepRecord = step as unknown as Record<string, unknown>;
-			pushCapped(items, {
+			pushCandidate(liveItems, {
 				id: `live:${job.asyncId}:${index}`,
 				source: "live-state",
 				runId: job.asyncId,
@@ -387,6 +484,7 @@ export function collectBoundedRefinementEvidence(cwd: string, agentName: string,
 		}
 	}
 
+	const artifactItems: RefinementEvidenceItem[] = [];
 	const artifactsDir = path.join(getProjectSubagentsDir(cwd), "artifacts");
 	if (fs.existsSync(artifactsDir)) {
 		const files = fs.readdirSync(artifactsDir)
@@ -394,7 +492,7 @@ export function collectBoundedRefinementEvidence(cwd: string, agentName: string,
 			.map((file) => path.join(artifactsDir, file))
 			.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
 		for (const file of files) {
-			if (items.length >= MAX_EVIDENCE_ITEMS) break;
+			if (artifactItems.length >= MAX_EVIDENCE_CANDIDATES_PER_SOURCE) break;
 			let metadata: Record<string, unknown> | null = null;
 			try { metadata = record(JSON.parse(fs.readFileSync(file, "utf-8")) as unknown); } catch { metadata = null; }
 			if (!metadata || text(metadata.agent) !== agentName) continue;
@@ -402,8 +500,9 @@ export function collectBoundedRefinementEvidence(cwd: string, agentName: string,
 			const at = isoTime(metadata.timestamp ?? stat.mtimeMs);
 			if (!withinAge(at)) continue;
 			const outputPath = file.replace(/_meta\.json$/, "_output.md");
-			const outputTail = fs.existsSync(outputPath) ? tailBytes(fs.readFileSync(outputPath, "utf-8"), MAX_ITEM_BYTES) : undefined;
-			pushCapped(items, {
+			const outputTail = fs.existsSync(outputPath) ? readUtf8FileTail(outputPath, 768) : undefined;
+			const signals = controlSignals(metadata.controlEvents);
+			pushCandidate(artifactItems, {
 				id: `artifact:${path.basename(file, "_meta.json")}`,
 				source: outputTail ? "artifact-output" : "artifact-metadata",
 				...(text(metadata.runId) ? { runId: text(metadata.runId)! } : {}),
@@ -414,13 +513,13 @@ export function collectBoundedRefinementEvidence(cwd: string, agentName: string,
 				...(text(metadata.thinking) ? { thinking: text(metadata.thinking)! } : {}),
 				...acceptanceFields(metadata.acceptance),
 				...(text(metadata.error) ? { errors: [text(metadata.error)!] } : {}),
-				...((controlSignals(metadata.controlEvents).length > 0) ? { controlSignals: controlSignals(metadata.controlEvents) } : {}),
+				...(signals.length > 0 ? { controlSignals: signals } : {}),
 				...(outputTail ? { outputTail } : {}),
 				refs: outputTail ? [file, outputPath] : [file],
 			});
 		}
 	}
-	return evidencePacket(items);
+	return evidencePacket([...liveItems, ...artifactItems]);
 }
 
 export function appendAgentRefinementOverlay(systemPrompt: string, input: { cwd: string; agentName: string }): string {

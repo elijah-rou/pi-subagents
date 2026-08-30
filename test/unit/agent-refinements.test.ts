@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
 	appendAgentRefinementOverlay,
+	collectBoundedRefinementEvidence,
 	getAgentRefinementPath,
 	handleRefinementAction,
 	validateRefinementProposal,
@@ -52,6 +53,17 @@ function writeEvidence(agent = "worker"): void {
 
 function firstText(value: { content: Array<{ text?: string }> }): string {
 	return value.content[0]?.text ?? "";
+}
+
+function writeArtifactEvidence(name: string, metadata: Record<string, unknown>, output: string, at: Date): void {
+	const dir = path.join(tempDir, ".pi/subagents", "artifacts");
+	fs.mkdirSync(dir, { recursive: true });
+	const metadataPath = path.join(dir, `${name}_meta.json`);
+	const outputPath = path.join(dir, `${name}_output.md`);
+	fs.writeFileSync(metadataPath, JSON.stringify({ runId: name, agent: "worker", exitCode: 0, timestamp: at.toISOString(), ...metadata }), "utf-8");
+	fs.writeFileSync(outputPath, output, "utf-8");
+	fs.utimesSync(metadataPath, at, at);
+	fs.utimesSync(outputPath, at, at);
 }
 
 describe("agent refinements", () => {
@@ -103,6 +115,34 @@ describe("agent refinements", () => {
 		assert.equal(launched, false);
 		assert.match(firstText(result), /No bounded recent evidence/);
 		assert.equal(fs.existsSync(getAgentRefinementPath(tempDir, "worker")), false);
+	});
+
+	it("ranks failure evidence before newer output tails and bounds complete serialized items", () => {
+		const now = Date.now();
+		writeArtifactEvidence("important_failure", {
+			exitCode: 1,
+			error: "x".repeat(8_000),
+			acceptance: {
+				status: "rejected",
+				childReport: {
+					reviewFindings: Array.from({ length: 40 }, (_, index) => `blocker ${index}: ${"r".repeat(500)}`),
+					residualRisks: Array.from({ length: 40 }, (_, index) => `risk ${index}: ${"s".repeat(500)}`),
+				},
+			},
+		}, "failure output ".repeat(2_000), new Date(now - 20_000));
+		for (let index = 0; index < 10; index++) {
+			writeArtifactEvidence(`recent_${index}`, {}, index === 0 ? "🔥".repeat(2_000) : `ordinary output ${index}`, new Date(now - index * 1_000));
+		}
+
+		const evidence = collectBoundedRefinementEvidence(tempDir, "worker", state());
+
+		assert.equal(evidence.length, 8);
+		assert.equal(evidence[0]?.id, "artifact:important_failure");
+		assert.equal(evidence[0]?.acceptanceStatus, "rejected");
+		for (const item of evidence) {
+			assert.ok(Buffer.byteLength(JSON.stringify(item), "utf-8") <= 2_048, item.id);
+			assert.doesNotMatch(JSON.stringify(item), /�/, item.id);
+		}
 	});
 
 	it("validates proposal size and evidence citations", () => {
