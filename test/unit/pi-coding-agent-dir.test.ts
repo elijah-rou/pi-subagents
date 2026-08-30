@@ -359,6 +359,21 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.fleetKeybindings\.pageUp entries must be non-empty strings/);
 	});
 
+	it("preserves the retired Fleet inspect binding through unrelated updates", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		const inspect = ["H", "ctrl+i"];
+		writeFile(configPath, JSON.stringify({ fleetKeybindings: { inspect }, asyncByDefault: true }));
+		assert.deepEqual(loadConfig().fleetKeybindings?.inspect, inspect);
+
+		updateConfig((config) => ({ ...config, asyncByDefault: false }));
+		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")).fleetKeybindings.inspect, inspect);
+
+		for (const invalid of [[], [""], [1], "H", null]) {
+			writeFile(configPath, JSON.stringify({ fleetKeybindings: { inspect: invalid } }));
+			assert.throws(() => updateConfig((config) => config), /config\.fleetKeybindings\.inspect/);
+		}
+	});
+
 	it("loads and validates the foreground detach shortcut", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ foregroundDetachShortcut: "ctrl+b" }));

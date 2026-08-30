@@ -159,7 +159,9 @@ Places the persistent FleetView either `"belowEditor"` or `"aboveEditor"`. The d
 
 Customizes only the full Fleet inspector opened by `/subagents-fleet` or FleetView inspection. It does not change Pi's global keybindings or the compact persistent FleetView.
 
-Each action accepts a non-empty array of key strings. Configured actions replace their defaults. Unset actions keep the defaults: `selectUp` is `up`/`k`, `selectDown` is `down`/`j`, `scrollUp` is `K`, `scrollDown` is `J`, `pageUp` is `pageUp`, `pageDown` is `pageDown`, `selectFirst` is `home`, `selectLast` is `end`, `toggleTools` is `x`/`X`/`ctrl+o`, `refresh` is `r`/`R`, `steer` is `s`, `stop` is `D`, `inspect` is `H`, and `close` is `escape`/`ctrl+c`/`q`.
+Each action accepts a non-empty array of key strings. Configured actions replace their defaults. Unset actions keep the defaults: `selectUp` is `up`/`k`, `selectDown` is `down`/`j`, `scrollUp` is `K`, `scrollDown` is `J`, `pageUp` is `pageUp`, `pageDown` is `pageDown`, `selectFirst` is `home`, `selectLast` is `end`, `toggleTools` is `x`/`X`/`ctrl+o`, `refresh` is `r`/`R`, `steer` is `s`, `stop` is `D`, and `close` is `escape`/`ctrl+c`/`q`.
+
+For one published Package 3c release, an existing `fleetKeybindings.inspect` array remains valid and is preserved by unrelated config updates. It is inert: it has no default, runtime action, or help entry. Malformed values still fail config validation.
 
 Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text or stop confirmation even when the Fleet-level close binding is changed.
 
@@ -407,7 +409,7 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 }
 ```
 
-Deprecated compatibility setting. Package 2a stopped mission creation and mission actions. Only `directory` changes where passive Fleet/Herdr/status readers look for records created before Package 2a. Remove the setting after old runs are no longer needed. Compatibility may be removed no earlier than after one published release containing Package 2a; see [Package 2a](deep-simplification-package-2a.md).
+Deprecated compatibility setting. Package 2a stopped mission creation and mission actions. Only `directory` changes where passive Fleet/status readers look for records created before Package 2a. Remove the setting after old runs are no longer needed. Compatibility may be removed no earlier than after one published release containing Package 2a; see [Package 2a](deep-simplification-package-2a.md).
 
 - Legacy mission records default to a project-keyed directory under pi's agent directory (`~/.pi/agent/missions/projects/<project-hash>/`). This keeps the project worktree clean.
 - `directory` may be absolute, `~/...`, or project-relative. It is only a passive lookup location for existing records.

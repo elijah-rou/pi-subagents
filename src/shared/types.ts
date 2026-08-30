@@ -2142,10 +2142,6 @@ export interface SubagentState {
 	completionOwnerId?: string;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
 	artifactDirPreference?: ArtifactDirPreference;
-	/** Runtime authority snapshot used by optional inspector controls. */
-	authorityPolicy?: AuthorityPolicyConfig;
-	/** Runtime mission-store snapshot used by optional inspector context. */
-	missionStoreConfig?: MissionStoreConfig;
 	parentSessionFile?: string | null;
 	/** Extension-owned roots trusted for child session transcript reads. */
 	trustedSessionRoots?: string[];
@@ -2165,8 +2161,6 @@ export interface SubagentState {
 	};
 	/** Current-session top-level async capacity projection. */
 	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
-	/** Herdr project panes opened by this Pi session, keyed by project root. */
-	herdrProjectPanes?: Map<string, HerdrProjectPaneSnapshot>;
 	asyncJobs: Map<string, AsyncJobState>;
 	/** Current-session active and recent async runs for the native fleet inspector. */
 	fleetJobs?: Map<string, AsyncJobState>;
@@ -2195,24 +2189,6 @@ export interface SubagentState {
 	workflowControllers?: Map<string, AbortController>;
 	/** Live in-process workflow child stoppers keyed by parent workflow run id. */
 	workflowChildStops?: Map<string, (childId: string, message?: string) => boolean>;
-}
-
-export interface HerdrProjectPaneSnapshot {
-	projectRoot: string;
-	bindingPath: string;
-	paneId: string;
-	openedAt: string;
-	lastFocusedAt?: string;
-	state: "open" | "stale";
-	agentStatus: string;
-	ownership: "verified" | "unknown" | "mismatch";
-	safeToClose: boolean;
-	refreshedAt: number;
-	summary?: string;
-	tabId?: string;
-	workspaceId?: string;
-	terminalTitle?: string;
-	staleReason?: string;
 }
 
 // ============================================================================
@@ -2441,13 +2417,15 @@ export const FLEET_KEYBINDING_ACTIONS = [
 	"pageDown",
 	"refresh",
 	"steer",
-	"inspect",
 	"stop",
 	"toggleTools",
 ] as const;
 
 export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
-export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
+export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>> & {
+	/** Deprecated inert compatibility field retained for one Package 3c release. */
+	inspect?: string[];
+};
 
 export interface MainWindowRendererConfig {
 	/** Unit of horizontal space in main chat subagent call/result rows. Omit to preserve current spacing. Set 0 for no extra padding. */
@@ -2662,7 +2640,7 @@ export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status", "status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor"] as const;
 
 /** Full trusted host dispatch surface. Not registered with model-facing tools. */
-export const SUBAGENT_INTERNAL_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor"] as const;
+export const SUBAGENT_INTERNAL_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

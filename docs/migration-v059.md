@@ -80,7 +80,7 @@ See [Models](models.md), [Tool and extension selection](agents.md#tool-and-exten
 
 ## Package 1 cleanup and pane access
 
-Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API pending Packages 2 and 3. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet` and passive Herdr/Fleet observation where available. Do not replace removed exports with internal source imports.
+Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API pending Packages 2 and 3. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet`, status, and transcripts. Package 3c removed passive pane observation and all inspector/project-pane seams. For one published release, old binding JSON, project-pane root indexes, metadata, environment variables, and legacy session-root payloads are unknown inert inputs or artifacts: core does not read, write, heal, delete, or migrate them. Existing `fleetKeybindings.inspect` arrays are also accepted, validated, and preserved by unrelated config updates during this horizon, but cannot activate a Fleet action. Do not replace removed exports with internal source imports.
 
 ## Package 3a watchdog removal
 

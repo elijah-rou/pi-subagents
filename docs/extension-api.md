@@ -1,6 +1,6 @@
 # Extension and integration APIs
 
-Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and the Herdr integration.
+Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and external run integration.
 
 ## In-process event-bus RPC
 
@@ -131,7 +131,7 @@ unregisterExternalRun(ctx.sessionManager.getSessionId(), "dependency-review");
 
 The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. By default, malformed cached records throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
 
-External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, cancel, or Herdr controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
+External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, or cancel controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
 
 ## Launch contract preflight
 
@@ -345,30 +345,9 @@ The provider returns handles with `providerJobId`, `state`, optional `handleUrl`
 
 The async runner process does not import provider internals. It writes operation requests into its async run directory. The parent Pi process services those requests against the registered provider and writes operation responses. If the provider is not registered, the bridge fails closed with an actionable error. If a run is recovered after provider job metadata exists, the runner calls `reattach` and `result`; it does not call `start` or `follow-up` again.
 
-## Herdr integration
+## Retired pane integration
 
-When Pi runs inside [Herdr](https://herdr.dev), pi-subagents automatically reports active async-run counts through Herdr pane metadata.
-
-- The bridge is enabled only when Herdr supplies `HERDR_ENV=1` and `HERDR_PANE_ID`; outside Herdr it registers no listeners or timers.
-- It restores current-session active runs after `/reload` or `/resume`, refreshes metadata while work is active, and clears it on completion or shutdown.
-- The bridge uses Herdr's existing `herdr:blocked` sibling event when an async child needs attention, and emits `herdr:busy` while async work remains. Herdr versions that support the sibling event keep the pane's semantic state `working`; older versions ignore it safely and still display the metadata label while the Pi integration remains the lifecycle authority.
-- The owning Pi session is the only publisher for its own pane metadata. When an active workflow has an explicit bounded `label`, the newest active label appears in the summary and compact `title-suffix`; overlapping completion restores the previous active label. Raw task and goal prompts never enter Herdr metadata. Without a label, one active run uses its agent name and two or more use the active-run count. Attention adds `⚠`, and the suffix is cleared when active work reaches zero.
-
-To show the reported label in the expanded Agent sidebar, include `state_text` or `$summary` in its row layout:
-
-```toml
-[ui.sidebar.agents]
-rows = [
-  ["state_icon", "workspace", "tab"],
-  ["agent", "state_text"],
-]
-```
-
-### Inspector and project panes
-
-Inspector and project-pane actions are not model-facing in Package 1 and have no supported replacement command or package API pending Packages 2 and 3. Do not call their former action names or invent a human interface.
-
-Use `/subagents-fleet` and the passive Fleet/Herdr status projection for supported observation. FleetView can open a selected active async child through its existing inspector keybinding when the optional host integration supports it. Ordinary launches remain headless, existing runs are not moved into peer panes, and passive observation never transfers lifecycle ownership.
+Package 3c removed the inspector, project-pane, and passive pane-status integration. Use Fleet, status, transcripts, and native stop, steer, and resume controls. See [the v0.59 migration guide](migration-v059.md) for the one-release inert-artifact horizon.
 
 ## Host session lifetime and completion wakes
 

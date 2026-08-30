@@ -12,7 +12,7 @@ Direct, foreground workflow, async workflow, scheduled workflow, and workflow-ch
 
 `src/missions/store.ts` now contains only location/config validation plus passive schema-v1 parsing, reading, and listing. It has no create/update/prune/global-index writer. `src/missions/lifecycle.ts` reads existing bindings and exposes one narrowly named compatibility writer, `mergeLegacyMissionCompletion`. That writer runs only when an async directory already contains `mission.json` and the referenced schema-v1 record already exists. Under the record lock it validates the known schema, merges completion fields, preserves unknown top-level and nested data, and never creates a record, binding, or index.
 
-Corrupt records and bindings remain untouched. Existing status/Fleet/Herdr display, mission observer result aliases, and retention references remain so pre-Package-2a results are not lost. The deprecated `missions` config remains only to locate old records. This compatibility seam may be removed no earlier than after one published release containing Package 2a.
+Corrupt records and bindings remain untouched. Existing status/Fleet display, mission observer result aliases, and retention references remain so pre-Package-2a results are not lost. The deprecated `missions` config remains only to locate old records. This compatibility seam may be removed no earlier than after one published release containing Package 2a.
 
 ## Authoritative recovery
 
