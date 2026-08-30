@@ -15,7 +15,6 @@ import {
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_STEERING_NOTICE_EVENT,
-	WIDGET_ANIMATION_INTERVAL_MS,
 } from "../../shared/types.ts";
 import { readStatus, resolveWatchPath } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
@@ -27,6 +26,7 @@ import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
 import { withCachedUiContext } from "../../shared/extension-context.ts";
+import { invalidateFleetViews } from "../../shared/fleet-invalidation.ts";
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -73,10 +73,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const steeringNoticeSeen = new Map<string, number>();
 	const jobWatchers = new Map<string, { watchers: Map<string, fs.FSWatcher>; retryTimer?: ReturnType<typeof setTimeout> }>();
 	const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	const runningJobIds = new Set<string>();
 	let rootWatcher: fs.FSWatcher | undefined;
-	let nextLivenessAt = Date.now() + livenessIntervalMs;
-	let nextWidgetAnimationAt = Date.now() + WIDGET_ANIMATION_INTERVAL_MS;
+
 	const watch = options.watch ?? fs.watch;
 	const useNativeWatcher = () => shouldUseNativeFsWatch("async-job-tracker", options.platform);
 	const terminalStatus = (status: string) => status === "complete" || status === "failed" || status === "paused" || status === "stopped";
@@ -93,10 +91,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 	const rerenderLastWidget = (jobs = Array.from(state.asyncJobs.values())) => {
 		withLastUiContext((ctx) => rerenderWidget(ctx, jobs));
-	};
-	const requestLastWidgetRender = () => {
-		if (options.widgetEnabled === false) return;
-		rerenderLastWidget();
+		invalidateFleetViews();
 	};
 	const refreshWidget = (ctx: ExtensionContext) => rerenderWidget(ctx);
 	const restoredControlEventCursor = (asyncDir: string) => {
@@ -339,7 +334,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const timer = refreshTimers.get(asyncId);
 		if (timer) clearTimeout(timer);
 		refreshTimers.delete(asyncId);
-		runningJobIds.delete(asyncId);
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
@@ -385,8 +379,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			if (status) {
 				const previousStatus = job.status;
 				job.status = status.state;
-				if (job.status === "running") runningJobIds.add(job.asyncId);
-				else runningJobIds.delete(job.asyncId);
 				if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused" && job.status !== "stopped") cancelCleanup(job.asyncId);
 				job.sessionId = status.sessionId ?? job.sessionId;
 				job.activityState = status.activityState;
@@ -453,7 +445,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			if (job.status === "queued") {
 				job.status = "running";
 				job.updatedAt = Date.now();
-				runningJobIds.add(job.asyncId);
 			}
 		} catch (error) {
 			if (job.status !== "failed") {
@@ -461,7 +452,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.status = "failed";
 				job.updatedAt = Date.now();
 			}
-			runningJobIds.delete(job.asyncId);
 			rememberFleetJob(state, job);
 			if (!hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
 		}
@@ -561,31 +551,24 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const ensurePoller = () => {
 		watchAsyncRoot();
 		if (state.poller) return;
-		nextLivenessAt = Date.now() + livenessIntervalMs;
-		state.poller = setInterval(() => {
+		const sweep = () => {
+			state.poller = null;
 			if (state.asyncJobs.size === 0) {
 				rerenderLastWidget([]);
-				if (state.poller) clearInterval(state.poller);
-				state.poller = null;
 				rootWatcher?.close();
 				rootWatcher = undefined;
 				return;
 			}
-			const now = Date.now();
-			if (now >= nextLivenessAt) {
-				nextLivenessAt = now + livenessIntervalMs;
-				let widgetChanged = false;
-				for (const job of state.asyncJobs.values()) {
-					watchJob(job);
-					if (refreshJob(job)) widgetChanged = true;
-				}
-				if (widgetChanged) rerenderLastWidget();
+			let widgetChanged = false;
+			for (const job of state.asyncJobs.values()) {
+				watchJob(job);
+				if (refreshJob(job)) widgetChanged = true;
 			}
-			if (runningJobIds.size > 0 && now >= nextWidgetAnimationAt) {
-				nextWidgetAnimationAt = now + WIDGET_ANIMATION_INTERVAL_MS;
-				requestLastWidgetRender();
-			}
-		}, Math.min(WIDGET_ANIMATION_INTERVAL_MS, livenessIntervalMs));
+			if (widgetChanged) rerenderLastWidget();
+			state.poller = setTimeout(sweep, livenessIntervalMs);
+			state.poller.unref?.();
+		};
+		state.poller = setTimeout(sweep, livenessIntervalMs);
 		state.poller.unref?.();
 	};
 
@@ -649,7 +632,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		let nestedRefreshFailed = false;
 		if (job) {
 			job.status = result.state ?? (result.success ? "complete" : "failed");
-			runningJobIds.delete(asyncId);
 			job.stopped = result.stopped ?? job.stopped;
 			job.updatedAt = Date.now();
 			if (result.asyncDir && result.asyncDir !== job.asyncDir) {
@@ -670,14 +652,13 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	};
 
 	const dispose = () => {
-		if (state.poller) clearInterval(state.poller);
+		if (state.poller) clearTimeout(state.poller);
 		state.poller = null;
 		rootWatcher?.close();
 		rootWatcher = undefined;
 		for (const asyncId of jobWatchers.keys()) closeJobWatcher(asyncId);
 		for (const timer of refreshTimers.values()) clearTimeout(timer);
 		refreshTimers.clear();
-		runningJobIds.clear();
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {
@@ -694,6 +675,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			state.lastUiContext = ctx;
 			rerenderWidget(ctx, []);
 		}
+		invalidateFleetViews();
 	};
 
 	const restoreActiveJobs = (ctx?: ExtensionContext) => {
@@ -709,7 +691,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		for (const run of runs) {
 			const job = summaryToJob(run);
 			state.asyncJobs.set(run.id, job);
-			if (job.status === "running") runningJobIds.add(job.asyncId);
 			rememberFleetJob(state, job);
 			watchJob(job);
 		}

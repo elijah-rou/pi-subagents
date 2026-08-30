@@ -16,14 +16,11 @@ import type { SteerDeliveryMode } from "../runs/background/control-channel.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget } from "../runs/foreground/workflow-foreground-steering.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
-import { FLEET_STATUS_WIDGET_KEY } from "./fleet-status.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
 import { handleHerdrInspectorAction } from "../inspectors/herdr/actions.ts";
 import type { HerdrClient } from "../inspectors/herdr/client.ts";
 import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
-
-const REFRESH_MS = 750;
-const MIN_REFRESH_MS = 250;
+import { invalidateFleetViews, subscribeFleetInvalidation } from "../shared/fleet-invalidation.ts";
 const MAX_RECENT_ASYNC_RUNS = 20;
 const MAX_FLEET_HISTORY_CANDIDATES = 100;
 const TRANSCRIPT_LINES = 200;
@@ -802,8 +799,8 @@ export class SubagentFleetComponent implements Component {
 	private actionBusy = false;
 	private transcriptCache: FleetTranscriptCache | undefined;
 	private disposed = false;
-	private refreshTimer: ReturnType<typeof setTimeout> | undefined;
-	private readonly refreshMs: number;
+	private invalidationQueued = false;
+	private readonly unsubscribeInvalidation: () => void;
 	private readonly tui: FleetTui;
 	private readonly theme: Theme;
 	private readonly markdownTheme: MarkdownTheme;
@@ -826,31 +823,26 @@ export class SubagentFleetComponent implements Component {
 		this.done = done;
 		this.options = options;
 		this.keybindings = resolveFleetKeybindings(options.fleetKeybindings);
-		this.refreshMs = Math.max(MIN_REFRESH_MS, options.refreshMs ?? REFRESH_MS);
 		this.selectedKey = options.initialKey;
 		this.refresh();
-		this.scheduleRefresh();
+		this.unsubscribeInvalidation = subscribeFleetInvalidation(() => this.handleStateInvalidation());
 	}
 
-	private scheduleRefresh(): void {
-		if (this.disposed || this.refreshTimer) return;
-		this.refreshTimer = setTimeout(() => {
-			this.refreshTimer = undefined;
+	private handleStateInvalidation(): void {
+		if (this.disposed || this.invalidationQueued) return;
+		this.invalidationQueued = true;
+		queueMicrotask(() => {
+			this.invalidationQueued = false;
 			if (this.disposed) return;
-			try {
-				this.invalidate();
-				this.tui.requestRender();
-			} finally {
-				this.scheduleRefresh();
-			}
-		}, this.refreshMs);
-		this.refreshTimer.unref?.();
+			const previousSnapshot = JSON.stringify(this.snapshot);
+			this.invalidate();
+			if (JSON.stringify(this.snapshot) !== previousSnapshot) this.tui.requestRender();
+		});
 	}
 
 	private stopRefresh(): void {
 		this.disposed = true;
-		if (this.refreshTimer) clearTimeout(this.refreshTimer);
-		this.refreshTimer = undefined;
+		this.unsubscribeInvalidation();
 	}
 
 	private refresh(): void {
@@ -1373,7 +1365,7 @@ export class SubagentFleetComponent implements Component {
 export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentState, options: FleetViewOptions = {}): Promise<void> {
 	const wasOpen = state.fleetInspectorOpen === true;
 	state.fleetInspectorOpen = true;
-	if (typeof ctx.ui.setWidget === "function") ctx.ui.setWidget(FLEET_STATUS_WIDGET_KEY, undefined);
+	invalidateFleetViews();
 	const copyText = options.copyText ?? (async (text: string) => {
 		const module = await import("@earendil-works/pi-coding-agent");
 		const copyToClipboard = (module as { copyToClipboard?: (value: string) => Promise<void> | void }).copyToClipboard;
@@ -1432,5 +1424,6 @@ export async function openSubagentFleet(ctx: ExtensionContext, state: SubagentSt
 		);
 	} finally {
 		state.fleetInspectorOpen = wasOpen;
+		invalidateFleetViews();
 	}
 }

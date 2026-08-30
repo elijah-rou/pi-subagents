@@ -287,7 +287,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("rebuilds the async widget on quiet animation ticks without a UI requestRender bridge", async () => {
+	it("does not rebuild an unchanged running widget without a UI requestRender bridge", async () => {
 		const asyncRoot = createTempDir("pi-async-job-widget-animation-");
 		try {
 			const state = createState();
@@ -307,9 +307,9 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await waitForCondition(() => state.asyncJobs.get("run-animating")?.status === "running", "initial running status refresh");
 			const widgetCount = ui.widgets.length;
 
-			await waitForCondition(() => ui.widgets.length > widgetCount, "animation tick widget rebuild", 1300);
+			await new Promise((resolve) => setTimeout(resolve, 35));
+			assert.equal(ui.widgets.length, widgetCount, "unchanged running state must not rebuild the widget");
 			assert.equal(ui.renderRequests, 0, "test fixture requestRender bridge must stay unavailable");
-			assert.notEqual(ui.widgets.at(-1), undefined, "running widget should be rebuilt, not cleared");
 		} finally {
 			removeTempDir(asyncRoot);
 		}
@@ -866,7 +866,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("rebuilds unchanged running widgets for quiet animation ticks and stops at terminal status", async () => {
+	it("renders only async tracker state transitions, not unchanged running safety sweeps", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
 		try {
@@ -911,12 +911,14 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				},
 			})}\n`, "utf-8");
 			await waitForCondition(() => recorder.events.some((event) => event.channel === "subagent:control-event"), "control event delivery");
-			await waitForCondition(() => ui.widgets.length > widgetsAfterStatusLoaded, "running widget cadence rebuild");
-			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "running widget cadence rebuild should request a repaint when the bridge supports it");
+			await new Promise((resolve) => setTimeout(resolve, 35));
+			assert.equal(ui.widgets.length, widgetsAfterStatusLoaded, "unchanged running state must not rebuild the widget");
+			assert.equal(ui.renderRequests, requestsAfterStatusLoaded, "unchanged running state must not request repaint");
 
 			writeStatus(3000, 1);
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.toolCount === 1, "changed status load");
 			assert.ok(ui.widgets.length > widgetsAfterStatusLoaded, "changed status should replace the widget component");
+			assert.ok(ui.renderRequests > requestsAfterStatusLoaded, "changed status should request repaint");
 
 			writeStatus(4000, 1, "complete");
 			await waitForCondition(() => state.asyncJobs.get("run-unchanged")?.status === "complete", "terminal status load");

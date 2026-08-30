@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { Editor, type EditorComponent, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentState } from "../../src/shared/types.ts";
-import { EXTERNAL_RUN_REGISTRY_KEY, EXTERNAL_RUN_REGISTRY_VERSION, registerExternalRun } from "../../src/api/external-runs.ts";
+import { EXTERNAL_RUN_REGISTRY_KEY, EXTERNAL_RUN_REGISTRY_VERSION, registerExternalRun, updateExternalRun } from "../../src/api/external-runs.ts";
 import { collectFleetSnapshot } from "../../src/tui/fleet.ts";
 import {
 	FLEET_STATUS_WIDGET_KEY,
@@ -339,6 +339,44 @@ describe("below-editor subagent FleetView", () => {
 				fleet.dispose();
 			}
 		}
+	});
+
+	it("coalesces production external-run invalidations for one, ten, and 64 children", async () => {
+		for (const childCount of [1, 10, 64]) {
+			clearExternalRuns();
+			for (let index = 0; index < childCount; index++) registerExternalRun({
+				id: `external-${index}`,
+				sessionId: "session-current",
+				source: "test",
+				label: `External ${index}`,
+				state: "running",
+				startedAt: 1,
+			});
+			const state = stateForTest();
+			let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+			let renderRequests = 0;
+			const fleet = new SubagentFleetStatus(state, () => {});
+			try {
+				fleet.setContext({
+					hasUI: true,
+					ui: {
+						setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+						onTerminalInput() { return () => {}; },
+						getEditorText() { return ""; },
+						requestRender() {}, notify() {}, theme,
+					},
+				} as unknown as ExtensionContext);
+				widgetFactory!({ requestRender() { renderRequests++; } }, theme);
+				updateExternalRun("session-current", "external-0", { state: "queued", currentAction: "changed" });
+				updateExternalRun("session-current", "external-0", { currentAction: "changed again" });
+				await Promise.resolve();
+				clearExternalRuns();
+				assert.equal(renderRequests, 1, `${childCount} children coalesce duplicate production invalidations`);
+			} finally {
+				fleet.dispose();
+			}
+		}
+		clearExternalRuns();
 	});
 
 	it("owns no refresh interval while idle", () => {

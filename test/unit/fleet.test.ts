@@ -7,7 +7,7 @@ import { visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { EXTERNAL_RUN_REGISTRY_KEY, EXTERNAL_RUN_REGISTRY_VERSION, registerExternalRun } from "../../src/api/external-runs.ts";
 import { collectFleetSnapshot, openSubagentFleet, SubagentFleetComponent } from "../../src/tui/fleet.ts";
 import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
-import { FLEET_STATUS_WIDGET_KEY } from "../../src/tui/fleet-status.ts";
+import { FLEET_STATUS_WIDGET_KEY, SubagentFleetStatus } from "../../src/tui/fleet-status.ts";
 import { registerLivePromptAudit, rewritePromptWithGuidance } from "../../src/runs/foreground/prompt-audit.ts";
 import { getArtifactPaths, getArtifactsDir, getProjectArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { HerdrClient } from "../../src/inspectors/herdr/client.ts";
@@ -15,6 +15,7 @@ import type { SubagentState } from "../../src/shared/types.ts";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
+import { invalidateFleetViews } from "../../src/shared/fleet-invalidation.ts";
 
 function clearExternalRuns(): void {
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];
@@ -1456,29 +1457,39 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("suppresses the status widget for the full inspector lifecycle", async () => {
+	it("restores the compact status widget after a non-inline Fleet route closes", async () => {
 		const state = stateForTest();
-		let hidden = 0;
+		state.asyncJobs.set("run", { asyncId: "run", asyncDir: "/tmp/run", status: "running", mode: "single", agents: ["worker"], startedAt: 1, updatedAt: 1 });
+		const registrations: string[] = [];
 		let observedOpen = false;
 		const ctx = {
 			hasUI: true,
 			ui: {
 				setWidget(key: string, content: unknown) {
 					assert.equal(key, FLEET_STATUS_WIDGET_KEY);
-					assert.equal(content, undefined);
-					hidden++;
+					registrations.push(content ? "shown" : "hidden");
 				},
+				onTerminalInput() { return () => {}; },
+				getEditorText() { return ""; },
+				notify() {},
 				async custom() {
 					observedOpen = state.fleetInspectorOpen === true;
+					await Promise.resolve();
 					throw new Error("overlay closed");
 				},
 			},
 		};
-
-		await assert.rejects(openSubagentFleet(ctx as never, state), /overlay closed/);
-		assert.equal(hidden, 1);
-		assert.equal(observedOpen, true);
-		assert.equal(state.fleetInspectorOpen, false);
+		const status = new SubagentFleetStatus(state, () => {});
+		try {
+			status.setContext(ctx as never);
+			await assert.rejects(openSubagentFleet(ctx as never, state), /overlay closed/);
+			await Promise.resolve();
+			assert.equal(observedOpen, true);
+			assert.deepEqual(registrations, ["shown", "hidden", "shown"]);
+			assert.equal(state.fleetInspectorOpen, false);
+		} finally {
+			status.dispose();
+		}
 	});
 
 	it("focuses the selected child and renders raw foreground model details", () => {
@@ -1697,8 +1708,7 @@ describe("native subagent fleet", () => {
 		}
 	});
 
-	it("periodically redraws only while the overlay remains open", (t) => {
-		t.mock.timers.enable({ apis: ["setTimeout"] });
+	it("coalesces state invalidations only while the overlay remains open", async () => {
 		const state = stateForTest();
 		let renderRequests = 0;
 		let closed = false;
@@ -1708,27 +1718,54 @@ describe("native subagent fleet", () => {
 			theme as never,
 			state,
 			() => { closed = true; },
-			{ refreshMs: 10 },
 		);
-		t.mock.timers.tick(249);
-		assert.equal(renderRequests, 0, "refresh cadence is bounded away from a hot loop");
-		t.mock.timers.tick(1);
-		assert.equal(renderRequests, 1);
+		clearExternalRuns();
+		registerExternalRun({ id: "coalesced", sessionId: "session-current", source: "test", label: "Changed", state: "running", startedAt: 1 });
+		invalidateFleetViews();
+		invalidateFleetViews();
+		invalidateFleetViews();
+		await Promise.resolve();
+		assert.equal(renderRequests, 1, "duplicate production invalidations coalesce");
 		component.handleInput("\x1b");
 		assert.equal(closed, true);
-		t.mock.timers.tick(1_000);
-		assert.equal(renderRequests, 1, "closing cancels periodic redraws");
+		invalidateFleetViews();
+		await Promise.resolve();
+		assert.equal(renderRequests, 1, "closing unsubscribes from state invalidations");
 
 		const disposed = new SubagentFleetComponent(
 			tui as never,
 			theme as never,
 			state,
 			() => {},
-			{ refreshMs: 250 },
 		);
 		disposed.dispose();
-		t.mock.timers.tick(1_000);
-		assert.equal(renderRequests, 1, "disposing cancels periodic redraws");
+		invalidateFleetViews();
+		await Promise.resolve();
+		assert.equal(renderRequests, 1, "disposing unsubscribes from state invalidations");
+	});
+
+	it("coalesces production overlay invalidations for one, ten, and 64 children", async () => {
+		for (const childCount of [1, 10, 64]) {
+			clearExternalRuns();
+			for (let index = 0; index < childCount; index++) registerExternalRun({
+				id: `overlay-${index}`, sessionId: "session-current", source: "test", label: `Overlay ${index}`, state: "running", startedAt: 1,
+			});
+			let renderRequests = 0;
+			const component = new SubagentFleetComponent(
+				{ terminal: { rows: 28, columns: 90 }, requestRender: () => { renderRequests++; } } as never,
+				theme as never,
+				stateForTest(),
+				() => {},
+			);
+			try {
+				registerExternalRun({ id: `overlay-new-${childCount}`, sessionId: "session-current", source: "test", label: "New", state: "running", startedAt: 2 });
+				await Promise.resolve();
+				assert.equal(renderRequests, 1, `${childCount} children coalesce production invalidations`);
+			} finally {
+				component.dispose();
+			}
+		}
+		clearExternalRuns();
 	});
 
 	it("refreshes the roster while the overlay remains open", async () => {
@@ -1754,12 +1791,14 @@ describe("native subagent fleet", () => {
 				assert.ok(component.render(90).some((line) => line.includes("No tracked children")));
 				const initialOutput = Array.from({ length: 40 }, (_, index) => `output line ${index}`).join("\n");
 				const asyncDir = writeAsyncRun(root, { id: "appeared-live", output: initialOutput });
-				await new Promise((resolve) => setTimeout(resolve, 275));
+				invalidateFleetViews();
+				await Promise.resolve();
 				let lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("appeared")));
 				assert.ok(lines.some((line) => line.includes("output line 39")));
 				fs.appendFileSync(path.join(asyncDir, "output-0.log"), "\nLATEST LIVE OUTPUT", "utf-8");
-				await new Promise((resolve) => setTimeout(resolve, 35));
+				invalidateFleetViews();
+				await Promise.resolve();
 				lines = component.render(90);
 				assert.ok(lines.some((line) => line.includes("LATEST LIVE OUTPUT")), "live transcript should keep following new output");
 				assert.ok(renderRequests > 0);

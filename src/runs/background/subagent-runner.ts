@@ -2985,7 +2985,10 @@ async function runSubagentInner(
 			statusPayload.lastUpdate = deliveredAt;
 			writeStatusPayload();
 		}
-		if (checkpointPendingIndexes.size === 0 && checkpointDeliveredIndexes.size > 0) checkpointDue = false;
+		const hasUndeliveredSteerableStep = checkpointCanReachSteerableStep(statusPayload.steps.map((step, index) => checkpointDeliveredIndexes.has(index)
+			? { ...step, status: "complete" }
+			: step));
+		if (checkpointPendingIndexes.size === 0 && checkpointDeliveredIndexes.size > 0 && !hasUndeliveredSteerableStep) checkpointDue = false;
 	};
 	const updateExternalProcess = (index: number, process: ExternalProcessStatus): void => {
 		requiredStatusStep(statusPayload, index).externalProcess = process;

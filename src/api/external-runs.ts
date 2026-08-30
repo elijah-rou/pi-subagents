@@ -1,4 +1,5 @@
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
+import { invalidateFleetViews } from "../shared/fleet-invalidation.ts";
 
 export const EXTERNAL_RUN_REGISTRY_VERSION = 2;
 export const EXTERNAL_RUN_REGISTRY_KEY = "pi-subagents.external-runs.v2";
@@ -158,6 +159,7 @@ export function registerExternalRun(input: ExternalRun): ExternalRun {
 	if (current.runs.has(runKey)) throw new Error(`External run '${run.id}' is already registered for session '${run.sessionId}'.`);
 	if (current.runs.size >= EXTERNAL_RUN_LIMITS.maxCachedRuns) throw new Error(`External-run registry supports at most ${EXTERNAL_RUN_LIMITS.maxCachedRuns} cached runs.`);
 	current.runs.set(runKey, run);
+	invalidateFleetViews();
 	return clone(run);
 }
 
@@ -172,12 +174,15 @@ export function updateExternalRun(sessionId: string, id: string, update: Externa
 	if (!previous) throw new Error(`External run '${safeId}' is not registered for session '${safeSessionId}'.`);
 	const next = validateRun({ ...previous, ...patch });
 	current.runs.set(runKey, next);
+	invalidateFleetViews();
 	return clone(next);
 }
 
 /** Remove a cached external job. The caller remains responsible for its process and artifacts. */
 export function unregisterExternalRun(sessionId: string, id: string): boolean {
-	return registry().runs.delete(key(identity(sessionId, "External run sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength), identity(id, "External run id")));
+	const removed = registry().runs.delete(key(identity(sessionId, "External run sessionId", EXTERNAL_RUN_LIMITS.maxSessionIdLength), identity(id, "External run id")));
+	if (removed) invalidateFleetViews();
+	return removed;
 }
 
 function snapshotBytes(runs: readonly ExternalRun[]): number {

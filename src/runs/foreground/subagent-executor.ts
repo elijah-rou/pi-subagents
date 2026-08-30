@@ -19,6 +19,7 @@ import {
 } from "./foreground-control.ts";
 import { getLivePromptAudit, rewritePromptWithGuidance, updateLiveEffectivePrompt } from "./prompt-audit.ts";
 import { persistForegroundRunHistory, MAX_REMEMBERED_FOREGROUND_RUNS } from "./foreground-history.ts";
+import { invalidateFleetViews } from "../../shared/fleet-invalidation.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
@@ -509,6 +510,7 @@ function removeForegroundControlIfIdle(state: SubagentState, runId: string): boo
 	if (control) removeWorkflowForegroundSteeringRoute(control);
 	state.foregroundControls.delete(runId);
 	if (state.lastForegroundControlId === runId) state.lastForegroundControlId = null;
+	invalidateFleetViews();
 	return true;
 }
 
@@ -6695,6 +6697,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			};
 			deps.state.foregroundControls.set(runId, foregroundControl);
 			deps.state.lastForegroundControlId = runId;
+			invalidateFleetViews();
 			deps.activateSupervisorTransport?.();
 			deps.refreshResultDelivery?.();
 		}

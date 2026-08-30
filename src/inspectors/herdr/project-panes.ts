@@ -8,6 +8,7 @@ import type { Details, HerdrProjectPaneSnapshot, SubagentState } from "../../sha
 import { createHerdrClient, detectHerdr, type HerdrClient, type HerdrErrorCode } from "./client.ts";
 import { focusHerdrPane, herdrPaneFocusTarget, herdrPaneRecord } from "./focus.ts";
 import { formatShellCommand } from "./shell-command.ts";
+import { invalidateFleetViews } from "../../shared/fleet-invalidation.ts";
 
 export const HERDR_PROJECT_PANE_ACTIONS = ["project.open", "project.status", "project.close"] as const;
 export type HerdrProjectPaneAction = typeof HERDR_PROJECT_PANE_ACTIONS[number];
@@ -306,6 +307,7 @@ export function restoreHerdrProjectPaneSnapshots(state: SubagentState, projectRo
 		if (binding) restored.set(binding.projectRoot, herdrProjectPaneSnapshotFromBinding(binding, now));
 	}
 	state.herdrProjectPanes = restored;
+	invalidateFleetViews();
 }
 
 function sanitizedSummary(value: unknown): string | undefined {
@@ -381,10 +383,11 @@ function rememberProjectPane(state: SubagentState | undefined, data: ProjectPane
 	const snapshot = herdrProjectPaneSnapshotFromStatus(data, now);
 	if (snapshot) state.herdrProjectPanes.set(data.projectRoot, snapshot);
 	else state.herdrProjectPanes.delete(data.projectRoot);
+	invalidateFleetViews();
 }
 
 function forgetProjectPane(state: SubagentState | undefined, projectRoot: string): void {
-	state?.herdrProjectPanes?.delete(projectRoot);
+	if (state?.herdrProjectPanes?.delete(projectRoot)) invalidateFleetViews();
 }
 
 function resolveProjectRoot(requested: string): ProjectPaneResult<string> {

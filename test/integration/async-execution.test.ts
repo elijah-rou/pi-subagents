@@ -1498,6 +1498,47 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(status.steps?.map((step) => step.status), ["complete", "complete"]);
 	});
 
+	it("cancels checkpoint delivery when a composite stops before its deadline", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ delay: 5_000, output: "late" });
+		const id = `async-checkpoint-stop-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "one", task: "Wait" }], resultMode: "single", agents: [makeAgent("one")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, maxSubagentDepth: 2, checkpointAfterMs: 500, timeoutMs: 3_000,
+		});
+		const statusBeforeStop = await waitForAsyncState(id, (candidate) => candidate.steps?.[0]?.status === "running" && typeof candidate.pid === "number");
+		deliverStopRequest({ asyncDir: path.join(ASYNC_DIR, id), pid: statusBeforeStop.pid, source: "test" });
+		await waitForAsyncResultFile(id, 10_000);
+		await new Promise((resolve) => setTimeout(resolve, 550));
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "stopped");
+		assert.notEqual(status.checkpointDelivered, true);
+	});
+
+	it("keeps a due sequential checkpoint until every late-starting native child receives it", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "one wrapped", waitForSteerInboxRequest: true });
+		mockPi.onCall({ output: "two wrapped", waitForSteerInboxRequest: true });
+		const id = `async-checkpoint-sequential-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [{ agent: "one", task: "Wait" }, { agent: "two", task: "Start later" }],
+			resultMode: "chain",
+			agents: [makeAgent("one"), makeAgent("two")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			checkpointAfterMs: 100,
+			timeoutMs: 3_000,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
+		assert.equal(payload.success, true);
+		assert.equal(status.checkpointDelivered, true);
+		assert.deepEqual(status.steps?.map((step) => step.status), ["complete", "complete"]);
+	});
+
 	it("marks async parallel runs that exceed timeoutMs as timed out", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
 		mockPi.onCall({ delay: 5_000, output: "one done" });
 		mockPi.onCall({ delay: 5_000, output: "two done" });

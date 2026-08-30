@@ -8,6 +8,7 @@ import { contextModeLabel } from "../runs/shared/context-mode.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
 import { isStaleExtensionContextError } from "../shared/extension-context.ts";
+import { subscribeFleetInvalidation } from "../shared/fleet-invalidation.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 
@@ -454,6 +455,8 @@ export class SubagentFleetStatus {
 	private ui: ExtensionContext["ui"] | undefined;
 	private tui: FleetStatusTui | undefined;
 	private inputUnsubscribe: (() => void) | undefined;
+	private fleetInvalidationUnsubscribe: (() => void) | undefined;
+	private invalidationQueued = false;
 	private widgetRegistered = false;
 	private active = false;
 	private selectedKey = "main";
@@ -474,6 +477,7 @@ export class SubagentFleetStatus {
 		this.openInspector = openInspector;
 		this.maxAgentRows = options.maxAgentRows ?? MAX_AGENT_ROWS;
 		this.placement = options.placement ?? "belowEditor";
+		this.fleetInvalidationUnsubscribe = subscribeFleetInvalidation(() => this.invalidate());
 	}
 
 	setContext(ctx: ExtensionContext): void {
@@ -494,6 +498,8 @@ export class SubagentFleetStatus {
 	}
 
 	dispose(): void {
+		this.fleetInvalidationUnsubscribe?.();
+		this.fleetInvalidationUnsubscribe = undefined;
 		this.clearUiRegistration();
 		this.ctx = undefined;
 		this.ui = undefined;
@@ -502,6 +508,15 @@ export class SubagentFleetStatus {
 		this.selectedKey = "main";
 		this.inspectorOpen = false;
 		this.lastRenderKey = "";
+	}
+
+	invalidate(): void {
+		if (this.invalidationQueued) return;
+		this.invalidationQueued = true;
+		queueMicrotask(() => {
+			this.invalidationQueued = false;
+			this.refresh();
+		});
 	}
 
 	refresh(): void {

@@ -1,5 +1,6 @@
 import type { AgentProgress, ForegroundChildControl, ForegroundRunControl } from "../../shared/types.ts";
 import { registerLivePromptAudit, removeLivePromptAudit, type PromptAuditRerunContract } from "./prompt-audit.ts";
+import { invalidateFleetViews } from "../../shared/fleet-invalidation.ts";
 
 interface BeginForegroundChildInput {
 	index: number;
@@ -84,11 +85,13 @@ function clearCurrentChild(control: ForegroundRunControl): void {
 export function retainForegroundSchedulingOwner(control: ForegroundRunControl): void {
 	control.schedulingOwners = (control.schedulingOwners ?? 0) + 1;
 	control.updatedAt = Date.now();
+	invalidateFleetViews();
 }
 
 export function settleForegroundSchedulingOwner(control: ForegroundRunControl): void {
 	control.schedulingOwners = Math.max(0, (control.schedulingOwners ?? 0) - 1);
 	control.updatedAt = Date.now();
+	invalidateFleetViews();
 }
 
 export function foregroundSchedulingSettled(control: ForegroundRunControl): boolean {
@@ -130,6 +133,7 @@ export function beginForegroundChild(control: ForegroundRunControl, input: Begin
 		...(input.rerun ? { rerun: input.rerun } : {}),
 	});
 	syncCurrentChild(control, child);
+	invalidateFleetViews();
 }
 
 export function updateForegroundChild(control: ForegroundRunControl, index: number, progress: AgentProgress | undefined): void {
@@ -138,6 +142,7 @@ export function updateForegroundChild(control: ForegroundRunControl, index: numb
 	copyProgress(child, progress);
 	child.updatedAt = Date.now();
 	syncCurrentChild(control, child);
+	invalidateFleetViews();
 }
 
 export function finishForegroundChild(control: ForegroundRunControl, index: number): void {
@@ -150,4 +155,5 @@ export function finishForegroundChild(control: ForegroundRunControl, index: numb
 		else clearCurrentChild(control);
 	}
 	control.updatedAt = Date.now();
+	invalidateFleetViews();
 }
