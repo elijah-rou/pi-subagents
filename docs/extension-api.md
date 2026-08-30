@@ -44,7 +44,7 @@ Capability advertisements on `ping`:
 - `resume` — the revival seam described above.
 - `fleetStatus: { version: 1 }` — successful `status` replies additionally include `data.fleet`.
 
-Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate single, counted parallel, and chain children.
+Structured delegation progress updates carry `runId` as soon as foreground execution allocates it, so a caller can retain the package-owned revival target even if its own tool turn is interrupted before the terminal response. Foreground `details.results[]` rows also include a numeric `index` that is unique within the run and stable across partial progress snapshots and the final result; use `(runId, index)` instead of row position to correlate direct and `workflowScript` children.
 
 ### Fleet status DTO
 
@@ -245,7 +245,7 @@ Unversioned prompt-template payloads with `requestId`, `agent`, `task`, `context
 
 ## Child profile resolvers
 
-Parent extensions can register session-scoped child model/effort resolvers through `pi-subagents/child-profile-resolver` (up to eight per session). New direct, fanout, chain, workflow, and lane launches without an explicit model or thinking override pass their canonical agent, bounded task, cwd, context mode, parent model, and serial/parallel topology to the resolvers in registration order. A valid selection supplies `profile`, `model`, optional `thinking`, and integer `confidence` from 0 through 100; resolved selections add the registration `source` as provenance.
+Parent extensions can register session-scoped child model/effort resolvers through `pi-subagents/child-profile-resolver` (up to eight per session). New direct and `workflowScript` child launches, including `runs.run(...)`, `runs.all(...)`, and `runs.lanes(...)`, without an explicit model or thinking override pass their canonical agent, bounded task, cwd, context mode, parent model, and serial/parallel topology to the resolvers in registration order. A valid selection supplies `profile`, `model`, optional `thinking`, and integer `confidence` from 0 through 100; resolved selections add the registration `source` as provenance.
 
 Precedence is per-run `model`/`thinking` > resolver selection > provider/project/static defaults. Every selected model and thinking level still passes normal provider/model availability, model-scope/exclusion, fallback, `maxThinking`, and inherited thinking-ceiling checks. Invalid selections fail open with a warning; explicit caller selections remain strict. All resolvers share one abort-aware six-second deadline. Registration by `ctx.sessionManager.getSessionId()` works when the runtime also has a session file. Resolver failure, malformed output, timeout, `null`, missing registration, external runners, and retained resume preserve the static or persisted contract. Successful launches project bounded profile/source/confidence provenance into supported launch, result, status, and receipt metadata. The resolver controls no agent identity, tools, permissions, cwd/context, topology, or authority.
 
@@ -320,7 +320,7 @@ Semantics:
 - Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process.
 - Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
 
-Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through foreground, async, resume, chain, parallel, and fanout launch paths; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
+Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through direct, `workflowScript`, async, resume, and nested child launch paths; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
 
 ## External job provider bridge
 
@@ -419,14 +419,14 @@ The main runtime files in this repository:
 | File | Purpose |
 |------|---------|
 | `src/extension/index.ts` | Extension registration, tool registration, message/render wiring. |
-| `src/agents/agents.ts` | Agent and chain discovery, frontmatter parsing. |
-| `src/runs/foreground/subagent-executor.ts` | Main execution routing for single, parallel, chain, management, status, interrupt, and doctor actions. |
+| `src/agents/agents.ts` | Agent discovery, legacy chain-record compatibility discovery, and frontmatter parsing. |
+| `src/runs/foreground/subagent-executor.ts` | Main execution routing for direct and `workflowScript` launches, management, status, interrupt, and doctor actions. |
 | `src/runs/foreground/execution.ts` | Core foreground `runSync` handling. |
 | `src/runs/background/subagent-runner.ts` | Detached async runner. |
 | `src/runs/background/async-execution.ts` | Background launch support. |
 | `src/runs/background/async-status.ts` | Status discovery and formatting for async runs. |
 | `src/workflows/scripted-workflow.ts` / `src/runs/foreground/subagent-executor.ts` | Scripted workflow orchestration and child launch routing. |
-| `src/shared/settings.ts` | Chain behavior, instructions, and config helpers. |
+| `src/shared/settings.ts` | Workflow compatibility behavior, instructions, and config helpers. |
 | `src/runs/shared/worktree.ts` | Git worktree isolation. |
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |

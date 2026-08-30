@@ -333,7 +333,7 @@ Field notes:
 | `async` | Default a single-agent launch to background (`true`) or foreground (`false`) when the call omits `async`. Explicit call values and `forceTopLevelAsync` win. |
 | `timeoutMs` | Positive integer default runtime deadline in milliseconds for single-agent launches. Foreground launches use 30 minutes when neither the call nor agent provides a timeout; explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win. |
 | `toolTimeoutMs` | Optional positive integer hard per-tool-call deadline in milliseconds. An explicit call value wins, then this agent default, global `toolTimeoutMs`, and `PI_SUBAGENT_TOOL_TIMEOUT_MS`. When omitted, known-fast built-in tools get a five-minute default; long-running tools get attention notices but no hard default. It does not extend the run-level deadline; `contact_supervisor`, `intercom`, and `subagent_wait` are exempt. |
-| `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; chain and parallel acceptance remains task/step configuration. |
+| `acceptance` | Acceptance default for single-agent launches. Use a scalar level such as `checked` or an inline/block YAML map such as `{ level: "none", reason: "lightweight lookup" }`. Explicit call values win; `workflowScript` acceptance remains workflow-default or child-item configuration. |
 | `acceptanceRole` | Optional `read-only` or `writer` role for automatic acceptance inference. Explicit task mutation or no-edit intent wins; otherwise the declared role replaces agent-name guessing. This does not grant or revoke tools. |
 | `mutationTools` | Comma-separated extension tool names whose calls count as mutation attempts for the completion guard. This declares evidence only; list and load each tool through `tools` and its extension provider as usual. |
 | `completionGuard` | Set `false` only for non-implementation agents that may mention implementation words while using mutation-capable tools such as `bash`. |
@@ -491,7 +491,7 @@ The package bundles a `pi-subagents` skill that is automatically available to th
 
 What it covers:
 
-- **Delegation patterns**: when to launch which agent, whether to use single, parallel, chain, or async mode, and whether to use fresh or forked context.
+- **Delegation patterns**: when to launch which agent, whether to use a direct child or `workflowScript`, whether to run asynchronously, and whether to use fresh, forked, or profile context.
 - **Prompt workflow recipes**: how to apply the packaged techniques directly with `subagent(...)` when the user describes the workflow in natural language instead of invoking a slash command. This includes parallel review, review-loop, parallel research, parallel context-build, parallel handoff-plan, gather-context-and-clarify, and parallel cleanup.
 - **Role-agent prompting guidance**: compact contract prompts instead of long scripts, what to include in role-specific meta prompts, and retrieval budgets for researchers.
 - **Safety boundaries**: child agents must not run subagents unless their resolved builtin tools explicitly include `subagent`, must not invent intercom targets, and must escalate unapproved decisions.

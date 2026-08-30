@@ -212,7 +212,7 @@ Resume behavior:
 - A live nested run can still receive a non-destructive `resume` follow-up through its owner route.
 - If an async child has completed, `resume` revives it by starting a new async child from the persisted child session file.
 - Multi-child async runs require `index` unless only one running child is selectable.
-- Completed foreground single, parallel, and chain runs can also be revived by `index` while their run metadata remains in extension state.
+- Completed foreground direct and `workflowScript` runs can also be revived by `index` while their run metadata remains in extension state.
 - Nested runs can be resumed by nested id when a live route or persisted nested session metadata is available.
 - Revive starts a new child process from the old session context; it does not restart the same OS process.
 - Direct revival holds an exclusive cross-process lease on the canonical child session file until the new child finishes. Concurrent attempts fail before Pi starts and identify the owning revived run; stale ownership is reclaimed only when the recorded process is demonstrably gone or reused.

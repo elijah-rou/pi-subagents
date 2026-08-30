@@ -99,7 +99,7 @@ Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes
 }
 ```
 
-Opt in to a best-effort Orca observer that creates one Orca terminal tab for each top-level subagent call and mirrors the run's live tool, assistant, stdout, and stderr progress. Parallel and chain children share that one tab, with child section headers in the mirrored log. Tab titles use a persistent worktree-local sequence (`subagents · <run-label> · 1`, `... · 2`, and so on), so separate top-level calls do not reuse the same number. For the same worktree, `orca terminal create` runs one at a time in that sequence so observer tabs appear from left to right as `1`, then `2`, then `3`. This does **not** replace Pi as the runner: native Pi children keep the same process, lifecycle, status, control, artifact, and result paths. External CLI profiles also keep their existing runner and can mirror their stdout/stderr.
+Opt in to a best-effort Orca observer that creates one Orca terminal tab for each top-level subagent call and mirrors the run's live tool, assistant, stdout, and stderr progress. Children from the same `workflowScript` share that one tab, with child section headers in the mirrored log. Tab titles use a persistent worktree-local sequence (`subagents · <run-label> · 1`, `... · 2`, and so on), so separate top-level calls do not reuse the same number. For the same worktree, `orca terminal create` runs one at a time in that sequence so observer tabs appear from left to right as `1`, then `2`, then `3`. This does **not** replace Pi as the runner: native Pi children keep the same process, lifecycle, status, control, artifact, and result paths. External CLI profiles also keep their existing runner and can mirror their stdout/stderr.
 
 The integration is off by default and supports macOS and Linux. It is disabled on Windows. When enabled, `pi-subagents` looks for executable `orca` on `PATH`, or uses the executable path in `PI_SUBAGENT_ORCA_BINARY`. If no executable is available, Orca is not running, the cwd is not an Orca-managed worktree, or `terminal create` fails, the authoritative subagent still runs normally. Tab creation is deliberately best-effort and never changes the child result. A passive observer manifest is also written under `<worktree>/.pi/subagents/views/orca/` when possible so future view surfaces can discover the Orca tab without making Orca authoritative.
 
@@ -211,7 +211,7 @@ The watcher logs `Subagent result scan inspected … scheduled …` through `con
 { "forceTopLevelAsync": true }
 ```
 
-Forces depth-0 internal single, parallel, and chain runs into background mode and bypasses launch UI by forcing `clarify: false`. Nested calls keep their own inherited settings.
+Forces depth-0 direct and `workflowScript` runs into background mode and bypasses launch UI by forcing `clarify: false`. Nested calls keep their own inherited settings.
 
 ## `timeoutMs`
 
@@ -219,7 +219,7 @@ Forces depth-0 internal single, parallel, and chain runs into background mode an
 { "timeoutMs": 3600000 }
 ```
 
-Global default runtime deadline, in milliseconds, for subagent runs. It replaces the built-in 30-minute backstop for foreground launches (single, parallel, chain, and workflowScript) and plain single-agent async runs whenever no call-level `timeoutMs`/`maxRuntimeMs` applies. For single-agent launches, selected agent frontmatter `timeoutMs` still wins. This only moves the *default*.
+Global default runtime deadline, in milliseconds, for subagent runs. It replaces the built-in 30-minute backstop for foreground direct and `workflowScript` launches and plain single-agent async runs whenever no call-level `timeoutMs`/`maxRuntimeMs` applies. For single-agent launches, selected agent frontmatter `timeoutMs` still wins. This only moves the *default*.
 
 Use it when foreground orchestration or plain async single-agent runs need a longer default than 30 minutes. It does not set async composite top-level deadlines, and it does not replace async fan-out child deadlines.
 
@@ -271,7 +271,7 @@ The budget counts single launches, expanded `tasks`/`count`, static chain steps 
 { "maxActiveAsyncRunsPerSession": 4 }
 ```
 
-Caps concurrently active top-level async runs owned by one parent session. The default is `4`. Set it explicitly to `0` to make active top-level async runs unlimited. A positive integer reserves one slot before an async single, parallel, chain, or workflow creates run artifacts or starts children. Its exact scope is top-level async runs in the current parent session; foreground and nested/workflow children are excluded.
+Caps concurrently active top-level async runs owned by one parent session. The default is `4`. Set it explicitly to `0` to make active top-level async runs unlimited. A positive integer reserves one slot before an async direct or `workflowScript` run creates artifacts or starts children. Its exact scope is top-level async runs in the current parent session; foreground and nested/workflow children are excluded.
 
 Queued, running, paused, and needs-attention runs retain capacity. Runner-backed slots release only after terminal logical state and matching observed process-terminal proof from #1030. Missing, malformed, or unknown cleanup proof retains the slot. A terminal async workflow releases after its controller is gone and every launched child is accounted for: awaited foreground children are covered by workflow settlement, while actual background children still require observed process-terminal proof. Resume transfers the source slot without a second charge. Dismissal and history cleanup do not release capacity.
 

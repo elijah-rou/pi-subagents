@@ -71,7 +71,7 @@ See [Builtin agents](agents.md#builtin-agents) and [Budget guidance for writers]
 
 ## Launch validation is stricter
 
-Native model selections must resolve in the active host model registry before child startup; use `subagent({ action: "models" })` or `/subagents-models` to inspect the live mapping. Explicit tool names are checked against the child runtime's final filtered registry, and a missing provider fails the run instead of silently dropping the requested tool. Load a tool provider through `extensions` or `subagentOnlyExtensions` and include the exact registered tool name.
+Explicit or configured native model selections must resolve in the active host model registry before child startup; use `subagent({ action: "models" })` or `/subagents-models` to inspect the live mapping. The already-running parent session model is intentionally trusted when it is inherited, even if that model is absent from the registry, so gateway and proxy sessions remain compatible; this exception does not soften validation for an explicit concrete per-run, agent, fallback, or configured default selection. Explicit tool names are checked against the child runtime's final filtered registry, and a missing provider fails the run instead of silently dropping the requested tool. Load a tool provider through `extensions` or `subagentOnlyExtensions` and include the exact registered tool name.
 
 External CLI profile metadata must declare a supported runner shape and a non-empty command. Code-owned adapters enforce fixed argv and access contracts; unsupported native Pi options fail rather than being pretended. Launch preflight also fails when the configured executable is absent or its adapter-specific version/help contract is not satisfied. Reload Pi after changing model settings, tool extensions, MCP connections, or profile files; a newly connected direct MCP server specifically requires a restart because its metadata is cached at startup.
 
@@ -79,7 +79,7 @@ See [Models](models.md), [Tool and extension selection](agents.md#tool-and-exten
 
 ## Cleanup and project-pane API changes
 
-`worktree.cleanup` is plan-only. Public calls accept `mode: "plan"` (or omit it); they no longer accept a caller-supplied `planId`, and there is no cleanup `apply` mode. The action records a read-only plan after current Git and ownership checks and never removes a worktree or branch.
+`worktree.cleanup` is plan-only. Every public call must include `mode: "plan"`; omitting `mode` is rejected. Calls no longer accept a caller-supplied `planId`, and there is no cleanup `apply` mode. The action records a read-only plan after current Git and ownership checks and never removes a worktree or branch.
 
 The package export `pi-subagents/project-panes` was removed. Host-selected Herdr UI and the model-facing `project.open`, `project.status`, and `project.close` actions remain available; passive Herdr observation remains separate from parent ownership of peer-session children. Do not replace the removed export with an internal source import.
 

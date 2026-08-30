@@ -6,7 +6,7 @@ Where running subagents show up, how to inspect them, and the files and events t
 
 Foreground runs stream progress in the conversation while they run. They default to a generous 30-minute wall-clock timeout when neither the call nor the selected agent provides a timeout; a global [`timeoutMs`](configuration.md#timeoutms) config replaces that default, and explicit `timeoutMs`/`maxRuntimeMs` and agent defaults win.
 
-Live progress shows compact detail for single, chain, and parallel modes: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and chain graph metadata when available. Workflow `label` metadata wins over raw task text in compact multi-child cards.
+Live progress shows compact detail for direct and `workflowScript` execution: a bounded one-line task, current tool, recent output, token counts, aggregate cost, duration, activity freshness, current-tool duration, and workflow graph metadata when available (including legacy chain graph metadata read from older runs). Workflow `label` metadata wins over raw task text in compact multi-child cards.
 
 Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step. Running-card hints also advertise `Ctrl+Alt+F` for the Fleet inspector.
 

@@ -17,6 +17,8 @@ Precedence, strongest first: per-run override → agent frontmatter `model` → 
 
 Use `model: "inherit"` in agent frontmatter or `agentOverrides.<name>.model` to select the current parent session model explicitly.
 
+Explicit and configured native model selections must resolve in the active model registry before launch. The one compatibility exception is the already-running parent session model when it is inherited: that model is trusted even if a gateway or proxy did not register it locally. An explicit concrete per-run, agent, fallback, or configured default selection does not receive this exception.
+
 ## Setting defaults and overrides
 
 In `~/.pi/agent/settings.json` (user) or the project config settings file (`.pi/settings.json` in standard Pi; project wins):
@@ -146,7 +148,7 @@ Set `subagents.maxThinking` to enforce a hard maximum for every native Pi child.
 }
 ```
 
-Requests above the ceiling fail before child startup; the setting covers frontmatter, `agentOverrides`, per-run overrides, fallback models, parallel/chain children, nested launches, and resumed children. Project settings take precedence over user settings. External runners retain their existing behavior.
+Requests above the ceiling fail before child startup; the setting covers frontmatter, `agentOverrides`, per-run overrides, fallback models, `workflowScript` children, nested launches, and resumed children. Project settings take precedence over user settings. External runners retain their existing behavior.
 
 ## Extension defaults
 
