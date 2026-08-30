@@ -61,6 +61,30 @@ Default strong-reviewer profile:
 }
 ```
 
+## Project review guidance
+
+The watchdog can append project-specific review focus without replacing its read-only tools, warning schema, or severity rules. By default, `guidance.watchdogMd` is `true`: a `WATCHDOG.md` regular file at the review `cwd` is loaded when present and ignored when absent. Set `guidance.systemPromptPath` for an explicit additional file; relative paths resolve from the review `cwd`, `~/` expands to the user home, and a missing or unreadable explicit path fails the review loudly.
+
+```json
+{
+  "subagents": {
+    "watchdog": {
+      "enabled": true,
+      "main": {
+        "model": "anthropic/claude-opus-4-8",
+        "thinking": "high"
+      },
+      "guidance": {
+        "watchdogMd": true,
+        "systemPromptPath": ".pi/watchdog-security.md"
+      }
+    }
+  }
+}
+```
+
+Use these files for stable repository lenses such as authentication boundaries, generated-code exclusions, or required invariants. Do not put task commands or authority changes in them. Each file is capped at 32 KiB and combined guidance at 48 KiB. If both settings resolve to the same file, it is loaded once. Set `watchdogMd` to `false` or `systemPromptPath` to `null` to disable that source.
+
 ## Scope monitoring
 
 When enabled, the watchdog keeps a bounded in-memory current-scope artifact from real user prompts and prepends it to review input by default (`subagents.watchdog.scope.enabled`). Newer prompts supersede and mutate older prompts, so the reviewer can flag work that no longer serves the current scope as `scope-drift`. Watchdog auto-follow prompts are not recorded as scope.

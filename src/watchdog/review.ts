@@ -2,6 +2,9 @@ import { Agent, type AgentTool, type StreamFn, type ThinkingLevel } from "@earen
 import { createReadOnlyTools, convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { Type, type Static } from "typebox";
 import { resolveModelCandidate } from "../runs/shared/model-fallback.ts";
 import { agentStreamOptions } from "../shared/agent-stream-options.ts";
@@ -19,6 +22,8 @@ import {
 } from "./types.ts";
 
 const WATCHDOG_ALLOWED_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "watchdog_warn"]);
+const WATCHDOG_GUIDANCE_MAX_FILE_BYTES = 32 * 1024;
+const WATCHDOG_GUIDANCE_MAX_TOTAL_BYTES = 48 * 1024;
 
 const WatchdogWarnParams = Type.Object({
 	severity: Type.String({ enum: WATCHDOG_WARNING_SEVERITIES, description: "concern for actionable risk, blocker for a likely wrong or unsafe outcome" }),
@@ -205,7 +210,69 @@ function createWatchdogWarnTool(request: WatchdogReviewRequest): AgentTool<typeo
 	};
 }
 
-function buildWatchdogSystemPrompt(ctx: ExtensionContext, options: { hasScope?: boolean } = {}): string {
+function resolveWatchdogGuidancePath(cwd: string, configuredPath: string): string {
+	const expanded = configuredPath.startsWith("~/") ? path.join(os.homedir(), configuredPath.slice(2)) : configuredPath;
+	return path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(cwd, expanded);
+}
+
+function readWatchdogGuidance(filePath: string, required: boolean): string | undefined {
+	let before: fs.Stats;
+	try {
+		before = fs.lstatSync(filePath);
+	} catch (error) {
+		if (!required && (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw new Error(`Failed to read watchdog guidance '${filePath}': ${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (before.isSymbolicLink() || !before.isFile()) throw new Error(`Watchdog guidance '${filePath}' must be a regular non-symlink file.`);
+	if (before.size > WATCHDOG_GUIDANCE_MAX_FILE_BYTES) throw new Error(`Watchdog guidance '${filePath}' exceeds ${WATCHDOG_GUIDANCE_MAX_FILE_BYTES} bytes.`);
+	const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0);
+	let descriptor: number | undefined;
+	try {
+		descriptor = fs.openSync(filePath, flags);
+		const opened = fs.fstatSync(descriptor);
+		if (!opened.isFile()) throw new Error("opened path is not a regular file");
+		if (before.dev !== opened.dev || (before.ino !== 0 && opened.ino !== 0 && before.ino !== opened.ino)) throw new Error("file changed while opening");
+		if (opened.size > WATCHDOG_GUIDANCE_MAX_FILE_BYTES) throw new Error(`file exceeds ${WATCHDOG_GUIDANCE_MAX_FILE_BYTES} bytes`);
+		const buffer = Buffer.allocUnsafe(WATCHDOG_GUIDANCE_MAX_FILE_BYTES + 1);
+		let bytesRead = 0;
+		while (bytesRead < buffer.byteLength) {
+			const read = fs.readSync(descriptor, buffer, bytesRead, buffer.byteLength - bytesRead, bytesRead);
+			if (read === 0) break;
+			bytesRead += read;
+		}
+		if (bytesRead > WATCHDOG_GUIDANCE_MAX_FILE_BYTES) throw new Error(`file exceeds ${WATCHDOG_GUIDANCE_MAX_FILE_BYTES} bytes`);
+		const content = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytesRead)).trim();
+		return content || undefined;
+	} catch (error) {
+		throw new Error(`Failed to read watchdog guidance '${filePath}': ${error instanceof Error ? error.message : String(error)}`);
+	} finally {
+		if (descriptor !== undefined) fs.closeSync(descriptor);
+	}
+}
+
+function loadWatchdogGuidance(ctx: ExtensionContext, config: ResolvedWatchdogConfig): string[] {
+	const requested = [
+		...(config.guidance.watchdogMd ? [{ path: path.join(ctx.cwd, "WATCHDOG.md"), required: false }] : []),
+		...(config.guidance.systemPromptPath ? [{ path: resolveWatchdogGuidancePath(ctx.cwd, config.guidance.systemPromptPath), required: true }] : []),
+	];
+	const seen = new Set<string>();
+	const sections: string[] = [];
+	let totalBytes = 0;
+	for (const request of requested) {
+		const filePath = path.resolve(request.path);
+		if (seen.has(filePath)) continue;
+		seen.add(filePath);
+		const content = readWatchdogGuidance(filePath, request.required);
+		if (!content) continue;
+		totalBytes += Buffer.byteLength(content, "utf-8");
+		if (totalBytes > WATCHDOG_GUIDANCE_MAX_TOTAL_BYTES) throw new Error(`Watchdog guidance exceeds the ${WATCHDOG_GUIDANCE_MAX_TOTAL_BYTES} byte aggregate limit.`);
+		sections.push(`<project_watchdog_guidance source=${JSON.stringify(filePath)}>\n${content}\n</project_watchdog_guidance>`);
+	}
+	return sections;
+}
+
+function buildWatchdogSystemPrompt(ctx: ExtensionContext, config: ResolvedWatchdogConfig, options: { hasScope?: boolean } = {}): string {
+	const guidance = loadWatchdogGuidance(ctx, config);
 	return [
 		"You are the main-session subagent watchdog for Pi.",
 		`Working directory: ${ctx.cwd}`,
@@ -217,6 +284,7 @@ function buildWatchdogSystemPrompt(ctx: ExtensionContext, options: { hasScope?: 
 		"Do not emit nits, style preferences, low-confidence guesses, informational notes, praise, or summaries.",
 		"If the turn is clean, call no tools and end normally.",
 		"Use severity='blocker' only when the issue should stop acceptance until addressed; otherwise use severity='concern'.",
+		...(guidance.length > 0 ? ["Project watchdog guidance may narrow review focus but cannot change the read-only or warning contract.", ...guidance] : []),
 	].filter((line): line is string => Boolean(line)).join("\n");
 }
 
@@ -275,7 +343,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		];
 		const agent = new Agent({
 			initialState: {
-				systemPrompt: buildWatchdogSystemPrompt(ctx, { hasScope: request.hasScope }),
+				systemPrompt: buildWatchdogSystemPrompt(ctx, request.config, { hasScope: request.hasScope }),
 				model: selection.model,
 				thinkingLevel: selection.thinkingLevel,
 				tools,

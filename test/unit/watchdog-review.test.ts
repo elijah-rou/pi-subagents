@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
@@ -60,11 +63,12 @@ function createCtx(input: {
 	authenticated?: string[];
 	thinkingLevel?: string;
 	providerConfig?: { provider: string; api: string; streamSimple: StreamFn };
+	cwd?: string;
 }) {
 	const allModels = input.models ?? (input.current ? [input.current] : []);
 	const authenticated = new Set(input.authenticated ?? allModels.map((entry) => `${entry.provider}/${entry.id}`));
 	return {
-		cwd: "/tmp/watchdog-review",
+		cwd: input.cwd ?? "/tmp/watchdog-review",
 		model: input.current,
 		...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
 		signal: undefined,
@@ -126,6 +130,62 @@ describe("main watchdog review adapter", () => {
 
 		assert.deepEqual(warnings, []);
 		assert.equal(result?.stopReason, "stop");
+	});
+
+	it("adds bounded project and explicit watchdog guidance without replacing the safety contract", async () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-watchdog-guidance-"));
+		try {
+			const current = model("openai", "gpt-guidance");
+			const ctx = createCtx({ current, cwd });
+			fs.writeFileSync(path.join(cwd, "WATCHDOG.md"), "Prioritize authentication boundary regressions.\n", "utf-8");
+			fs.writeFileSync(path.join(cwd, "security-lens.md"), "Check authorization before persistence.\n", "utf-8");
+			const config = enabledConfig();
+			config.guidance.systemPromptPath = "security-lens.md";
+			const { streamFn, calls } = createStreamFn([fauxAssistantMessage("clean", { stopReason: "stop" })]);
+			const warnings: WatchdogWarning[] = [];
+
+			await createMainWatchdogReview(ctx, { streamFn })(request(config, warnings));
+
+			const systemPrompt = calls[0]?.context.systemPrompt ?? "";
+			assert.match(systemPrompt, /You are read-only/);
+			assert.match(systemPrompt, /Prioritize authentication boundary regressions/);
+			assert.match(systemPrompt, /Check authorization before persistence/);
+			assert.match(systemPrompt, /cannot change the read-only or warning contract/);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("fails before review when an explicit watchdog guidance path is unreadable", async () => {
+		const current = model("openai", "gpt-guidance-missing");
+		const config = enabledConfig();
+		config.guidance.systemPromptPath = "missing.md";
+		let streamed = false;
+		const streamFn: StreamFn = () => {
+			streamed = true;
+			return responseStream(fauxAssistantMessage("clean", { stopReason: "stop" }));
+		};
+
+		await assert.rejects(() => createMainWatchdogReview(createCtx({ current }), { streamFn })(request(config, [])), /watchdog guidance.*missing\.md/i);
+		assert.equal(streamed, false);
+	});
+
+	it("rejects oversized watchdog guidance before review", async () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-watchdog-guidance-limit-"));
+		try {
+			const current = model("openai", "gpt-guidance-limit");
+			fs.writeFileSync(path.join(cwd, "WATCHDOG.md"), "x".repeat(32 * 1024 + 1), "utf-8");
+			let streamed = false;
+			const streamFn: StreamFn = () => {
+				streamed = true;
+				return responseStream(fauxAssistantMessage("clean", { stopReason: "stop" }));
+			};
+
+			await assert.rejects(() => createMainWatchdogReview(createCtx({ current, cwd }), { streamFn })(request(enabledConfig(), [])), /watchdog guidance.*exceeds 32768 bytes/i);
+			assert.equal(streamed, false);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 
 	it("records watchdog_warn emissions through the runtime seam", async () => {
