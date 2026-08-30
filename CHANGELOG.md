@@ -5,8 +5,11 @@
 
 ### Added
 - Add a versioned parent-side child-profile resolver API. It can select model and thinking from child role, task, and serial/parallel topology while preserving explicit launch overrides, skipping external runners and retained resumes, enforcing upstream model/thinking constraints, projecting bounded provenance, and failing open to static agent defaults.
+- Add composable acceptance contracts with independent report, verification, review, and failure-policy dimensions while retaining legacy acceptance compatibility.
+- Add bounded soft runtime checkpoints that request a safe child handoff before the hard execution deadline.
 
 ### Changed
+- Preserve acceptance contracts and routed child provenance through workflow lanes, async status, recovery, receipts, and nested revival.
 - Show `runs.lanes(...)` workflows with active-stage focus and planned-stage progress in async status widgets (#1699).
 - Align foreground subagent result labels with async widget labels and disambiguate duplicate rows (#1697).
 - Render parallel subagent workflow groups as readable cards with nested agent rows (#1696).
@@ -17,6 +20,8 @@
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
 
 ### Fixed
+- Harden managed child outputs against symlink, inode-substitution, deletion, fallback-attribution, and cleanup races while keeping explicit absolute outputs user-managed.
+- Validate private async runtime roots and fail closed when required child tools remain unavailable after registration.
 - Surface recovery-needed diagnostics for dirty timed-out children that miss requested reports, while keeping them fail-closed (#1713).
 - Keep retained-session resume runners from flashing console windows on Windows while preserving Unix background detachment. Thanks to [@Zethu5](https://github.com/Zethu5) for #1711.
 - Hide mutation-evidence Git subprocess windows on Windows to prevent visible console flashes or terminal tabs. Thanks to [@dnnkeeper](https://github.com/dnnkeeper) for #1706.
