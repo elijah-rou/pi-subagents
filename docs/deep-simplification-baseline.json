@@ -1,0 +1,276 @@
+{
+  "baselineVersion": 1,
+  "commit": "ecf165a1fb99e7a98e4a7e514a371251b897cad8",
+  "createdAt": "2026-08-30T16:52:45.434Z",
+  "environment": {
+    "node": "v26.7.0",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 5 7600X3D 6-Core Processor"
+  },
+  "production": {
+    "typeScriptFiles": 254,
+    "typeScriptLoc": 93402
+  },
+  "publicSurface": {
+    "rootRuntimeToolCount": 3,
+    "toolSchemaBytes": {
+      "subagent": 20879,
+      "subagent_supervisor": 245,
+      "subagent_wait": 1237,
+      "combined": 22361
+    },
+    "toolParameters": {
+      "subagent": 72,
+      "subagent_supervisor": 4,
+      "subagent_wait": 5,
+      "combined": 81
+    },
+    "actionNames": [
+      "list",
+      "get",
+      "models",
+      "children.list",
+      "guide",
+      "validate",
+      "create",
+      "update",
+      "delete",
+      "eject",
+      "disable",
+      "enable",
+      "reset",
+      "mission.create",
+      "mission.list",
+      "mission.show",
+      "mission.update",
+      "mission.resolve-decision",
+      "mission.attach-run",
+      "mission.close",
+      "worktree.discard",
+      "worktree.cleanup",
+      "lane.status",
+      "lane.recordMerge",
+      "lane.recordSupersession",
+      "refine",
+      "refine.show",
+      "refine.rollback",
+      "inspector.open",
+      "inspector.status",
+      "inspector.close",
+      "project.open",
+      "project.status",
+      "project.close",
+      "status",
+      "debug.run",
+      "grant-spawn-budget",
+      "interrupt",
+      "resume",
+      "steer",
+      "stop",
+      "dismiss",
+      "doctor",
+      "watchdog.status",
+      "watchdog.check",
+      "watchdog.configure",
+      "watchdog.recommend-model",
+      "schedule.create",
+      "schedule.list",
+      "schedule.show",
+      "schedule.history",
+      "schedule.pause",
+      "schedule.resume",
+      "schedule.run",
+      "schedule.run-due",
+      "schedule.delete"
+    ],
+    "actionNameCount": 56,
+    "compatibilityActionNames": [
+      "append-step"
+    ],
+    "recognizedActionNameCount": 57,
+    "slashCommands": [
+      "prompt-workflow",
+      "run",
+      "subagent-cost",
+      "subagents",
+      "subagents-check-profile",
+      "subagents-detach",
+      "subagents-doctor",
+      "subagents-fleet",
+      "subagents-generate-profiles",
+      "subagents-guide",
+      "subagents-inspect-rpc",
+      "subagents-load-profile",
+      "subagents-models",
+      "subagents-profiles",
+      "subagents-refine",
+      "subagents-refresh-provider-models",
+      "subagents-steer",
+      "subagents-stop",
+      "subagents-watchdog"
+    ],
+    "slashCommandCount": 19,
+    "rootRuntimeTools": [
+      "subagent",
+      "subagent_supervisor",
+      "subagent_wait"
+    ],
+    "childRuntimeTools": [
+      {
+        "name": "contact_supervisor",
+        "schemaBytes": 259,
+        "topLevelParameters": 3
+      },
+      {
+        "name": "structured_output",
+        "schemaBytes": 199,
+        "topLevelParameters": 1
+      },
+      {
+        "name": "subagent",
+        "schemaBytes": 20879,
+        "topLevelParameters": 72
+      },
+      {
+        "name": "subagent_wait",
+        "schemaBytes": 1237,
+        "topLevelParameters": 5
+      }
+    ],
+    "childRuntimeToolCount": 4,
+    "childRuntimeScope": "maximum fixture: nested fanout authorized, native supervisor metadata present, and representative structured output enabled; structured_output schema bytes vary with caller schema",
+    "packageExports": [
+      ".",
+      "./agents",
+      "./background-work",
+      "./capability-ceiling",
+      "./child-profile-resolver",
+      "./control-channel",
+      "./delegation",
+      "./external-job-provider",
+      "./external-runs",
+      "./intercom-bridge",
+      "./pi-args",
+      "./preflight",
+      "./shared-types"
+    ],
+    "packageExportCount": 13,
+    "extensionConfigurationKeys": [
+      "artifactConfig",
+      "artifactDir",
+      "asyncByDefault",
+      "asyncWidget",
+      "authorityPolicy",
+      "capacity",
+      "chain",
+      "completionBatch",
+      "control",
+      "defaultSessionDir",
+      "defaultSubagentContext",
+      "fleetKeybindings",
+      "fleetView",
+      "fleetViewPlacement",
+      "forceTopLevelAsync",
+      "foregroundDetachShortcut",
+      "forkContext",
+      "globalConcurrencyLimit",
+      "inlineToolDisplay",
+      "intercomBridge",
+      "mainWindowRenderer",
+      "maxActiveAsyncRunsPerSession",
+      "maxSubagentDepth",
+      "maxSubagentSpawnsPerRun",
+      "maxSubagentSpawnsPerSession",
+      "missions",
+      "modelExclusions",
+      "orcaProgressTabs",
+      "parallel",
+      "permissions",
+      "proactiveSkillSubagents",
+      "resultScanLogging",
+      "scheduledRuns",
+      "singleRunOutputBaseDir",
+      "timeoutMs",
+      "toolBudget",
+      "toolDescriptionMode",
+      "toolTimeoutMs",
+      "usageBudget",
+      "waitTool",
+      "worktreeBaseDir",
+      "worktreeSetupHook",
+      "worktreeSetupHookTimeoutMs"
+    ],
+    "extensionConfigurationKeyCount": 43
+  },
+  "performance": {
+    "extensionImportAndRegistration": {
+      "samples": 7,
+      "meanMs": 640.559,
+      "p50Ms": 639.739,
+      "p95Ms": 647.295,
+      "minMs": 637.826,
+      "maxMs": 647.295,
+      "scope": "cold child process; timer covers dynamic import of index.ts and fake-host registration, not Node process startup"
+    },
+    "sessionStart": {
+      "samples": 7,
+      "meanMs": 2.909,
+      "p50Ms": 2.84,
+      "p95Ms": 3.373,
+      "minMs": 2.811,
+      "maxMs": 3.373,
+      "scope": "session_start callback in the same isolated fake-host processes; headless context, empty stores, no session file"
+    },
+    "sessionShutdown": {
+      "samples": 7,
+      "meanMs": 0.688,
+      "p50Ms": 0.687,
+      "p95Ms": 0.71,
+      "minMs": 0.665,
+      "maxMs": 0.71,
+      "scope": "session_shutdown callback after the measured fake-host session_start"
+    },
+    "directLaunchPreparation": {
+      "samples": 100,
+      "meanMs": 2.262,
+      "p50Ms": 2.207,
+      "p95Ms": 2.662,
+      "minMs": 2.078,
+      "maxMs": 3.106,
+      "warmupSamplesDiscarded": 1,
+      "preparedAgent": "worker",
+      "scope": "resolveSubagentLaunchContract for packaged worker, fresh context, artifacts disabled, fixed available-model registry"
+    },
+    "activeRefresh": {
+      "samples": 500,
+      "meanMs": 0.046,
+      "p50Ms": 0.043,
+      "p95Ms": 0.058,
+      "minMs": 0.04,
+      "maxMs": 0.203,
+      "warmupSamplesDiscarded": 1,
+      "rows": 1,
+      "filesystemCallsPerRefresh": {
+        "existsSync": 1,
+        "lstatSync": 1,
+        "readdirSync": 1,
+        "readFileSync": 1,
+        "realpathSync": 2,
+        "statSync": 1
+      },
+      "scope": "listAsyncRuns for one indexed running status with reconciliation and nested projection disabled"
+    },
+    "idleFilesystem": {
+      "resultWatcherStartCalls": {
+        "realpathSyncNative": 1,
+        "watch": 1
+      },
+      "healthyScanIntervalMs": 60000,
+      "emptyHealthyScanCalls": {
+        "readdirSync": 3
+      },
+      "scope": "Linux result-delivery watcher with no delivery demand and an empty isolated result store; one scheduled safety scan invoked synchronously"
+    }
+  }
+}
