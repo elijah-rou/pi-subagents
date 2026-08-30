@@ -431,6 +431,8 @@ interface ExecutorDeps {
 	allowMutatingManagementActions?: boolean;
 	activateSupervisorTransport?: () => void;
 	refreshResultDelivery?: () => void;
+	/** Injectable boundary for proving initial workflow status ordering and failure rollback. */
+	writeInitialWorkflowStatus?: (filePath: string, status: Record<string, unknown>) => void;
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
@@ -602,7 +604,7 @@ function withSpawnBudgetStatus(
 	return {
 		...result,
 		content: result.content.map((item, index) => index === 0 && item.type === "text"
-			? { ...item, text: `${formatSpawnBudget(spawnBudget)}\nActive async capacity: ${activeAsyncCapacity.used}/${activeAsyncCapacity.limit || "unlimited"} used\nPer-run child concurrency: ${config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT} (globalConcurrencyLimit compatibility key; not shared across runs, parent sessions, or machines)\n${item.text}` }
+			? { ...item, text: `${formatSpawnBudget(spawnBudget)}\nTop-level async capacity (current parent session): ${activeAsyncCapacity.used}/${activeAsyncCapacity.limit || "unlimited"} used\nScope: async runs only; foreground and nested/workflow children excluded\nPer-run child concurrency: ${config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT} (globalConcurrencyLimit compatibility key; not shared across runs, parent sessions, or machines)\n${item.text}` }
 			: item),
 		details: { ...result.details, spawnBudget, activeAsyncCapacity },
 	};
@@ -4875,11 +4877,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
 				}
 				const controller = new AbortController();
-				deps.state.workflowControllers ??= new Map();
-				deps.state.workflowChildStops ??= new Map();
-				deps.state.workflowControllers.set(workflowRunId, controller);
-				workflowCapacity?.markWorkflowStarted();
-				if (workflowCapacity) deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers.keys()), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
 				let status: AsyncStatus = {
 					runId: workflowRunId,
 					toolCallId,
@@ -4951,7 +4948,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					status.workflowChildren = workflowChildSummary({ parentToolCallId: toolCallId, workflowRunId, workflowState, inventoryComplete: workflowState !== "running", trace: status.workflow?.trace, steps: status.steps });
 					status.lastUpdate = Date.now();
 					if (!initialPersistenceComplete) {
-						writeAtomicJson(statusPath, status);
+						if (deps.writeInitialWorkflowStatus) deps.writeInitialWorkflowStatus(statusPath, status as unknown as Record<string, unknown>);
+						else writeAtomicJson(statusPath, status);
 						initialPersistenceComplete = true;
 						queueActiveRunIndex();
 					} else if (options.tolerateStatusWriteFailure) {
@@ -5030,19 +5028,24 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					status.currentStep = runningSteps.length === 1 ? steps.indexOf(runningSteps[0]!) : undefined;
 				};
 				const workflowJob: AsyncJobState = { asyncId: workflowRunId, asyncDir, toolCallId, cwd: workflowCwd, ...(workflowSessionRoot ? { sessionRoot: workflowSessionRoot } : {}), status: "running", sessionId: currentSessionId ?? undefined, mode: "workflow", agents: [], steps: [], ...(workflowPreflight ? { preflight: workflowPreflight } : {}), startedAt, updatedAt: startedAt, ...(requestParams.scheduleOrigin ? { scheduleOrigin: requestParams.scheduleOrigin } : {}), ...(timeout !== undefined ? { timeoutMs: timeout, deadlineAt: startedAt + timeout } : {}), workflow: status.workflow, workflowChildren: status.workflowChildren };
-				deps.state.asyncJobs.set(workflowRunId, workflowJob);
-				deps.state.fleetJobs ??= new Map();
-				deps.state.fleetJobs.set(workflowRunId, workflowJob);
 				try {
 					persist();
 				} catch (error) {
-					deps.state.workflowControllers?.delete(workflowRunId);
-					deps.state.asyncJobs.delete(workflowRunId);
-					deps.state.fleetJobs?.delete(workflowRunId);
 					workflowCapacity?.rollback();
 					indexPersistence.dispose();
+					fs.rmSync(asyncDir, { recursive: true, force: true });
 					return { content: [{ type: "text", text: `Failed to create async workflow storage: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "workflow", results: [] } };
 				}
+				// Initial status is durable before ownership becomes started. Ownership is
+				// started before the controller, observable jobs, or child launch can activate.
+				workflowCapacity?.markWorkflowStarted();
+				deps.state.workflowControllers ??= new Map();
+				deps.state.workflowChildStops ??= new Map();
+				deps.state.workflowControllers.set(workflowRunId, controller);
+				deps.state.asyncJobs.set(workflowRunId, workflowJob);
+				deps.state.fleetJobs ??= new Map();
+				deps.state.fleetJobs.set(workflowRunId, workflowJob);
+				if (workflowCapacity) deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers.keys()), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;
 				void Promise.resolve().then(async () => {

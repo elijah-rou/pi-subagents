@@ -29,6 +29,7 @@
 - Reject parent-orchestrated prompt templates in the child `/prompt-workflow` wrapper.
 
 ### Fixed
+- Roll back active async workflow capacity and partial storage when initial status persistence fails, and persist initial status before marking workflow ownership started or exposing control.
 - Harden managed child outputs against symlink, inode-substitution, deletion, fallback-attribution, and cleanup races while keeping explicit absolute outputs user-managed.
 - Validate private async runtime roots and fail closed when required child tools remain unavailable after registration.
 - Surface recovery-needed diagnostics for dirty timed-out children that miss requested reports, while keeping them fail-closed (#1713).

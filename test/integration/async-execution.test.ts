@@ -4638,6 +4638,55 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		fs.rmSync(path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey("session-cap")), { recursive: true, force: true });
 	});
 
+	it("rejects the fifth top-level workflow under the omitted default before artifacts or children", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const sessionId = `session-workflow-default-cap-${Date.now()}`;
+		const poolDir = path.join(ACTIVE_ASYNC_CAPACITY_DIR, activeAsyncCapacitySessionKey(sessionId));
+		fs.rmSync(poolDir, { recursive: true, force: true });
+		const owners = Array.from({ length: 4 }, (_, index) => acquireActiveAsyncCapacity({
+			sessionId,
+			limit: 4,
+			runId: `held-workflow-cap-${index}`,
+			kind: "workflow",
+			asyncDir: path.join(tempDir, `held-workflow-cap-${index}`),
+		}));
+		assert.equal(owners.every(Boolean), true);
+		const beforeAsync = new Set(fs.existsSync(ASYNC_DIR) ? fs.readdirSync(ASYNC_DIR) : []);
+		const beforeResults = new Set(fs.existsSync(RESULTS_DIR) ? fs.readdirSync(RESULTS_DIR) : []);
+		const state = { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), fleetJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null };
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state,
+			config: { artifactDir: "project" },
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => path.join(tempDir, "sessions"),
+			expandTilde: (p: string) => p,
+			discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+		});
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => null;
+		context.sessionManager.getSessionId = () => sessionId;
+		const previousDepth = process.env.PI_SUBAGENT_DEPTH;
+		process.env.PI_SUBAGENT_DEPTH = "0";
+		try {
+			const result = await executor.execute("workflow-cap-rejected", {
+				workflowScript: `return await runs.run("work", { agent: "worker", task: "must not launch" });`,
+				async: true,
+				mission: false,
+			}, new AbortController().signal, undefined, context);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Active async run capacity exhausted: 4\/4 used/);
+			assert.equal(mockPi.callCount(), 0);
+			assert.deepEqual(new Set(fs.existsSync(ASYNC_DIR) ? fs.readdirSync(ASYNC_DIR) : []), beforeAsync);
+			assert.deepEqual(new Set(fs.existsSync(RESULTS_DIR) ? fs.readdirSync(RESULTS_DIR) : []), beforeResults);
+		} finally {
+			if (previousDepth === undefined) delete process.env.PI_SUBAGENT_DEPTH;
+			else process.env.PI_SUBAGENT_DEPTH = previousDepth;
+			for (const owner of owners) owner?.rollback();
+			fs.rmSync(poolDir, { recursive: true, force: true });
+		}
+	});
+
 	it("scheduled executor launches retain the live active session ownership", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "Scheduled work completed" });
 		const liveCwd = path.join(tempDir, "live-project");

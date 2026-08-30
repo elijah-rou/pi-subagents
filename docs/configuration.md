@@ -269,7 +269,7 @@ The budget counts single launches, expanded `tasks`/`count`, static chain steps 
 { "maxActiveAsyncRunsPerSession": 4 }
 ```
 
-Caps concurrently active top-level async runs owned by one parent session. The default is `4`. Set it explicitly to `0` to make active top-level async runs unlimited. A positive integer reserves one slot before an async single, parallel, chain, or workflow creates run artifacts or starts children. Foreground runs and nested/workflow children do not reserve another slot.
+Caps concurrently active top-level async runs owned by one parent session. The default is `4`. Set it explicitly to `0` to make active top-level async runs unlimited. A positive integer reserves one slot before an async single, parallel, chain, or workflow creates run artifacts or starts children. Its exact scope is top-level async runs in the current parent session; foreground and nested/workflow children are excluded.
 
 Queued, running, paused, and needs-attention runs retain capacity. Runner-backed slots release only after terminal logical state and matching observed process-terminal proof from #1030. Missing, malformed, or unknown cleanup proof retains the slot. A terminal async workflow releases after its controller is gone and every launched child is accounted for: awaited foreground children are covered by workflow settlement, while actual background children still require observed process-terminal proof. Resume transfers the source slot without a second charge. Dismissal and history cleanup do not release capacity.
 
@@ -283,7 +283,7 @@ The default is `1200000` milliseconds (20 minutes). The policy releases only a f
 
 This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, the default-`64` cumulative `maxSubagentSpawnsPerRun`, and per-run child concurrency (`globalConcurrencyLimit`, default `20`). `maxSubagentSpawnsPerSession` remains unlimited by default.
 
-`subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used and effective active capacity. Status and doctor also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
+`subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used and effective top-level async capacity for the current parent session, explicitly excluding foreground and nested/workflow children. Status and doctor also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
 
 ### Migration: retaining unlimited active async runs
 

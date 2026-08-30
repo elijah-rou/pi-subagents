@@ -38,6 +38,7 @@ import {
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
 import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
+import { getActiveAsyncCapacitySnapshot, inspectActiveAsyncCapacityOwner } from "../../src/runs/background/active-async-capacity.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
@@ -375,6 +376,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		piEvents = createEventBus(),
 		discoverAgentsForCwd?: (cwd: string) => typeof agents,
 		providedState?: SubagentState,
+		writeInitialWorkflowStatus?: (filePath: string, status: Record<string, unknown>) => void,
 	) {
 		return createSubagentExecutor!({
 			pi: { events: piEvents, getSessionName: () => undefined },
@@ -395,6 +397,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			discoverAgents: (cwd: string) => ({ agents: discoverAgentsForCwd ? discoverAgentsForCwd(cwd) : agents }),
 			allowMutatingManagementActions,
 			...(handleScheduledRunAction ? { handleScheduledRunAction } : {}),
+			...(writeInitialWorkflowStatus ? { writeInitialWorkflowStatus } : {}),
 		});
 	}
 
@@ -1352,6 +1355,89 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "file workflow failed");
 		assert.deepEqual(result.details.preflight, { version: 1, coverage: "complete", lanes: [{ key: "main", mode: "mutation" }] });
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("rolls back workflow capacity and storage when initial status persistence fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const sessionId = `workflow-initial-persist-failure-${Date.now()}`;
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionId = () => sessionId;
+		context.sessionManager.getSessionFile = () => null;
+		let attemptedStatusPath: string | undefined;
+		const executor = makeExecutor(
+			[makeAgent("echo")],
+			{ maxActiveAsyncRunsPerSession: 1, missions: { globalIndex: false } },
+			false, undefined, true, new Map(), undefined, undefined, undefined, undefined, undefined,
+			(filePath) => {
+				attemptedStatusPath = filePath;
+				throw new Error("injected initial workflow status failure");
+			},
+		);
+
+		const previousDepth = process.env.PI_SUBAGENT_DEPTH;
+		process.env.PI_SUBAGENT_DEPTH = "0";
+		const result = await executor.execute("workflow-initial-persist-failure", {
+			workflowScript: `return await runs.run("work", { agent: "echo", task: "must not launch" });`,
+			async: true,
+			mission: false,
+		}, new AbortController().signal, undefined, context);
+		if (previousDepth === undefined) delete process.env.PI_SUBAGENT_DEPTH;
+		else process.env.PI_SUBAGENT_DEPTH = previousDepth;
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /injected initial workflow status failure/);
+		assert.equal(mockPi.callCount(), 0);
+		assert.ok(attemptedStatusPath);
+		assert.equal(fs.existsSync(path.dirname(attemptedStatusPath)), false);
+		assert.deepEqual(getActiveAsyncCapacitySnapshot(sessionId, 1), { used: 0, limit: 1 });
+	});
+
+	it("persists workflow status before starting ownership or exposing control", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const sessionId = `workflow-start-order-${Date.now()}`;
+		const releasePath = path.join(tempDir, "release-workflow-start-order");
+		mockPi.onCall({ waitForPath: releasePath, output: "ordered child complete" });
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionId = () => sessionId;
+		context.sessionManager.getSessionFile = () => null;
+		const state = {
+			baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), fleetJobs: new Map(),
+			foregroundControls: new Map(), lastForegroundControlId: null, workflowControllers: new Map(),
+		} as unknown as SubagentState;
+		let persistedRunId: string | undefined;
+		const executor = makeExecutor(
+			[makeAgent("echo")],
+			{ maxActiveAsyncRunsPerSession: 1, missions: { globalIndex: false } },
+			false, undefined, true, new Map(), undefined, undefined, undefined, undefined, state,
+			(filePath, status) => {
+				persistedRunId = status.runId as string;
+				const inspection = inspectActiveAsyncCapacityOwner({ runId: persistedRunId, sessionId });
+				assert.equal(inspection.relation, "current");
+				assert.equal(inspection.owner?.runnerStartedAt, undefined);
+				assert.equal(state.workflowControllers?.has(persistedRunId), false);
+				assert.equal(mockPi.callCount(), 0);
+				fs.writeFileSync(filePath, JSON.stringify(status), "utf-8");
+			},
+		);
+
+		const previousDepth = process.env.PI_SUBAGENT_DEPTH;
+		process.env.PI_SUBAGENT_DEPTH = "0";
+		const result = await executor.execute("workflow-start-order", {
+			workflowScript: `return await runs.run("work", { agent: "echo", task: "launch after ownership starts" });`,
+			async: true,
+			mission: false,
+		}, new AbortController().signal, undefined, context);
+		if (previousDepth === undefined) delete process.env.PI_SUBAGENT_DEPTH;
+		else process.env.PI_SUBAGENT_DEPTH = previousDepth;
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow launch failed");
+		assert.equal(result.details.asyncId, persistedRunId);
+		const inspection = inspectActiveAsyncCapacityOwner({ runId: persistedRunId!, sessionId });
+		assert.equal(typeof inspection.owner?.runnerStartedAt, "number");
+		assert.equal(state.workflowControllers?.has(persistedRunId!), true);
+		fs.writeFileSync(releasePath, "release", "utf-8");
+		const resultPath = path.join(DIRS.results, `${persistedRunId}.json`);
+		const deadline = Date.now() + 10_000;
+		while (!fs.existsSync(resultPath) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+		assert.equal(fs.existsSync(resultPath), true);
 	});
 
 	it("starts workflow scripts asynchronously with a portable internal run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -4555,7 +4641,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const status = await executor.execute("status", { action: "status" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
-		assert.match(status.content[0]?.text ?? "", /^Status target: active runs\nSpawn budget: 3\/5 used, 2 remaining.*\nActive async capacity: 0\/4 used\nPer-run child concurrency: 20 \(globalConcurrencyLimit compatibility key; not shared across runs, parent sessions, or machines\)/);
+		assert.match(status.content[0]?.text ?? "", /^Status target: active runs\nSpawn budget: 3\/5 used, 2 remaining.*\nTop-level async capacity \(current parent session\): 0\/4 used\nScope: async runs only; foreground and nested\/workflow children excluded\nPer-run child concurrency: 20 \(globalConcurrencyLimit compatibility key; not shared across runs, parent sessions, or machines\)/);
 		assert.deepEqual(status.details?.spawnBudget, {
 			used: 3,
 			configuredLimit: 4,
@@ -4586,7 +4672,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const defaultCapacityExecutor = makeExecutor([makeAgent("echo")], { maxActiveAsyncRunsPerSession: undefined });
 		const status = await defaultCapacityExecutor.execute("default-capacity-status", { action: "status" }, new AbortController().signal, undefined, context);
-		assert.match(status.content[0]?.text ?? "", /Active async capacity: 0\/4 used/);
+		assert.match(status.content[0]?.text ?? "", /Top-level async capacity \(current parent session\): 0\/4 used/);
 
 		fs.writeFileSync(releasePath, "release", "utf-8");
 		assert.ok(launch.details.asyncId);

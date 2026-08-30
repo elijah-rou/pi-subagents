@@ -203,7 +203,7 @@ function formatActiveAsyncCapacitySection(input: DoctorReportInput): string[] {
 	input.state.activeAsyncCapacity = snapshot;
 	return [
 		`- usage: ${snapshot.used}/${snapshot.limit || "unlimited"} used`,
-		"- scope: top-level async runs in the current parent session; foreground and nested workflow children are not charged again",
+		"- scope: top-level async runs in the current parent session; foreground and nested/workflow children are excluded",
 		"- release: terminal state plus matching observed process-terminal proof, or abandoned-timeout for failed runs with a dead runner PID and stale activity when enabled; false keeps unknown-proof slots",
 	];
 }
