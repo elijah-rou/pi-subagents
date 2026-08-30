@@ -140,7 +140,7 @@ import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChai
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
-import { checkpointCanReachSteerableStep, checkpointSteeringTargetIndexes } from "../shared/checkpoint.ts";
+import { checkpointCanReachSteerableStep, checkpointSteeringTargetIndexes, scheduleCheckpointDeadline, type CheckpointDeadline } from "../shared/checkpoint.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
@@ -2603,7 +2603,10 @@ async function runSubagentInner(
 	let currentActivityState: ActivityState | undefined;
 	let activityTimer: NodeJS.Timeout | undefined;
 	let timeoutTimer: NodeJS.Timeout | undefined;
-	let checkpointTimer: NodeJS.Timeout | undefined;
+	let checkpointDeadline: CheckpointDeadline | undefined;
+	let checkpointDue = false;
+	const checkpointPendingIndexes = new Set<number>();
+	const checkpointDeliveredIndexes = new Set<number>();
 	let timedOut = false;
 	let stopped = false;
 	let usageBudgetExceeded = false;
@@ -2948,6 +2951,41 @@ async function runSubagentInner(
 			return;
 		}
 		statusWriteCoalescer.schedule(statusPath);
+	};
+	const cancelCheckpoint = (): void => {
+		checkpointDeadline?.dispose();
+		checkpointDeadline = undefined;
+		checkpointDue = false;
+		checkpointPendingIndexes.clear();
+	};
+	const attemptCheckpointDelivery = (): void => {
+		if (!checkpointDue || timedOut || stopped || interrupted || statusPayload.state !== "running") return;
+		const activeIndexes = checkpointSteeringTargetIndexes(statusPayload.steps);
+		if (activeIndexes.length === 0) {
+			if (!checkpointCanReachSteerableStep(statusPayload.steps)) cancelCheckpoint();
+			return;
+		}
+		const deliveredAt = Date.now();
+		let delivered = false;
+		for (const index of activeIndexes) {
+			if (checkpointDeliveredIndexes.has(index)) continue;
+			const step = statusPayload.steps[index]!;
+			if (step.currentTool) {
+				checkpointPendingIndexes.add(index);
+				continue;
+			}
+			enqueueStepSteer(asyncDir, index, { type: "steer", id: `duration-checkpoint-${id}-${index}`, ts: deliveredAt, message: SOFT_CHECKPOINT_MESSAGE, targetIndex: index, source: "duration-checkpoint" });
+			checkpointPendingIndexes.delete(index);
+			checkpointDeliveredIndexes.add(index);
+			delivered = true;
+		}
+		if (delivered) {
+			statusPayload.checkpointDelivered = true;
+			statusPayload.wrapUpRequested = true;
+			statusPayload.lastUpdate = deliveredAt;
+			writeStatusPayload();
+		}
+		if (checkpointPendingIndexes.size === 0 && checkpointDeliveredIndexes.size > 0) checkpointDue = false;
 	};
 	const updateExternalProcess = (index: number, process: ExternalProcessStatus): void => {
 		requiredStatusStep(statusPayload, index).externalProcess = process;
@@ -3577,6 +3615,7 @@ async function runSubagentInner(
 		setOptionalProperty(step, "contextLimit", contextLimit);
 		statusPayload.lastUpdate = now;
 		writeStatusPayload();
+		attemptCheckpointDelivery();
 	};
 	const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
 		const step = statusPayload.steps[flatIndex];
@@ -3725,6 +3764,7 @@ async function runSubagentInner(
 		statusPayload.lastUpdate = now;
 		maybeEmitActiveLongRunning(flatIndex, now);
 		writeStatusPayload(false);
+		if (event.type === "tool_execution_end" || event.type === "tool_result_end") attemptCheckpointDelivery();
 	};
 	const updateRunnerActivityState = (now: number): boolean => {
 		if (!controlConfig.enabled) return false;
@@ -3799,6 +3839,7 @@ async function runSubagentInner(
 		consumeInterruptRequest(asyncDir);
 		if (interrupted || statusPayload.state !== "running") return;
 		interrupted = true;
+		cancelCheckpoint();
 		const now = Date.now();
 		statusPayload.state = "paused";
 		currentActivityState = undefined;
@@ -3825,6 +3866,7 @@ async function runSubagentInner(
 	const stopRunner = () => {
 		if (stopped || timedOut || interrupted || statusPayload.state !== "running") return;
 		stopped = true;
+		cancelCheckpoint();
 		const now = Date.now();
 		statusPayload.stopped = true;
 		statusPayload.error = stopMessage;
@@ -3856,6 +3898,7 @@ async function runSubagentInner(
 	const timeoutRunner = () => {
 		if (timedOut || stopped || interrupted || statusPayload.state !== "running") return;
 		timedOut = true;
+		cancelCheckpoint();
 		const now = Date.now();
 		const message = timeoutMessage ?? "Subagent timed out.";
 		statusPayload.timedOut = true;
@@ -3931,28 +3974,14 @@ async function runSubagentInner(
 		timeoutTimer.unref?.();
 	}
 	if (config.checkpointAt !== undefined) {
-		checkpointTimer = setInterval(() => {
-			if (Date.now() < config.checkpointAt! || statusPayload.checkpointDelivered) return;
-			const activeIndexes = checkpointSteeringTargetIndexes(statusPayload.steps);
-			if (activeIndexes.length === 0) {
-				if (!checkpointCanReachSteerableStep(statusPayload.steps)) {
-					if (checkpointTimer) clearInterval(checkpointTimer);
-					checkpointTimer = undefined;
-				}
-				return;
-			}
-			const deliveredAt = Date.now();
-			for (const index of activeIndexes) {
-				enqueueStepSteer(asyncDir, index, { type: "steer", id: `duration-checkpoint-${id}-${index}`, ts: deliveredAt, message: SOFT_CHECKPOINT_MESSAGE, targetIndex: index, source: "duration-checkpoint" });
-			}
-			statusPayload.checkpointDelivered = true;
-			statusPayload.wrapUpRequested = true;
-			statusPayload.lastUpdate = Date.now();
-			writeStatusPayload();
-			if (checkpointTimer) clearInterval(checkpointTimer);
-			checkpointTimer = undefined;
-		}, 25);
-		checkpointTimer.unref?.();
+		checkpointDeadline = scheduleCheckpointDeadline({
+			checkpointAt: config.checkpointAt,
+			onDue: () => {
+				checkpointDeadline = undefined;
+				checkpointDue = true;
+				attemptCheckpointDelivery();
+			},
+		});
 	}
 	appendJsonl(
 		eventsPath,
@@ -5403,10 +5432,7 @@ async function runSubagentInner(
 		clearTimeout(timeoutTimer);
 		timeoutTimer = undefined;
 	}
-	if (checkpointTimer) {
-		clearInterval(checkpointTimer);
-		checkpointTimer = undefined;
-	}
+	cancelCheckpoint();
 	if (!timedOut && !stopped && !interrupted && config.timeoutMs !== undefined && results.some((result) => result.timedOut === true && result.error === timeoutMessage)) {
 		timedOut = true;
 	}

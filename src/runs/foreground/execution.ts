@@ -69,6 +69,7 @@ import { resolvePermissionRules } from "../shared/permissions.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, SUBAGENT_STEER_ACK_DIR_ENV, SUBAGENT_STEER_CAPABILITY_ENV, SUBAGENT_STEER_INBOX_ENV, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { steerAcksDir, steerCapabilityPath, stepSteerInboxDir, writeSteerRequestToDir } from "../background/control-channel.ts";
 import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
+import { scheduleCheckpointDeadline, type CheckpointDeadline } from "../shared/checkpoint.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
@@ -631,7 +632,7 @@ async function runSingleAttempt(
 		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
 		let toolDiagnosticHardKillTimer: NodeJS.Timeout | undefined;
-		let checkpointTimer: NodeJS.Timeout | undefined;
+		let checkpointDeadline: CheckpointDeadline | undefined;
 		let checkpointPending = false;
 		const deliverCheckpoint = () => {
 			if (!checkpointPending || result.checkpointDelivered || progress.currentTool || processClosed || lifecycleFinished || !checkpointSteerInboxDir) return;
@@ -648,17 +649,20 @@ async function runSingleAttempt(
 			});
 			appendRecentOutput(progress, ["Soft runtime checkpoint delivered; bounded wrap-up requested."]);
 		};
+		const cancelCheckpoint = () => {
+			checkpointDeadline?.dispose();
+			checkpointDeadline = undefined;
+			checkpointPending = false;
+		};
 		if (options.checkpointAt !== undefined) {
-			checkpointTimer = setInterval(() => {
-				if (Date.now() < options.checkpointAt!) return;
-				checkpointPending = true;
-				deliverCheckpoint();
-				if (result.checkpointDelivered && checkpointTimer) {
-					clearInterval(checkpointTimer);
-					checkpointTimer = undefined;
-				}
-			}, 25);
-			checkpointTimer.unref?.();
+			checkpointDeadline = scheduleCheckpointDeadline({
+				checkpointAt: options.checkpointAt,
+				onDue: () => {
+					checkpointDeadline = undefined;
+					checkpointPending = true;
+					deliverCheckpoint();
+				},
+			});
 		}
 		const toolDiagnosticWatcher = watchChildToolDiagnostic(toolDiagnosticPath, (error) => {
 			if (processClosed || lifecycleFinished) return;
@@ -675,10 +679,7 @@ async function runSingleAttempt(
 				clearTimeout(toolDiagnosticHardKillTimer);
 				toolDiagnosticHardKillTimer = undefined;
 			}
-			if (checkpointTimer) {
-				clearInterval(checkpointTimer);
-				checkpointTimer = undefined;
-			}
+			cancelCheckpoint();
 		};
 		const clearTimeoutTimers = () => {
 			if (timeoutTimer) {
@@ -730,6 +731,7 @@ async function runSingleAttempt(
 				return false;
 			}
 			if (!accepted) return false;
+			cancelCheckpoint();
 			detached = true;
 			return true;
 		};
@@ -1129,6 +1131,7 @@ async function runSingleAttempt(
 					});
 				}
 				refreshCurrentTool();
+				deliverCheckpoint();
 				fireUpdate();
 			}
 
@@ -1169,6 +1172,9 @@ async function runSingleAttempt(
 					appendRecentOutput(progress, assistantText.split("\n").slice(-10));
 					// Final assistant message: start the exit drain window.
 					if (terminalAssistantStop) {
+						checkpointDeadline?.dispose();
+						checkpointDeadline = undefined;
+						checkpointPending = false;
 						if (!evt.message.errorMessage && assistantText.trim()) assistantError = undefined;
 						cleanTerminalAssistantStopReceived ||= !evt.message.errorMessage;
 						clearAllToolTimeouts();
@@ -1197,6 +1203,7 @@ async function runSingleAttempt(
 					});
 					refreshCurrentTool();
 				}
+				deliverCheckpoint();
 				result.messages!.push(evt.message);
 				const resultText = extractTextFromContent(evt.message.content);
 				if (options.toolBudget && pendingToolResult && resultText.includes("Tool budget hard limit reached")) {
@@ -1246,6 +1253,7 @@ async function runSingleAttempt(
 			timeoutTimer = setTimeout(() => {
 				if (processClosed || lifecycleFinished || interruptedByControl) return;
 				result.timedOut = true;
+				cancelCheckpoint();
 				clearAllToolTimeouts();
 				result.error = attemptTimeout.message;
 				result.finalOutput = attemptTimeout.message;
@@ -1306,6 +1314,7 @@ async function runSingleAttempt(
 		const terminateForToolTimeout = (message: string): void => {
 			if (processClosed || lifecycleFinished || interruptedByControl) return;
 			result.timedOut = true;
+			cancelCheckpoint();
 			result.error = message;
 			result.finalOutput = message;
 			progress.status = "failed";
@@ -1447,6 +1456,7 @@ async function runSingleAttempt(
 			const kill = () => {
 				if (processClosed || lifecycleFinished) return;
 				abortedBySignal = true;
+				cancelCheckpoint();
 				proc.kill("SIGTERM");
 				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
 			};

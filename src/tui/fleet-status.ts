@@ -13,7 +13,6 @@ export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 
 // Six rows fit the accepted collapsed hierarchy: one owner, four visible descendants, and overflow.
 const MAX_AGENT_ROWS = 6;
-const REFRESH_MS = 500;
 
 type Theme = ExtensionContext["ui"]["theme"];
 type FleetStatusTui = {
@@ -54,6 +53,7 @@ type FleetTreeRow =
 	| { kind: "nested"; ownerKey: string; row: FleetNestedRow; last: boolean };
 
 export interface FleetStatusOptions {
+	/** Retained for source compatibility; Fleet refreshes are event-driven. */
 	refreshMs?: number;
 	maxAgentRows?: number;
 	placement?: FleetViewPlacement;
@@ -454,7 +454,6 @@ export class SubagentFleetStatus {
 	private ui: ExtensionContext["ui"] | undefined;
 	private tui: FleetStatusTui | undefined;
 	private inputUnsubscribe: (() => void) | undefined;
-	private timer: ReturnType<typeof setInterval> | undefined;
 	private widgetRegistered = false;
 	private active = false;
 	private selectedKey = "main";
@@ -463,7 +462,6 @@ export class SubagentFleetStatus {
 	private entries: FleetStatusEntry[] = [];
 	private readonly state: SubagentState;
 	private readonly openInspector: (itemKey: string) => Promise<void> | void;
-	private readonly refreshMs: number;
 	private readonly maxAgentRows: number;
 	private readonly placement: FleetViewPlacement;
 
@@ -474,7 +472,6 @@ export class SubagentFleetStatus {
 	) {
 		this.state = state;
 		this.openInspector = openInspector;
-		this.refreshMs = options.refreshMs ?? REFRESH_MS;
 		this.maxAgentRows = options.maxAgentRows ?? MAX_AGENT_ROWS;
 		this.placement = options.placement ?? "belowEditor";
 	}
@@ -493,8 +490,6 @@ export class SubagentFleetStatus {
 		if (typeof ui.onTerminalInput === "function") {
 			this.inputUnsubscribe = ui.onTerminalInput((data) => this.handleKey(data));
 		}
-		this.timer = setInterval(() => this.refresh(), this.refreshMs);
-		this.timer.unref?.();
 		this.refresh();
 	}
 
@@ -551,12 +546,7 @@ export class SubagentFleetStatus {
 			this.lastRenderKey = renderKey;
 			return;
 		}
-		if (renderKey === this.lastRenderKey) {
-			// Repaint anyway while anything is running so the wall-clock
-			// spinner animates between state changes (500ms tick).
-			if (this.entries.some((entry) => entry.state === "running")) this.tui?.requestRender();
-			return;
-		}
+		if (renderKey === this.lastRenderKey) return;
 		this.lastRenderKey = renderKey;
 		this.tui?.requestRender();
 	}
@@ -872,9 +862,6 @@ export class SubagentFleetStatus {
 	}
 
 	private clearUiRegistration(): void {
-		if (this.timer) clearInterval(this.timer);
-		this.timer = undefined;
-
 		const inputUnsubscribe = this.inputUnsubscribe;
 		const ui = this.ui;
 		const widgetRegistered = this.widgetRegistered;

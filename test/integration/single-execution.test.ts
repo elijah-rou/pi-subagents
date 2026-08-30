@@ -7358,6 +7358,27 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.content[0]?.text ?? "", /wrapped up/);
 	});
 
+	it("delivers a due foreground checkpoint after the active tool completes", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "input.txt" })] },
+				{ delay: 100, jsonl: [events.toolEnd("read"), events.toolResult("read", "done"), events.assistantMessage("wrapped after tool")] },
+			],
+		});
+		const executor = makeExecutor();
+		const result = await executor.execute(
+			"foreground-checkpoint-after-tool",
+			{ agent: "echo", task: "Task", async: false, checkpointAfterMs: 50, timeoutMs: 2_000 },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined);
+		assert.equal(result.details.results[0]?.checkpointDelivered, true);
+		assert.equal(result.details.results[0]?.wrapUpRequested, true);
+	});
+
 	it("applies the foreground timeout default without overriding explicit or agent values", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "package default" });
 		mockPi.onCall({ output: "explicit timeout" });

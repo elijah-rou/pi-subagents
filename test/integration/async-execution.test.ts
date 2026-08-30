@@ -1469,8 +1469,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(childStatusEvents.some((event) => event.type === "subagent.child-status" && event.childId === "step:0" && event.status === "stopped"));
 	});
 
-	it("delivers a composite checkpoint to every active parallel child", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
-		mockPi.onCall({ output: "one wrapped", waitForSteerInboxRequest: true });
+	it("delivers a composite checkpoint to safe children and after an active tool completes", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({
+			steps: [
+				{ jsonl: [events.toolStart("read", { path: "input.txt" })] },
+				{ delay: 200, jsonl: [events.toolEnd("read"), events.toolResult("read", "done"), events.assistantMessage("one wrapped")] },
+			],
+		});
 		mockPi.onCall({ output: "two wrapped", waitForSteerInboxRequest: true });
 		const id = `async-checkpoint-parallel-${Date.now().toString(36)}`;
 		executeAsyncChain(id, {

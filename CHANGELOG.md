@@ -13,6 +13,7 @@
 
 ### Changed
 - Restore authoritative operator-global instruction inheritance when an agent inherits project context and omits `inheritGlobalContext`; explicit `false` remains the isolation and token-saving control.
+- Make Fleet rendering state-driven with a static running glyph, and schedule soft checkpoints with one deadline timer instead of fixed short-interval polling.
 - Enforce inferred acceptance evidence for omitted and `auto` contracts: mutating work requires checked writer evidence, read-only work uses lightweight attestation, and explicit opt-out remains available through `false` or a reasoned `none` contract.
 - Preserve acceptance contracts and routed child provenance through workflow lanes, async status, recovery, receipts, and nested revival.
 - Show `runs.lanes(...)` workflows with active-stage focus and planned-stage progress in async status widgets (#1699).
@@ -37,7 +38,7 @@
 - Reuse a fork-family prompt cache key for OpenAI-style forked subagent requests so sibling fork children keep cache affinity without pooling fresh children. Thanks to [@Shinkicast](https://github.com/Shinkicast) for #1682.
 - Show workflow child `[fresh]` and `[fork]` context labels in Fleet status rows alongside model and thinking badges.
 - Match pi-mcp-adapter direct-tool names when configured MCP server names contain hyphens. Thanks to [@unrelentingfox](https://github.com/unrelentingfox) for #1685.
-- Animate running FleetView glyphs from the wall clock and repaint unchanged running entries. Thanks to [@Pudgey](https://github.com/Pudgey) for #1688.
+- Keep running FleetView glyphs static so unchanged state does not request periodic renders.
 
 ## [0.59.0] - 2026-08-28
 

@@ -258,7 +258,7 @@ describe("below-editor subagent FleetView", () => {
 		}
 	});
 
-	it("repaints unchanged running entries but keeps queued-only ticks quiet", () => {
+	it("does not repaint unchanged running or queued entries", () => {
 		const refreshCount = (status: "running" | "queued"): number => {
 			const state = stateForTest();
 			state.asyncJobs.set(`run-${status}`, {
@@ -294,8 +294,78 @@ describe("below-editor subagent FleetView", () => {
 			}
 		};
 
-		assert.equal(refreshCount("running"), 1);
+		assert.equal(refreshCount("running"), 0);
 		assert.equal(refreshCount("queued"), 0);
+	});
+
+	it("keeps render requests state-driven for one, ten, and the 64-child bound", () => {
+		for (const childCount of [1, 10, 64]) {
+			const state = stateForTest();
+			for (let index = 0; index < childCount; index++) {
+				state.asyncJobs.set(`run-${index}`, {
+					asyncId: `run-${index}`,
+					asyncDir: `/tmp/run-${index}`,
+					status: "running",
+					mode: "single",
+					agents: ["worker"],
+					startedAt: 10 + index,
+					updatedAt: 20,
+				});
+			}
+			let widgetFactory: ((tui: unknown, theme: typeof theme) => { render(width: number): string[] }) | undefined;
+			let renderRequests = 0;
+			const ctx = {
+				hasUI: true,
+				ui: {
+					setWidget(_key: string, content: typeof widgetFactory | undefined) { if (content) widgetFactory = content; },
+					onTerminalInput() { return () => {}; },
+					getEditorText() { return ""; },
+					requestRender() {},
+					notify() {},
+					theme,
+				},
+			} as unknown as ExtensionContext;
+			const fleet = new SubagentFleetStatus(state, () => {});
+			try {
+				fleet.setContext(ctx);
+				widgetFactory!({ requestRender() { renderRequests++; } }, theme);
+				fleet.refresh();
+				assert.equal(renderRequests, 0, `${childCount} unchanged children`);
+				state.asyncJobs.get("run-0")!.updatedAt = 21;
+				state.asyncJobs.get("run-0")!.totalTokens = { input: 1, output: 0, total: 1 };
+				fleet.refresh();
+				assert.equal(renderRequests, 1, `${childCount} children after one status transition`);
+			} finally {
+				fleet.dispose();
+			}
+		}
+	});
+
+	it("owns no refresh interval while idle", () => {
+		const originalSetInterval = globalThis.setInterval;
+		let intervals = 0;
+		globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+			intervals++;
+			return originalSetInterval(...args);
+		}) as typeof setInterval;
+		const fleet = new SubagentFleetStatus(stateForTest(), () => {});
+		try {
+			fleet.setContext({
+				hasUI: true,
+				ui: {
+					setWidget() {},
+					onTerminalInput() { return () => {}; },
+					getEditorText() { return ""; },
+					requestRender() {},
+					notify() {},
+					theme,
+				},
+			} as unknown as ExtensionContext);
+			assert.equal(intervals, 0);
+		} finally {
+			fleet.dispose();
+			globalThis.setInterval = originalSetInterval;
+		}
 	});
 
 	it("counts project panes in compact status", () => {
