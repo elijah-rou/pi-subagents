@@ -283,7 +283,7 @@ subagent({ action: "lane.status", laneId: "<manifest-run-id>", handoffPath: "/pa
 
 The manifest stores one of these fail-closed eligibility states: `active` (an owning child is still running), `terminal-eligible` (complete merge evidence and recorded post-merge checks), `terminal-blocked` with a reason, `superseded-eligible` (an explicit replacement attestation), or `unknown` (missing or malformed evidence/manifest). Each attestation stores a digest of the manifest facts it covered; later group, worktree, or patch changes downgrade that evidence to `terminal-blocked` until it is recorded again. A terminal update recomputes a previously stored `active` state from the current child statuses and evidence. Conflicting reviewed heads and mismatched lane ids are rejected as stale. Existing workflow receipts remain immutable.
 
-`lane.status` renders the stored state and a copy-pasteable `worktree.cleanup` plan invocation. It never runs that invocation. All cleanup planning/apply and apply-time Git/ownership revalidation belong to `worktree.cleanup` from #1622; remote branch deletion and extension-side GitHub verification remain out of scope.
+`lane.status` renders the stored state and a copy-pasteable `worktree.cleanup` plan invocation. It never runs that invocation. `worktree.cleanup` only builds and persists a read-only plan after current Git and ownership safety checks; it never removes worktrees or branches. Any future removal/apply behavior, including apply-time revalidation, requires a separate owner-approved design. Remote branch deletion and extension-side GitHub verification remain out of scope.
 
 ## Status and control actions
 
