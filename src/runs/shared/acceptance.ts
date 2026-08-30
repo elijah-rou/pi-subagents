@@ -628,10 +628,6 @@ export function resolveEffectiveAcceptance(input: {
 	};
 }
 
-function acceptanceRequiresChildReport(acceptance: ResolvedAcceptanceConfig): boolean {
-	return acceptance.criteria.length > 0 || acceptance.evidence.length > 0;
-}
-
 export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig, options: { reportOptional?: boolean; structuredOutput?: boolean } = {}): string {
 	if (acceptance.level === "none" || options.reportOptional === true) return "";
 	const lines = ["", "## Acceptance Contract", `Acceptance level: ${acceptance.level}`];
