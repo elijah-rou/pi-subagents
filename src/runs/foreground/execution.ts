@@ -106,7 +106,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, isPersistedMergedAcceptanceInput, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -1794,7 +1794,7 @@ async function runSyncCompletionInner(
 			...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
 		}, options.context));
 	}
-	const acceptanceErrors = isPersistedMergedAcceptanceInput(options.acceptance)
+	const acceptanceErrors = options.acceptanceIsRuntimeMerged
 		? validatePersistedAcceptanceInput(options.acceptance)
 		: validateAcceptanceInput(options.acceptance);
 	if (acceptanceErrors.length > 0) {

@@ -78,6 +78,44 @@ describe("async run status inspection", () => {
 		}
 	});
 
+	it("shows bounded explicit acceptance opt-out provenance", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-acceptance-opt-out-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "run-opt-out");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-opt-out",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [{
+					agent: "worker",
+					status: "completed",
+					acceptance: {
+						status: "not-required",
+						evidenceStatus: "not-required",
+						explicit: true,
+						effectiveAcceptance: { level: "none", explicit: true, report: false, onFailure: "warn", recommendations: [], deprecationWarnings: [], inferredReason: [], criteria: [], evidence: [], verify: [], review: false, stopRules: [], reason: `external policy sk-secret12345678 \u001b[31m${"x".repeat(240)}` },
+						inferredReason: [],
+						criteria: [],
+						runtimeChecks: [],
+						verifyRuns: [],
+					},
+				}],
+			}, null, 2), "utf-8");
+			const text = textContent(inspectSubagentStatus({ id: "run-opt-out" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }));
+			assert.match(text, /acceptance: not-required \(opted out: external policy/);
+			assert.doesNotMatch(text, /sk-secret12345678/);
+			assert.match(text, /\[redacted\]/);
+			assert.doesNotMatch(text, /\u001b\[31m/);
+			assert.match(text, /\.\.\.\)/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("renders bounded recovery guidance from a failed status step", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-recovery-"));
 		try {

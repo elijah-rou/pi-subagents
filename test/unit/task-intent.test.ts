@@ -56,6 +56,15 @@ describe("classifyTaskMutationIntent", () => {
 		assert.equal(classifyTaskMutationIntent("advisor", "Implement the approved file changes").kind, "implementation");
 	});
 
+	it("recognizes common custom-agent mutation imperatives conservatively", () => {
+		assert.equal(classifyTaskMutationIntent("maintainer", "Bump the package version").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("maintainer", "Create the changelog").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("maintainer", "Add tests").kind, "implementation");
+		assert.equal(classifyTaskMutationIntent("maintainer", "Patch the package.json bug").kind, "implementation");
+		for (const task of ["Bump the package version", "Create a source file", "Add support for JSON", "Patch src/auth.ts"]) assert.equal(taskMayMutate(task), true, task);
+		assert.equal(taskMayMutate("Create a report only; do not edit files"), false);
+	});
+
 	it("keeps report-writing deliverables read-only", () => {
 		assert.equal(classifyTaskMutationIntent("worker", "Write a report on the API").kind, "read-only");
 		assert.equal(classifyTaskMutationIntent("worker", "Create a summary").kind, "unknown");

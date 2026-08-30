@@ -51,7 +51,7 @@ import { acquireActiveAsyncCapacity, ActiveAsyncCapacityError, getActiveAsyncCap
 import { isScheduledRunAction } from "../background/scheduled-runs.ts";
 import { enqueueChainAppendRequest, readPendingChainAppendRequests, runnerStepOutputNames } from "../background/chain-append.ts";
 import { ChainOutputValidationError, validateChainOutputBindingsWithContext } from "../shared/chain-outputs.ts";
-import { mergeAcceptanceInputs, normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
+import { isPersistedMergedAcceptanceInput, mergeAcceptanceInputs, normalizeGateAcceptance, validateExecutionAcceptance } from "../shared/acceptance.ts";
 import { canPreferFork, createForkContextResolver, forkedChildRequiresThinkingOff, resolveSubagentLaunchContext } from "../../shared/fork-context.ts";
 import { createPrunedForkSessionWriter } from "../../shared/pruned-fork.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -2439,7 +2439,7 @@ function validateExecutionInput(
 		};
 	}
 
-	const acceptanceErrors = validateExecutionAcceptance(params as Parameters<typeof validateExecutionAcceptance>[0]);
+	const acceptanceErrors = validateExecutionAcceptance(params as Parameters<typeof validateExecutionAcceptance>[0], { allowRuntimeMerged: params.workflowParentRunId !== undefined });
 	if (acceptanceErrors.length > 0) {
 		return {
 			content: [{ type: "text", text: acceptanceErrors.join(" ") }],
@@ -3294,6 +3294,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			structuredOutputSchema: params.outputSchema,
 			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
+			...(params.workflowParentRunId && isPersistedMergedAcceptanceInput(params.acceptance) ? { acceptanceIsRuntimeMerged: true } : {}),
 			timeoutMs: data.timeoutMs,
 			checkpointAfterMs: data.checkpointAfterMs,
 			checkpointAt: data.checkpointAt,
@@ -3818,6 +3819,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			structuredOutput: structuredRuntime,
 			agentContract: params.agentContract,
 			acceptance: params.acceptance,
+			...(isPersistedMergedAcceptanceInput(params.acceptance) ? { acceptanceIsRuntimeMerged: true } : {}),
 			acceptanceContext: { mode: "single" },
 			workflowChildPermitLaunch: data.workflowChildPermitLaunch,
 			onEffectivePrompt: foregroundControl ? (prompt) => updateLiveEffectivePrompt(foregroundControl, 0, prompt) : undefined,

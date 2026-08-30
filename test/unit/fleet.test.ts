@@ -792,7 +792,7 @@ describe("native subagent fleet", () => {
 				cwd,
 				sessionId: "session-current",
 				updatedAt: 200,
-				children: [{ agent: "worker", index: 0, status: "completed", finalOutput: "do not persist this when an artifact exists", savedOutputPath: outputPath, resumeContract: { outputSchema: { type: "object" }, agentContract: { version: 1 }, acceptance: false, output: false, outputMode: "inline" }, extensionBindings: { "shepherd.dispatch/1": { role: "coder" } } }],
+				children: [{ agent: "worker", index: 0, status: "completed", finalOutput: "do not persist this when an artifact exists", savedOutputPath: outputPath, acceptanceInput: { kind: "resolved-acceptance", contract: { report: { criteria: ["Original contract"], evidence: ["commands-run"] }, onFailure: "fail" }, level: "checked", explicit: false, inferredReason: ["write-capable worker/task"], stopRules: [], deprecationWarnings: [] }, resumeContract: { outputSchema: { type: "object" }, agentContract: { version: 1 }, acceptance: false, output: false, outputMode: "inline" }, extensionBindings: { "shepherd.dispatch/1": { role: "coder" } } }],
 			});
 			state.foregroundRuns!.set("other-session", {
 				runId: "other-session",
@@ -811,6 +811,7 @@ describe("native subagent fleet", () => {
 			restored.artifactDirPreference = "project";
 			assert.equal(restoreForegroundRunHistory(restored, { resultsDir }), 1);
 			assert.deepEqual(restored.foregroundRuns?.get("restored")?.children[0]?.resumeContract, { outputSchema: { type: "object" }, agentContract: { version: 1 }, acceptance: false, output: false, outputMode: "inline" });
+			assert.deepEqual(restored.foregroundRuns?.get("restored")?.children[0]?.acceptanceInput, { kind: "resolved-acceptance", contract: { report: { criteria: ["Original contract"], evidence: ["commands-run"] }, onFailure: "fail" }, level: "checked", explicit: false, inferredReason: ["write-capable worker/task"], stopRules: [], deprecationWarnings: [] });
 			assert.deepEqual(restored.foregroundRuns?.get("restored")?.children[0]?.extensionBindings, { "shepherd.dispatch/1": { role: "coder" } });
 			const snapshot = collectFleetSnapshot(restored);
 			assert.deepEqual(snapshot.items.map((item) => item.key), ["foreground-recent:restored:0"]);

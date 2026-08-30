@@ -2383,7 +2383,9 @@ export interface RunSyncOptions {
 		acceptanceReportPath?: string;
 	};
 	agentContract?: AgentContract;
-	acceptance?: AcceptanceInput;
+	acceptance?: AcceptanceInput | import("../runs/shared/acceptance.ts").MergedAcceptanceInput;
+	/** Internal workflow seam: acceptance was composed by the runtime, not supplied as public tool input. */
+	acceptanceIsRuntimeMerged?: boolean;
 	acceptanceContext?: {
 		mode?: SubagentRunMode;
 		async?: boolean;

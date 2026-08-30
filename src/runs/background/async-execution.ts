@@ -36,7 +36,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { isPersistedMergedAcceptanceInput, mergeAcceptanceInputs, persistResolvedAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
+import { mergeAcceptanceInputs, persistResolvedAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { validateImplementationToolContract } from "../shared/completion-guard.ts";
 import {
@@ -257,6 +257,8 @@ interface AsyncSingleParams {
 	acceptance?: import("../shared/acceptance.ts").EffectiveAcceptanceInput;
 	/** Internal revival seam: acceptance was read and validated from trusted run artifacts. */
 	acceptanceIsPersisted?: boolean;
+	/** Internal workflow seam: acceptance was composed by the runtime. */
+	acceptanceIsRuntimeMerged?: boolean;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
 	checkpointAfterMs?: number;
@@ -1537,7 +1539,7 @@ export function executeAsyncSingle(
 	} catch (error) {
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 	}
-	const acceptanceErrors = params.acceptanceIsPersisted || isPersistedMergedAcceptanceInput(params.acceptance)
+	const acceptanceErrors = params.acceptanceIsPersisted || params.acceptanceIsRuntimeMerged
 		? validatePersistedAcceptanceInput(params.acceptance)
 		: validateAcceptanceInput(params.acceptance);
 	if (acceptanceErrors.length > 0) return formatAsyncStartError("single", acceptanceErrors.join(" "));

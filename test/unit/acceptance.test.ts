@@ -253,6 +253,17 @@ describe("acceptance gates", () => {
 		assert.deepEqual(resolved.stopRules, ["Stop on mismatch"]);
 		assert.equal(resolved.reason, "root policy");
 		assert.deepEqual(resolved.verify, []);
+		assert.notDeepEqual(validateExecutionAcceptance({ acceptance: merged }), []);
+		assert.deepEqual(validateExecutionAcceptance({ acceptance: merged }, { allowRuntimeMerged: true }), []);
+
+		const revivedFromDeprecatedOptOut = mergeAcceptanceInputs(
+			{ level: "none", reason: "legacy parent", stopRules: ["Stop first"] },
+			{ report: { criteria: ["Child proof"] }, onFailure: "warn" },
+		);
+		const revivedResolved = resolveEffectiveAcceptance({ agentName: "worker", explicit: revivedFromDeprecatedOptOut });
+		assert.equal(revivedResolved.reason, "legacy parent");
+		assert.deepEqual(revivedResolved.stopRules, ["Stop first"]);
+		assert.match(revivedResolved.deprecationWarnings.join("\n"), /deprecated/);
 
 		for (const malformed of [
 			{ kind: "merged-acceptance" },

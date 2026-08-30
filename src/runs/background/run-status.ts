@@ -1,13 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { safeTerminalText } from "../../shared/display-text.ts";
+import { previewDisplayText, safeTerminalText } from "../../shared/display-text.ts";
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, formatWorkflowStageLine, listAsyncRuns } from "./async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { formatModelThinking } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import { DIRS, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
+import { DIRS, type AcceptanceLedger, type AsyncStatus, type Details, type ForegroundResumeRun, type NestedRunSummary, type SteeringStatus, type SubagentState } from "../../shared/types.ts";
 import { inspectActiveAsyncCapacityOwner, type ActiveAsyncCapacityInspection } from "./active-async-capacity.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
@@ -28,6 +28,7 @@ import { formatRunFanoutBudget, getRunFanoutBudgetSnapshot, readRunFanoutBudgetD
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
+import { redactSecretValues } from "../shared/permissions.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -37,6 +38,13 @@ interface RunStatusParams {
 	index?: number;
 	view?: "fleet" | "transcript";
 	lines?: number;
+}
+
+function formatAcceptanceStatus(acceptance: AcceptanceLedger): string {
+	const effective = acceptance.effectiveAcceptance;
+	if (!effective.explicit || effective.level !== "none") return acceptance.status;
+	const reason = effective.reason ? `: ${previewDisplayText(redactSecretValues(effective.reason), 160)}` : "";
+	return `${acceptance.status} (opted out${reason})`;
 }
 
 function formatProcessTerminal(value: AsyncStatus["processTerminal"] | undefined): string {
@@ -210,7 +218,7 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
 			`${child.index + 1}. ${child.sessionName?.trim() || child.agent} ${child.status}`,
 			child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
 			child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
-			child.acceptance ? `acceptance: ${child.acceptance.status}` : undefined,
+			child.acceptance ? `acceptance: ${formatAcceptanceStatus(child.acceptance)}` : undefined,
 			child.error ? `error: ${child.error}` : undefined,
 			output ? `output: ${output.slice(0, 160)}` : undefined,
 		].filter(Boolean);
@@ -546,7 +554,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				const steeringText = formatSteeringSummary(step);
 				const steeringSuffix = steeringText ? `, steering: ${steeringText}` : "";
 				const errorText = step.error ? `, error: ${step.error}` : "";
-				const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
+				const acceptanceText = step.acceptance?.status ? `, acceptance: ${formatAcceptanceStatus(step.acceptance)}` : "";
 				const budgetText = step.turnBudget ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})` : "";
 				const display = runStatusStepDisplayName(step);
 				const phase = step.phase ? `[${step.phase}] ` : "";

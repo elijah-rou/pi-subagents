@@ -95,6 +95,7 @@ const WORKER_IMPLEMENTATION_PATTERNS = [
 
 const GENERAL_IMPLEMENTATION_PATTERNS = [
 	/\b(?:implement|edit|modify|refactor)\b/i,
+	/\bbump\s+(?:the\s+)?(?:(?:package|app|application|release|dependency)\s+)?version\b/i,
 	FIX_OR_PATCH_IMPLEMENTATION_PATTERN,
 	/\bapply\s+(?:the\s+)?(?:(?:suggested|proposed|recommended)\s+)?(?:changes?|fix(?:es)?|patch)\b/i,
 	/\bmake\s+(?:the\s+)?changes\b/i,
@@ -181,7 +182,7 @@ export function expectsImplementationMutation(agent: string, task: string): bool
  * are not write imperatives, while CLI flags ("--fix", "-w"), clause-level
  * dashes ("branch—fix it"), and hyphenated imperatives ("hot-fix the bug")
  * all stay write-capable. */
-const MAY_MUTATE_VERB_PATTERN = /\b(?:fix|implement|update|write|edit|modify|migrate|delete|remove|refactor|commit)\b/i;
+const MAY_MUTATE_VERB_PATTERN = /\b(?:fix|patch|implement|update|write|edit|modify|migrate|delete|remove|refactor|commit|bump|create|add)\b/i;
 
 /**
  * Whether the task could plausibly change files. Blanket prohibitions win;

@@ -39,6 +39,7 @@ import {
 } from "../../src/api/delegation.ts";
 import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
+import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
 import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
@@ -373,10 +374,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		handleScheduledRunAction?: Parameters<typeof createSubagentExecutor>[0]["handleScheduledRunAction"],
 		piEvents = createEventBus(),
 		discoverAgentsForCwd?: (cwd: string) => typeof agents,
+		providedState?: SubagentState,
 	) {
 		return createSubagentExecutor!({
 			pi: { events: piEvents, getSessionName: () => undefined },
-			state: {
+			state: providedState ?? {
 				baseCwd: tempDir,
 				currentSessionId: initialSpawnState?.sessionId ?? null,
 				...(initialSpawnState ? { subagentSpawns: initialSpawnState } : {}),
@@ -448,8 +450,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("preserves routed child-profile provenance through retained foreground revival", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ output: "first routed child" });
 		mockPi.onCall({ output: "revived routed child" });
-		const executor = makeExecutor([makeAgent("worker", { model: "test/static", thinking: "low" })]);
+		const agents = [makeAgent("worker", { model: "test/static", thinking: "low" })];
 		const sessionId = `profile-retained-${Date.now()}`;
+		const state = { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundRuns: new Map(), foregroundControls: new Map(), lastForegroundControlId: null } as SubagentState;
+		const executor = makeExecutor(agents, {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, state);
 		const childProfile = { profile: "standard", source: "profile-router", confidence: 93 };
 		const handle = registerSubagentChildProfileResolver({ sessionId, source: childProfile.source, resolve: () => ({ profile: childProfile.profile, model: "test/routed", thinking: "high", confidence: childProfile.confidence }) });
 		try {
@@ -460,11 +464,19 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.ok(first.runId);
 			assert.deepEqual(firstResult.details.results[0]?.childProfile, childProfile);
 			assert.equal(firstResult.details.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
+			const originalAcceptance = firstResult.details.results[0]?.acceptanceInput;
+			const historyDir = path.join(tempDir, "restart-results");
+			persistForegroundRunHistory(state, { resultsDir: historyDir });
+			const restartedState = { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundRuns: new Map(), foregroundControls: new Map(), lastForegroundControlId: null } as SubagentState;
+			assert.equal(restoreForegroundRunHistory(restartedState, { resultsDir: historyDir }), 1);
+			assert.deepEqual(restartedState.foregroundRuns?.get(first.runId)?.children[0]?.acceptanceInput, originalAcceptance);
+			const restartedExecutor = makeExecutor(agents, {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, restartedState);
 
-			const resumedResult = await executor.execute("profile-retained-resume", { workflowScript: `return runs.run('resumed', { resume: ${JSON.stringify(first.runId)}, task: 'Continue' })`, async: false }, new AbortController().signal, undefined, ctx);
+			const resumedResult = await restartedExecutor.execute("profile-retained-resume", { workflowScript: `return runs.run('resumed', { resume: ${JSON.stringify(first.runId)}, task: 'Continue' })`, async: false }, new AbortController().signal, undefined, ctx);
 			assert.equal(resumedResult.isError, undefined, resumedResult.content[0]?.text ?? "resume failed");
 			assert.deepEqual(resumedResult.details.results[0]?.childProfile, childProfile);
 			assert.equal(resumedResult.details.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
+			assert.deepEqual(resumedResult.details.results[0]?.acceptance?.effectiveAcceptance.report, firstResult.details.results[0]?.acceptance?.effectiveAcceptance.report);
 		} finally {
 			handle.dispose();
 		}
@@ -4999,23 +5011,41 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("agent contract v1 enforces omitted acceptance while preserving separate projections", async () => {
-		mockPi.onCall({ output: "Plan only" });
-		const agents = [makeAgent("worker", { tools: ["read", "write"] })];
+	it("agent contract v1 evaluates inferred acceptance while preserving separate projections", async () => {
+		mockPi.onCall({ stdoutRaw: `${JSON.stringify(events.assistantMessage("Plan only"))}\n` });
+		mockPi.onCall({ output: [
+			"Implemented",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n") });
+		const agents = [makeAgent("worker", { tools: ["read", "write"], completionGuard: false })];
 
-		const result = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
-			runId: "v1-no-acceptance",
+		const missing = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
+			runId: "v1-missing-inferred-acceptance",
 			agentContract: { version: 1 },
 		});
-		const call = readCall();
+		const valid = await runSync(tempDir, agents, "worker", "Implement the approved file changes", {
+			runId: "v1-valid-inferred-acceptance",
+			agentContract: { version: 1 },
+		});
+		const [missingCall, validCall] = readAllCallArgs();
 
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.agentContract?.version, 1);
-		assert.deepEqual(result.execution, { status: "completed", success: true, exitCode: 0 });
-		assert.equal(result.acceptance?.status, "checked");
-		assert.equal(result.review?.status, "not-requested");
-		assert.deepEqual(result.effects, {});
-		assert.match(call.args.join("\n"), /## Acceptance Contract/);
+		assert.equal(missing.exitCode, 0);
+		assert.deepEqual(missing.execution, { status: "completed", success: true, exitCode: 0 });
+		assert.equal(missing.acceptance?.status, "rejected");
+		assert.equal(valid.exitCode, 0);
+		assert.equal(valid.acceptance?.status, "checked");
+		assert.equal(valid.review?.status, "not-requested");
+		assert.match(missingCall?.join("\n") ?? "", /## Acceptance Contract/);
+		assert.match(validCall?.join("\n") ?? "", /## Acceptance Contract/);
 	});
 
 	it("treats omitted and auto foreground mutating acceptance equivalently", async () => {
@@ -5045,6 +5075,32 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(auto.acceptance?.status, "checked");
 		assert.equal(omitted.acceptanceInput?.kind, "resolved-acceptance");
 		assert.equal(auto.acceptanceInput?.kind, "resolved-acceptance");
+	});
+
+	it("infers checked acceptance for custom-agent mutation imperatives in direct and workflow launches", async () => {
+		const report = [
+			"bumped",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "version bumped" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({ output: report });
+		mockPi.onCall({ output: report });
+		const executor = makeExecutor([makeAgent("maintainer", { completionGuard: false })]);
+		const ctx = makeMinimalCtx(tempDir);
+		const direct = await executor.execute("custom-maintainer-direct", { agent: "maintainer", task: "Bump the package version", async: false }, new AbortController().signal, undefined, ctx);
+		const workflow = await executor.execute("custom-maintainer-workflow", { workflowScript: `return runs.run("bump", { agent: "maintainer", task: "Bump the package version" })`, async: false }, new AbortController().signal, undefined, ctx);
+		assert.equal(direct.details.results[0]?.acceptance?.effectiveAcceptance.level, "checked");
+		assert.equal(direct.details.results[0]?.acceptance?.status, "checked");
+		assert.equal(workflow.details.results[0]?.acceptance?.effectiveAcceptance.level, "checked");
+		assert.equal(workflow.details.results[0]?.acceptance?.status, "checked");
 	});
 
 	it("agent contract v1 keeps acceptance rejection out of execution status", async () => {
@@ -7532,6 +7588,41 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 		assert.equal(explicit.isError, true);
 		assert.equal(explicit.details?.results?.[0]?.acceptance?.status, "rejected");
+	});
+
+	it("trusts runtime-composed workflow acceptance without admitting public wrappers", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: [
+			"done",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "done" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n") });
+		const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
+		const result = await executor.execute(
+			"workflow-merged-acceptance",
+			{
+				acceptance: { level: "checked", stopRules: ["Stop on mismatch"], reason: "workflow provenance" },
+				workflowScript: `return runs.run("child", { agent: "worker", task: "Implement the fix", acceptance: { onFailure: "warn" } })`,
+				async: false,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const acceptance = result.details.results[0]?.acceptance?.effectiveAcceptance;
+		assert.equal(acceptance?.level, "checked");
+		assert.equal(acceptance?.onFailure, "warn");
+		assert.deepEqual(acceptance?.stopRules, ["Stop on mismatch"]);
+		assert.equal(acceptance?.reason, "workflow provenance");
+		assert.deepEqual(acceptance?.deprecationWarnings, []);
 	});
 
 	it("lets agent frontmatter override the global async default", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

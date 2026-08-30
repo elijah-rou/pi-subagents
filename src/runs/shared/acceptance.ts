@@ -582,19 +582,22 @@ export function validateExecutionAcceptance(input: {
 		acceptance?: unknown;
 		parallel?: Array<{ acceptance?: unknown }> | { acceptance?: unknown };
 	}>;
-}): string[] {
-	const errors = validateAcceptanceInput(input.acceptance, "acceptance");
+}, options: { allowRuntimeMerged?: boolean } = {}): string[] {
+	const validate = (value: unknown, pathLabel: string): string[] => options.allowRuntimeMerged && isPersistedMergedAcceptanceInput(value)
+		? validatePersistedAcceptanceInput(value, pathLabel)
+		: validateAcceptanceInput(value, pathLabel);
+	const errors = validate(input.acceptance, "acceptance");
 	for (const [index, task] of (input.tasks ?? []).entries()) {
-		errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
+		errors.push(...validate(task.acceptance, `tasks[${index}].acceptance`));
 	}
 	for (const [stepIndex, step] of (input.chain ?? []).entries()) {
-		errors.push(...validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`));
+		errors.push(...validate(step.acceptance, `chain[${stepIndex}].acceptance`));
 		if (Array.isArray(step.parallel)) {
 			for (const [taskIndex, task] of step.parallel.entries()) {
-				errors.push(...validateAcceptanceInput(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
+				errors.push(...validate(task.acceptance, `chain[${stepIndex}].parallel[${taskIndex}].acceptance`));
 			}
 		} else if (step.parallel) {
-			errors.push(...validateAcceptanceInput(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
+			errors.push(...validate(step.parallel.acceptance, `chain[${stepIndex}].parallel.acceptance`));
 		}
 	}
 	return errors;

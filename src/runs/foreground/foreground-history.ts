@@ -4,7 +4,7 @@ import type { ForegroundResumeChild, ForegroundResumeRun, SubagentState } from "
 import { DIRS } from "../../shared/types.ts";
 import { writePrivateAtomicJson } from "../../shared/atomic-json.ts";
 import { utf8Tail } from "../../shared/utf8.ts";
-import { validateAcceptanceInput } from "../shared/acceptance.ts";
+import { validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
 export const MAX_REMEMBERED_FOREGROUND_RUNS = 50;
@@ -55,6 +55,7 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 		...(child.transcriptPath ? { transcriptPath: child.transcriptPath } : {}),
 		...(child.transcriptError ? { transcriptError: child.transcriptError } : {}),
 		...(child.acceptance ? { acceptance: child.acceptance } : {}),
+		...(child.acceptanceInput !== undefined ? { acceptanceInput: child.acceptanceInput } : {}),
 		...(child.childProfile ? { childProfile: child.childProfile } : {}),
 		...(child.resumeContract ? { resumeContract: child.resumeContract } : {}),
 		...(child.launchContractDigest ? { launchContractDigest: child.launchContractDigest } : {}),
@@ -62,6 +63,17 @@ function compactChild(child: ForegroundResumeChild): ForegroundResumeChild {
 		...(child.capabilityCeiling ? { capabilityCeiling: child.capabilityCeiling } : {}),
 		...(child.updatedAt !== undefined ? { updatedAt: child.updatedAt } : {}),
 	};
+}
+
+function isRestorableAcceptanceInput(value: unknown): boolean {
+	if (value === undefined) return true;
+	try {
+		if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_RESUME_CONTRACT_BYTES) return false;
+	} catch {
+		return false;
+	}
+	if (value && typeof value === "object" && !Array.isArray(value) && "kind" in value && (value as { kind?: unknown }).kind !== "resolved-acceptance") return false;
+	return validatePersistedAcceptanceInput(value, "foreground history acceptanceInput").length === 0;
 }
 
 function isRestorableForegroundStatus(status: unknown): status is ForegroundResumeChild["status"] {
@@ -90,7 +102,7 @@ function isRestorableResumeContract(value: unknown): boolean {
 
 function compactRun(run: ForegroundResumeRun): ForegroundResumeRun | undefined {
 	if (!run.sessionId) return undefined;
-	if (run.children.length === 0 || !run.children.every((child) => isRestorableForegroundStatus(child.status) && isRestorableResumeContract(child.resumeContract))) return undefined;
+	if (run.children.length === 0 || !run.children.every((child) => isRestorableForegroundStatus(child.status) && isRestorableAcceptanceInput(child.acceptanceInput) && isRestorableResumeContract(child.resumeContract))) return undefined;
 	return {
 		runId: run.runId,
 		mode: run.mode,
@@ -135,6 +147,7 @@ function isRestorableRun(value: unknown): value is ForegroundResumeRun {
 		&& run.children.every((child) => Boolean(child && typeof child === "object" && !Array.isArray(child)
 			&& typeof (child as Partial<ForegroundResumeChild>).agent === "string"
 			&& typeof (child as Partial<ForegroundResumeChild>).index === "number"
+			&& isRestorableAcceptanceInput((child as Partial<ForegroundResumeChild>).acceptanceInput)
 			&& isRestorableResumeContract((child as Partial<ForegroundResumeChild>).resumeContract)
 			&& isRestorableForegroundStatus((child as Partial<ForegroundResumeChild>).status)));
 }
