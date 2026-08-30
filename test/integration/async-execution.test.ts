@@ -1649,7 +1649,9 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			await waitForMockPiCall(mockPi, 0, 10_000);
 			fs.writeFileSync(path.join(repo, "input.md"), "partial child change\n", "utf-8");
 			const payload = await readAsyncPayload(id);
-			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+			// Integration files run in parallel, so the detached runner can be starved after
+			// result persistence while its terminal status write is still being scheduled.
+			const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed", 30_000);
 			const result = payload.results[0];
 			const recovery = result?.timeoutRecovery;
 			const statusRecovery = status.steps?.[0]?.timeoutRecovery;
