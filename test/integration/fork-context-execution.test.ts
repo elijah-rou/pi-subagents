@@ -314,7 +314,10 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 
 		assert.equal(result.isError, undefined);
 		const args = readCallArgs();
-		assert.equal(args.at(-1), "Task: ");
+		const prompt = args.at(-1) ?? "";
+		assert.match(prompt, /^Task: \n/);
+		assert.match(prompt, /## Acceptance Contract\nAcceptance level: attested/);
+		assert.match(prompt, /Required evidence: manual-notes, residual-risks/);
 	});
 
 	it("fails pruned fork model auth before child spawn", async () => {
@@ -1263,8 +1266,13 @@ describe("fork context execution wiring", { skip: !available ? "subagent executo
 		);
 
 		assert.equal(result.isError, undefined);
-		const args = readAllCallArgs().find((callArgs) => callArgs.at(-1) === `Task: ${task}`);
-		assert.ok(args, "expected a recorded mock pi call for this test task");
+		const args = readAllCallArgs().find((callArgs) => {
+			const prompt = callArgs.at(-1) ?? "";
+			return prompt.startsWith(`Task: ${task}\n`)
+				&& prompt.includes("## Acceptance Contract\nAcceptance level: attested")
+				&& prompt.includes("Required evidence: manual-notes, residual-risks");
+		});
+		assert.ok(args, "expected a recorded mock pi call with this task and its inferred attested acceptance contract");
 		const modelIndex = args.indexOf("--model");
 		assert.notEqual(modelIndex, -1);
 		assert.equal(args[modelIndex + 1], "anthropic/claude-haiku-4-5:high");
