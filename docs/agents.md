@@ -55,124 +55,135 @@ If you disabled the old bundled `gpt-pro` workaround with `agentOverrides.gpt-pr
 
 The Pi async run remains the source of truth for status, artifacts, wake/wait, mission attachment, retention, and diagnostics.
 
-### Advisory runner data boundary
+### External CLI runner data boundary
 
-External CLI agents use their own runner contract. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless the adapter explicitly implements them.
+External CLI profiles are not bundled or listed by default. Define one explicitly in your user or project agent directory, or install a package that exposes it through `pi-subagents.agents`. Discovery and `subagent({ action: "list" })` parse profile metadata only; they do not execute the CLI, probe authentication, or check workspace trust. Launch preflight performs adapter-specific version and help checks.
 
-The built-in `codex-exec` and `codex-exec-writer` profiles are the supported Codex one-shot modes. Both require an installed and authenticated Codex CLI. The adapters own `codex exec --json` argv with ignored user config and rules, ephemeral sessions, approval policy `never`, and a final-message artifact.
+External CLI agents use their own fail-closed capability contract. Do not pass native Pi child options such as model override, structured output, acceptance/agent contract, tool budgets, fast mode, fork context, skills, or native Pi tools unless the adapter implements them. Runs are one-shot and non-resumable. Status and receipts report the selected adapter, unsupported capabilities, and non-resumability reason; code-owned adapters also report their effective access and safety metadata.
 
-| Profile | Access | Sandbox |
-|---|---|---|
-| `codex-exec` | Read-only analysis | `read-only` |
-| `codex-exec-writer` | Explicit workspace edits | `workspace-write` |
+The code-owned Codex, Claude Code, and Cursor adapters remain supported. Their argv and safety constraints cannot be widened from profile frontmatter. The read-only adapter identities are reserved: settings, aliases, package-local names, runtime registration, and management actions cannot map them to writer adapters. Writer access requires selecting the distinct writer identity explicitly. All examples require the corresponding local CLI to be installed and authenticated; Claude Code also requires operator trust in user settings/hooks, and Cursor requires operator-managed workspace trust.
 
-Neither adapter uses full access, approval or sandbox bypasses, automatic approval review, or additional writable roots. User profiles cannot add argv. The `codex-exec` selection identity is reserved for the read-only adapter.
+Copy a definition below into a separate `.md` file. Read-only and writer examples are intentionally separate.
 
-Run it asynchronously:
+#### Read-only adapter examples
 
-```text
-Use codex-exec to analyze this change without editing files.
+**Codex**
 
-Use codex-exec-writer to make the requested workspace changes.
+```markdown
+---
+name: codex-exec
+description: Read-only one-shot analysis through the installed Codex CLI
+runner:
+  type: external-cli
+  adapter: codex-exec
+  command: codex
+  promptDelivery: stdin
+async: true
+systemPromptMode: replace
+inheritProjectContext: true
+inheritSkills: false
+---
+Analyze the task in read-only mode. Return evidence. Do not edit files or request wider access.
 ```
 
-The adapter validates `codex --version` and `codex exec --help` only when a run launches. Discovery, list, status, and native Pi launches do not probe Codex. JSONL, stderr, and stdout are untrusted. A run succeeds only after bounded valid JSONL contains one `turn.completed` event and the bounded final-message artifact is present.
+**Claude Code**
 
-Maintainers can collect real smoke evidence without making it part of the normal test suite:
-
-```bash
-PI_SUBAGENTS_CODEX_EXEC_SMOKE=1 \
-PI_SUBAGENTS_CODEX_EXEC_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-smoke.json \
-node --experimental-strip-types --import ./test/support/register-loader.mjs \
-  --test test/integration/codex-exec-smoke.test.ts
-
-PI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE=1 \
-PI_SUBAGENTS_CODEX_EXEC_WRITER_SMOKE_REPORT=/tmp/pi-subagents-codex-exec-writer-smoke.json \
-node --experimental-strip-types --import ./test/support/register-loader.mjs \
-  --test test/integration/codex-exec-writer-smoke.test.ts
+```markdown
+---
+name: claude-code
+description: Read-only analysis through the locally authenticated Claude Code CLI
+runner:
+  type: external-cli
+  adapter: claude-code
+  command: claude
+  promptDelivery: stdin
+async: true
+systemPromptMode: replace
+inheritProjectContext: true
+inheritSkills: false
+---
+Analyze the handoff without tools. Do not edit files or request wider access.
 ```
 
-The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports include startup duration and terminal proof without raw protocol output, prompts, or credentials.
+**Cursor**
 
-The built-in `claude-code` and `claude-code-writer` profiles are the supported Claude Code one-shot modes. Both require an installed Claude Code CLI that is already authenticated through its normal local login. Claude Code 2.1.150 needs the user setting source for normal OAuth/keychain authentication, so both adapters load user settings but exclude project and local settings. User-level Claude Code settings and hooks are therefore an operator-trusted prerequisite. Review or disable unsafe user hooks before using either profile.
-
-| Profile | Access | Permission mode | Built-in tools |
-|---|---|---|---|
-| `claude-code` | Handoff-only read-only advice | `plan` | none |
-| `claude-code-writer` | Explicit workspace file edits | `acceptEdits` | `Read,Write,Edit,Glob,Grep` |
-
-Both adapters own `claude -p` argv with stream JSON, strict empty MCP configuration, user-only setting sources, no session persistence, disabled slash commands, and disabled Chrome integration. The writer mode does not include Bash or any permission bypass. Neither mode uses `--bare`, which does not read normal OAuth/keychain authentication. Neither mode requires `--safe-mode`, which is absent from the installed 2.1.150 help. User profiles cannot add argv. Selecting the code-owned `claude-code-writer` adapter identity is the only way to opt into its write tools; the read-only adapter cannot be widened with user argv.
-
-Run it asynchronously:
-
-```text
-Use claude-code to analyze this handoff without editing files.
-
-Use claude-code-writer to make the requested file changes.
+```markdown
+---
+name: cursor-agent
+description: Read-only one-shot analysis through the installed Cursor CLI
+runner:
+  type: external-cli
+  adapter: cursor-agent
+  command: cursor-agent
+async: true
+systemPromptMode: replace
+inheritProjectContext: true
+inheritSkills: false
+---
+Analyze in read-only ask mode. Do not edit files or request wider access.
 ```
 
-The adapter validates `claude --version` and `claude --help` only when a run launches. Discovery, list, status, and native Pi launches do not probe Claude Code or authentication. JSONL, stderr, and stdout are untrusted. A run succeeds only after bounded valid JSONL contains exactly one successful terminal `result` with non-empty final text. Missing or revoked local authentication, limit stops, malformed JSON, duplicate terminal results, and EOF before a terminal result fail closed.
+#### Writer adapter examples
 
-Maintainers can opt in to separate read-only and writer canaries:
+Writer profiles opt into mutation only through their explicit writer adapter identity. Confirm local CLI authentication and trust requirements before selecting one.
 
-```bash
-PI_SUBAGENTS_CLAUDE_CODE_SMOKE=1 \
-PI_SUBAGENTS_CLAUDE_CODE_SMOKE_REPORT=/tmp/pi-subagents-claude-code-smoke.json \
-node --experimental-strip-types --import ./test/support/register-loader.mjs \
-  --test test/integration/claude-code-smoke.test.ts
+**Codex writer**
 
-PI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE=1 \
-PI_SUBAGENTS_CLAUDE_CODE_WRITER_SMOKE_REPORT=/tmp/pi-subagents-claude-code-writer-smoke.json \
-node --experimental-strip-types --import ./test/support/register-loader.mjs \
-  --test test/integration/claude-code-writer-smoke.test.ts
+```markdown
+---
+name: codex-exec-writer
+description: Explicit workspace-writing one-shot execution through the installed Codex CLI
+runner:
+  type: external-cli
+  adapter: codex-exec-writer
+  command: codex
+  promptDelivery: stdin
+async: true
+systemPromptMode: replace
+inheritProjectContext: true
+inheritSkills: false
+---
+Make the requested workspace changes and return validation evidence. Do not request wider access.
 ```
 
-Both smoke reports record `authentication: "existing-cli-required"`, `settingSources: "user"`, and `userSettingsTrust: "required"` without recording credential details. For read-only, confirm `terminalState` is `completed` and `writeCanaryExists` is `false`. For writer, confirm `terminalState` is `completed` and `writeCanaryMatches` is `true`. `durationMs` records cold process time. If authentication is missing or revoked, repair the normal local Claude Code login and rerun the smoke. Reports do not contain raw protocol output or credentials.
+**Claude Code writer**
 
-The built-in `cursor-agent` and `cursor-agent-writer` profiles are the supported Cursor CLI one-shot modes. Both require an installed Cursor CLI and either `CURSOR_API_KEY` or an existing local login.
-
-| Profile | Access | Cursor mode |
-|---|---|---|
-| `cursor-agent` | Read-only analysis | `ask` |
-| `cursor-agent-writer` | Explicit workspace edits | non-interactive print |
-
-Both adapters use stream JSON, the enabled sandbox, and the primary workspace. They write the full handoff to a private `0600` file in a private temporary directory. Process argv contains only a short instruction with that path. The temporary directory is added as a workspace root only when it is outside the primary workspace. The prompt file and directory are removed after completion, failure, or stop.
-
-The adapters do not pass force, yolo, auto-review, MCP approval, plugin, session resume, continue, worktree, or workspace trust flags. User profiles cannot add argv or workspace roots. The `cursor-agent` selection identity is reserved for the read-only adapter.
-
-Launch preflight validates `cursor-agent --version` and `cursor-agent --help` only when a run starts. Discovery, list, status, and native Pi launches do not execute Cursor or probe authentication. A run succeeds only when bounded valid JSONL ends with one successful `result` event that has non-empty final text. Error events, failed results, malformed JSON, output after the terminal event, and EOF before a result fail closed.
-
-These headless smokes rely on saved workspace trust. Cursor documents no passive command that checks workspace trust, so the smoke cannot verify it before launch. The operator must use Cursor's interactive trust flow for the exact disposable workspace and the exact derived prompt directory, `<state-root>/external-0.cursor-prompt`. Keep that prompt directory after the trust step. It must be empty, owned by the operator who runs the smoke, and must not be a symlink. The harness preserves this directory but creates its private handoff with exclusive `0600` access and removes the handoff after every run. Repeat the trust setup if either exact path changes.
-
-The smoke requires two existing, separate operator-managed directories and an explicit disposable-workspace attestation:
-
-```bash
-export PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE=/tmp/pi-subagents-cursor-smoke-workspace
-export PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT=/tmp/pi-subagents-cursor-smoke-state
-export PI_SUBAGENTS_CURSOR_SMOKE_DISPOSABLE=1
-mkdir -p "$PI_SUBAGENTS_CURSOR_SMOKE_WORKSPACE" "$PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT"
-mkdir -p "$PI_SUBAGENTS_CURSOR_SMOKE_STATE_ROOT/external-0.cursor-prompt"
+```markdown
+---
+name: claude-code-writer
+description: Explicit file-writing mode through the locally authenticated Claude Code CLI
+runner:
+  type: external-cli
+  adapter: claude-code-writer
+  command: claude
+  promptDelivery: stdin
+async: true
+systemPromptMode: replace
+inheritProjectContext: true
+inheritSkills: false
+---
+Use only the code-owned writer tools. Make the requested changes and report validation evidence.
 ```
 
-Do not place a file at `pi-subagents-cursor-write-canary.txt` in the workspace or any file, including `handoff.txt`, in the prompt directory. The harness refuses the pre-existing canary and any non-empty prompt directory. It does not delete the workspace, state root, or operator-owned prompt directory. It removes only its canary and private handoff file.
+**Cursor writer**
 
-Maintainers can then run separate read-only and writer canaries:
-
-```bash
-PI_SUBAGENTS_CURSOR_AGENT_SMOKE=1 \
-PI_SUBAGENTS_CURSOR_AGENT_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-smoke.json \
-node --experimental-strip-types --import ./test/support/register-loader.mjs \
-  --test test/integration/cursor-agent-smoke.test.ts
-
-PI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE=1 \
-PI_SUBAGENTS_CURSOR_AGENT_WRITER_SMOKE_REPORT=/tmp/pi-subagents-cursor-agent-writer-smoke.json \
-node --experimental-strip-types --import ./test/support/register-loader.mjs \
-  --test test/integration/cursor-agent-writer-smoke.test.ts
+```markdown
+---
+name: cursor-agent-writer
+description: Explicit workspace-writing one-shot execution through the installed Cursor CLI
+runner:
+  type: external-cli
+  adapter: cursor-agent-writer
+  command: cursor-agent
+async: true
+systemPromptMode: replace
+inheritProjectContext: true
+inheritSkills: false
+---
+Make the requested workspace changes and return validation evidence. Do not request wider access.
 ```
 
-The read-only smoke must report `writeCanaryExists: false`. The writer smoke must report `writeCanaryMatches: true`. Both reports record `workspaceTrust: "operator-managed-saved"`, confirm that the external prompt root was added, and include startup duration and terminal proof without raw protocol output, prompts, or credentials. A trust-required error remains terminal; the harness does not retry with a trust, force, or yolo flag.
-
-Native `oracle` runs inside Pi and can use its configured read tools. The Claude profiles send the assembled prompt to the local Claude Code CLI through stdin. An external-job agent sends the assembled prompt to its registered provider. Provider options and a prompt digest are persisted in Pi run state. The prompt text is delivered through the local host bridge to the provider and is not stored in the public result payload. Do not place secrets in advisory prompts unless the target provider is approved to receive them.
+Codex uses a bounded final-message artifact. Claude Code and Cursor require one successful terminal result with non-empty final text. Malformed, oversized, duplicate, failed, or incomplete protocol output fails closed. Cursor prompt handoffs use a private temporary file that is removed after terminal completion. Adapter-specific smoke tests remain opt-in maintainer checks; they are not discovery probes.
 
 ### External-job state table
 

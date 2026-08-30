@@ -4,6 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { handleList } from "../../src/agents/agent-management.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import { resultFilesForSession } from "../../src/runs/background/result-files.ts";
 import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import { writeNodeCommand } from "../support/node-command.ts";
@@ -36,6 +38,50 @@ function runProcess(command: string, args: string[], cwd: string, env: NodeJS.Pr
 }
 
 describe("external CLI async lifecycle", () => {
+	it("discovers and lists an explicit custom profile without probing it, then executes it", async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-explicit-external-"));
+		tempDirs.push(dir);
+		const probeMarker = path.join(dir, "cli-started");
+		const command = writeNodeCommand(dir, "explicit-external", `require("fs").writeFileSync(${JSON.stringify(probeMarker)}, "started"); let input=""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => process.stdout.write("CUSTOM:" + input));`);
+		const agentsDir = path.join(dir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(path.join(agentsDir, "explicit-external.md"), `---\nname: explicit-external\ndescription: Explicit custom external profile\nrunner:\n  type: external-cli\n  command: ${JSON.stringify(command)}\n---\nRun the handoff.\n`);
+
+		const agents = discoverAgents(dir, "project").agents;
+		const externalProfiles = agents.filter((candidate) => candidate.runner?.type === "external-cli");
+		assert.deepEqual(externalProfiles.map((candidate) => candidate.name), ["explicit-external"]);
+		const discovered = externalProfiles[0];
+		assert.ok(discovered?.runner?.type === "external-cli");
+		const listed = handleList({ agentScope: "project" }, { cwd: dir, modelRegistry: { getAvailable: () => [] } });
+		assert.equal(listed.isError, false);
+		assert.match(listed.content[0]?.type === "text" ? listed.content[0].text : "", /explicit-external/);
+		assert.equal(fs.existsSync(probeMarker), false, "discovery/list must not execute the external CLI");
+
+		const asyncDir = path.join(dir, "async");
+		fs.mkdirSync(asyncDir);
+		const resultPath = path.join(dir, "result.json");
+		const configPath = path.join(dir, "config.json");
+		fs.writeFileSync(configPath, JSON.stringify({
+			id: "explicit-external",
+			sessionId: "session-explicit-external",
+			steps: [{ agent: discovered.name, task: "Task text", runner: discovered.runner, systemPrompt: discovered.systemPrompt, systemPromptMode: "replace", inheritProjectContext: false, inheritSkills: false }],
+			resultPath,
+			cwd: dir,
+			placeholder: "{previous}",
+			artifactConfig: { enabled: false },
+			asyncDir,
+			resultMode: "single",
+		}));
+		const repo = path.resolve(import.meta.dirname, "../..");
+		const exitCode = await runProcess(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], repo);
+		assert.equal(exitCode, 0);
+		assert.equal(fs.existsSync(probeMarker), true);
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		assert.equal(result.success, true);
+		assert.match(result.results[0].output, /CUSTOM:/);
+		assert.equal(result.results[0].runner.type, "external-cli");
+	});
+
 	it("writes status, events, result, output, and external process logs", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-lifecycle-"));
 		tempDirs.push(dir);

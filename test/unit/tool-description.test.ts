@@ -36,7 +36,7 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 2307);
+		assert.equal(Buffer.byteLength(description), 2207);
 		assert.match(description, /workflowScriptPath.*request cwd/i);
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.match(description, /runs\.lanes\(\[\{key,stages:/);
@@ -44,9 +44,11 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /runs\.host.*kind:'command'.*timeoutMs/i);
 		assert.match(description, /nested async function.*plain helper functions.*Promise chains/i);
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
+		assert.match(description, /External CLI agents use their own runner contract/);
+		assert.doesNotMatch(description, /codex-exec|claude-code|cursor-agent/);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3398);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3298);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
@@ -58,6 +60,7 @@ describe("registered subagent tool description", () => {
 		assert.match(metadata.promptGuidelines!.join("\n"), /runs\.lanes\(\[\{key,stages:.*first stages run together/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /output.*not an output declaration.*outputReference.*outputPathMapping.*artifactPaths/i);
+		assert.doesNotMatch(metadata.promptGuidelines!.join("\n"), /codex-exec|claude-code|cursor-agent/);
 		assert.match(metadata.promptGuidelines!.join("\n"), /do not make another top-level subagent call for those children/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /await runs\.all.*do not read \.output from unawaited runs\.run launches/i);
 		assert.match(description, /External CLI agents.*model override.*native Pi tools/i);

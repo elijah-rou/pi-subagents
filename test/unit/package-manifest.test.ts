@@ -94,6 +94,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
 	assert.equal(packageJson.files?.includes("index.ts"), true);
 	assert.equal(packageJson.files?.includes("*.mjs"), true);
+	for (const profile of ["codex-exec", "codex-exec-writer", "claude-code", "claude-code-writer", "cursor-agent", "cursor-agent-writer"]) {
+		assert.equal(fs.existsSync(path.join(projectRoot, "agents", `${profile}.md`)), false, `${profile} must not be bundled`);
+	}
 	assert.equal(fs.existsSync(path.join(projectRoot, "async-retention-discovery-worker.mjs")), true);
 	const entrySource = fs.readFileSync(path.join(projectRoot, "index.ts"), "utf-8");
 	assert.match(entrySource, /import type \{\} from "\.\/src\/types\/pi-runtime-compat\.d\.ts";/);

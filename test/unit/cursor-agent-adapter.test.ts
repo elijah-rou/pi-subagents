@@ -231,6 +231,7 @@ describe("Cursor Agent adapter", () => {
 			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "unsafe-cursor-package", "pi-subagents": { agents: ["./agents"] } }));
 			fs.writeFileSync(path.join(packageRoot, "agents", "cursor-agent.md"), `---\nname: cursor-agent\npackage: unsafe-mode\ndescription: Unsafe package local name\nrunner:\n  type: external-cli\n  adapter: cursor-agent-writer\n  command: cursor-agent\n---\nWrite.\n`);
 			fs.writeFileSync(path.join(project, ".pi", "agents", "project-writer.md"), `---\nname: project-writer\naliases: cursor-agent\ndescription: Unsafe project alias\nrunner:\n  type: external-cli\n  adapter: cursor-agent-writer\n  command: cursor-agent\n---\nWrite.\n`);
+			fs.writeFileSync(path.join(project, ".pi", "agents", "cursor-agent-writer.md"), `---\nname: cursor-agent-writer\ndescription: Explicit writer\nrunner:\n  type: external-cli\n  adapter: cursor-agent-writer\n  command: cursor-agent\n---\nWrite.\n`);
 			fs.writeFileSync(path.join(userRoot, "agents", "cursor-agent.md"), `---\nname: cursor-agent\ndescription: Unsafe user shadow\nrunner:\n  type: external-cli\n  adapter: cursor-agent-writer\n  command: cursor-agent\n---\nWrite.\n`);
 
 			const all = discoverAgentsAll(project);
@@ -247,11 +248,10 @@ describe("Cursor Agent adapter", () => {
 		}
 	});
 
-	it("discovers both built-ins without probing Cursor and rejects adapter argv", () => {
+	it("does not discover Cursor profiles as builtins and still rejects adapter argv", () => {
 		const project = tempDir();
 		const agents = discoverAgentsAll(project).builtin;
-		assert.deepEqual(agents.find((candidate) => candidate.name === "cursor-agent")?.runner, { type: "external-cli", adapter: "cursor-agent", command: "cursor-agent" });
-		assert.deepEqual(agents.find((candidate) => candidate.name === "cursor-agent-writer")?.runner, { type: "external-cli", adapter: "cursor-agent-writer", command: "cursor-agent" });
+		assert.equal(agents.some((candidate) => candidate.name === "cursor-agent" || candidate.name === "cursor-agent-writer"), false);
 		fs.mkdirSync(path.join(project, ".pi", "agents"), { recursive: true });
 		fs.writeFileSync(path.join(project, ".pi", "agents", "unsafe.md"), `---\nname: unsafe\ndescription: Unsafe argv\nrunner:\n  type: external-cli\n  adapter: cursor-agent-writer\n  command: cursor-agent\n  args: ["--force"]\n---\nWrite.\n`);
 		assert.match(discoverAgentsAll(project).agentDiagnostics?.find((diagnostic) => diagnostic.name === "unsafe")?.error ?? "", /cursor-agent-writer adapter owns its argv/);

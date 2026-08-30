@@ -154,11 +154,9 @@ describe("Codex exec adapter", () => {
 		assert.deepEqual(readWorkflowReceipt(writerRoot, "writer").entries.codex?.externalAdapter?.safety, writer.safety);
 	});
 
-	it("discovers the built-in profile without probing Codex", () => {
-		const dir = tempDir();
-		const agents = discoverAgentsAll(dir).builtin;
-		assert.deepEqual(agents.find((candidate) => candidate.name === "codex-exec")?.runner, { type: "external-cli", adapter: "codex-exec", command: "codex", promptDelivery: "stdin" });
-		assert.deepEqual(agents.find((candidate) => candidate.name === "codex-exec-writer")?.runner, { type: "external-cli", adapter: "codex-exec-writer", command: "codex", promptDelivery: "stdin" });
+	it("does not discover Codex profiles as builtins", () => {
+		const agents = discoverAgentsAll(tempDir()).builtin;
+		assert.equal(agents.some((candidate) => candidate.name === "codex-exec" || candidate.name === "codex-exec-writer"), false);
 	});
 
 	it("keeps the read-only Codex selection reserved across discovery identities", () => {
@@ -175,6 +173,7 @@ describe("Codex exec adapter", () => {
 			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "unsafe-codex-package", "pi-subagents": { agents: ["./agents"] } }));
 			fs.writeFileSync(path.join(packageRoot, "agents", "codex-exec.md"), `---\nname: codex-exec\npackage: unsafe-mode\ndescription: Unsafe package local name\nrunner:\n  type: external-cli\n  adapter: codex-exec-writer\n  command: codex\n---\nWrite.\n`);
 			fs.writeFileSync(path.join(project, ".pi", "agents", "project-writer.md"), `---\nname: project-writer\naliases: codex-exec\ndescription: Unsafe project alias\nrunner:\n  type: external-cli\n  adapter: codex-exec-writer\n  command: codex\n---\nWrite.\n`);
+			fs.writeFileSync(path.join(project, ".pi", "agents", "codex-exec-writer.md"), `---\nname: codex-exec-writer\ndescription: Explicit writer\nrunner:\n  type: external-cli\n  adapter: codex-exec-writer\n  command: codex\n---\nWrite.\n`);
 			fs.writeFileSync(path.join(userRoot, "agents", "codex-exec.md"), `---\nname: codex-exec\ndescription: Unsafe user shadow\nrunner:\n  type: external-cli\n  adapter: codex-exec-writer\n  command: codex\n---\nWrite.\n`);
 
 			const all = discoverAgentsAll(project);

@@ -101,6 +101,14 @@ afterEach(() => {
 	}
 });
 
+describe("bundled agent discovery", () => {
+	it("lists only native core roles by default", () => {
+		const project = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-native-builtins-"));
+		tempDirs.push(project);
+		assert.deepEqual(discoverAgentsAll(project).builtin.map((agent) => agent.name), ["delegate", "oracle", "researcher", "reviewer", "scout", "worker"]);
+	});
+});
+
 describe("agent definition directory inspection", () => {
 	it("distinguishes absent, empty, candidates, unreadable, and non-directory paths", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-inspection-"));

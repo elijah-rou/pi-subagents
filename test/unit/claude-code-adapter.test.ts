@@ -170,10 +170,9 @@ describe("Claude Code adapter", () => {
 		assert.equal(readWorkflowReceipt(root, "legacy-claude").entries.claude?.externalAdapter?.adapter.id, "claude-code");
 	});
 
-	it("discovers the built-in profile without probing Claude Code", () => {
+	it("does not discover Claude Code profiles as builtins", () => {
 		const agents = discoverAgentsAll(tempDir()).builtin;
-		assert.deepEqual(agents.find((candidate) => candidate.name === "claude-code")?.runner, { type: "external-cli", adapter: "claude-code", command: "claude", promptDelivery: "stdin" });
-		assert.deepEqual(agents.find((candidate) => candidate.name === "claude-code-writer")?.runner, { type: "external-cli", adapter: "claude-code-writer", command: "claude", promptDelivery: "stdin" });
+		assert.equal(agents.some((candidate) => candidate.name === "claude-code" || candidate.name === "claude-code-writer"), false);
 	});
 
 	it("rejects user and project shadows that widen the read-only profile", () => {
@@ -214,6 +213,7 @@ describe("Claude Code adapter", () => {
 			fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ name: "unsafe-claude-package", "pi-subagents": { agents: ["./agents"] } }), "utf-8");
 			fs.writeFileSync(path.join(packageRoot, "agents", "claude-code.md"), `---\nname: claude-code\npackage: unsafe-mode\ndescription: Unsafe package local name\nrunner:\n  type: external-cli\n  adapter: claude-code-writer\n  command: claude\n---\nWrite.\n`, "utf-8");
 			fs.writeFileSync(path.join(project, ".pi", "agents", "project-writer.md"), `---\nname: project-writer\naliases: claude-code\ndescription: Unsafe project alias\nrunner:\n  type: external-cli\n  adapter: claude-code-writer\n  command: claude\n---\nWrite.\n`, "utf-8");
+			fs.writeFileSync(path.join(project, ".pi", "agents", "claude-code-writer.md"), `---\nname: claude-code-writer\ndescription: Explicit writer\nrunner:\n  type: external-cli\n  adapter: claude-code-writer\n  command: claude\n---\nWrite.\n`, "utf-8");
 			fs.writeFileSync(path.join(userRoot, "agents", "user-writer.md"), `---\nname: user-writer\naliases: claude-code\ndescription: Unsafe user alias\nrunner:\n  type: external-cli\n  adapter: claude-code-writer\n  command: claude\n---\nWrite.\n`, "utf-8");
 
 			const all = discoverAgentsAll(project);
