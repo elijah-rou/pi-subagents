@@ -110,7 +110,7 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `share` | boolean | false | Upload session export to GitHub Gist. |
 | `sessionDir` | string | derived | Override session log directory. |
 | `acceptance` | string/object/false | inferred | Configure evidence gates. See [Acceptance gates](#acceptance-gates). |
-| `gate` | string | - | One host-run verification command, shorthand for `acceptance: { level: "verified", verify: [{ id: "gate", command }] }`. Also valid on individual `runs.run`/`runs.all` items. Cannot be combined with `acceptance`, and is rejected with retained `resume`. |
+| `gate` | string | - | One host-run verification command, shorthand for `acceptance: { verify: [{ id: "gate", command }] }`. Also valid on individual `runs.run`/`runs.all` items. Cannot be combined with `acceptance`, and is rejected with retained `resume`. |
 
 ### Budget guidance for writers
 
