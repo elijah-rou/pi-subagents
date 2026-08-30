@@ -2195,7 +2195,7 @@ async function runSingleStepInner(
 				: acceptance
 		: undefined;
 	const acceptanceFailure = effectiveAcceptance ? acceptanceFailureMessage(effectiveAcceptance) : undefined;
-	const acceptanceCanFailRun = Boolean(effectiveAcceptance && acceptanceBlocksRun(effectiveAcceptance) && acceptanceFailure && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && !isAgentContractV1(step.agentContract));
+	const acceptanceCanFailRun = Boolean(effectiveAcceptance && acceptanceBlocksRun(effectiveAcceptance) && acceptanceFailure && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && (!isAgentContractV1(step.agentContract) || !step.effectiveAcceptance?.explicit));
 	const effectiveFinalExitCode = timedOutAfterAcceptance || stoppedAfterAcceptance ? 1 : acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
 	const intercomDetachReceipt = finalResult?.finalOutput === INTERCOM_DETACH_RECEIPT;
 	const baseFinalError = stoppedAfterAcceptance
@@ -4115,7 +4115,7 @@ async function runSubagentInner(
 				if (placeholder && effectiveGroupAcceptance) placeholder.acceptance = effectiveGroupAcceptance;
 				const groupAcceptanceFailure = effectiveGroupAcceptance
 					&& acceptanceBlocksRun(effectiveGroupAcceptance)
-					&& (!isAgentContractV1(step.agentContract) || step.gateOn === "acceptance")
+					&& (!isAgentContractV1(step.agentContract) || !effectiveDynamicGroupAcceptance.explicit || step.gateOn === "acceptance")
 					? acceptanceFailureMessage(effectiveGroupAcceptance)
 					: undefined;
 				if (groupTimedOut || groupStopped || groupAcceptanceFailure) {
@@ -4533,7 +4533,7 @@ async function runSubagentInner(
 					const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
 					const groupAcceptanceFailure = effectiveGroupAcceptance
 						&& acceptanceBlocksRun(effectiveGroupAcceptance)
-						&& (!isAgentContractV1(step.agentContract) || step.gateOn === "acceptance")
+						&& (!isAgentContractV1(step.agentContract) || !effectiveDynamicGroupAcceptance.explicit || step.gateOn === "acceptance")
 						? acceptanceFailureMessage(effectiveGroupAcceptance)
 						: undefined;
 					const groupError = groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure;

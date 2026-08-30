@@ -5153,9 +5153,13 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 		const [missingCall, validCall] = readAllCallArgs();
 
-		assert.equal(missing.exitCode, 0);
-		assert.deepEqual(missing.execution, { status: "completed", success: true, exitCode: 0 });
+		assert.equal(missing.exitCode, 1);
+		assert.equal(missing.execution?.status, "failed");
+		assert.equal(missing.execution?.success, false);
+		assert.equal(missing.execution?.exitCode, 1);
 		assert.equal(missing.acceptance?.status, "rejected");
+		assert.equal(missing.acceptance?.effectiveAcceptance.explicit, false);
+		assert.match(missing.error ?? "", /Acceptance rejected/);
 		assert.equal(valid.exitCode, 0);
 		assert.equal(valid.acceptance?.status, "checked");
 		assert.equal(valid.review?.status, "not-requested");
@@ -5218,7 +5222,25 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(workflow.details.results[0]?.acceptance?.status, "checked");
 	});
 
-	it("agent contract v1 keeps acceptance rejection out of execution status", async () => {
+	it("workflow children fail closed when agent contract v1 inferred acceptance rejects", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "Implemented\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"missing proof\"}]}\n```" });
+		const executor = makeExecutor([makeAgent("worker", { tools: ["read", "write"], completionGuard: false })]);
+
+		const result = await executor.execute(
+			"workflow-v1-inferred-acceptance",
+			{ workflowScript: `return runs.run("worker", { agent: "worker", task: "Implement the approved fix", agentContract: { version: 1 } })`, async: false },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.details.results[0]?.exitCode, 1, JSON.stringify(result.details.results[0]));
+		assert.equal(result.details.results[0]?.acceptance?.status, "rejected");
+		assert.equal(result.details.results[0]?.acceptance?.effectiveAcceptance.explicit, false);
+		assert.match(result.details.results[0]?.error ?? "", /Acceptance rejected/);
+	});
+
+	it("agent contract v1 keeps explicitly supplied acceptance rejection out of execution status", async () => {
 		mockPi.onCall({ output: "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
 		const agents = [makeAgent("worker", { tools: ["read"], completionGuard: false })];
 

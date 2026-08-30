@@ -18,7 +18,7 @@ This is the upgrade checklist for users moving from the fork before the v0.46–
 
 ## Acceptance is enforced when inferred
 
-Omitting `acceptance`, or setting it to `"auto"`, now installs an enforced report contract. Mutating work must return checked writer evidence; explicitly read-only work receives a lightweight attested report without writer evidence. A missing or rejected required report blocks successful completion.
+Omitting `acceptance`, or setting it to `"auto"`, now installs an enforced report contract. Mutating work must return checked writer evidence; explicitly read-only work receives a lightweight attested report without writer evidence. A missing or rejected required report blocks successful completion, including when `agentContract: { version: 1 }` is used. The v1 separate/non-blocking acceptance projection applies only to explicitly supplied acceptance; omitted and `"auto"` acceptance remain inferred and fail closed.
 
 To opt out deliberately, use `acceptance: false`. The legacy compatibility object `{ level: "none", reason: "..." }` remains readable; include a concrete reason so the opt-out is visible in status and receipts. New composed contracts should use the canonical `report`, `verify`, `review`, and `onFailure` dimensions. Old persisted acceptance contracts remain readable, while new runs emit the canonical contract.
 

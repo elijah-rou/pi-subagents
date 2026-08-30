@@ -2860,7 +2860,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["attested", "attested"]);
 	});
 
-	it("enforces materialized async dynamic acceptance inference", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("enforces materialized async dynamic v1 acceptance inference", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		const writerReport = [
 			"done",
@@ -2884,7 +2884,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" }, acceptance: false },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 2 },
-					parallel: { agent: "explorer", task: "Patch {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "explorer", task: "Patch {target.path}", outputSchema: { type: "object" }, agentContract: { version: 1 } },
 					collect: { as: "reviews" },
 					concurrency: 1,
 				},
@@ -2899,6 +2899,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = await readAsyncPayload(id);
 		const explorerResults = payload.results.filter((child) => child.agent === "explorer");
 		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["checked", "checked"]);
+		assert.deepEqual(explorerResults.map((child) => child.success), [false, false]);
 		const dynamicNode = payload.workflowGraph?.nodes?.[1];
 		assert.equal(payload.success, false);
 		assert.equal(dynamicNode?.acceptanceStatus, undefined);
@@ -4434,7 +4435,34 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.doesNotMatch(eventsText, /"reason":"completion_guard"/);
 	});
 
-	it("agent contract v1 keeps async acceptance and file-mutation effects separate from execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("agent contract v1 inferred async acceptance rejection fails closed", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		mockPi.onCall({ output: "Implemented\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"missing proof\"}]}\n```" });
+		const id = `async-v1-inferred-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the approved fixes",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			agentContract: { version: 1 },
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+		assert.equal(payload.success, false);
+		assert.equal(payload.state, "failed");
+		assert.equal(payload.exitCode, 1);
+		assert.equal(payload.results[0]?.acceptance?.status, "rejected");
+		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.explicit, false);
+		assert.match(payload.results[0]?.error ?? "", /Acceptance rejected/);
+		assert.equal(statusPayload.state, "failed");
+	});
+
+	it("agent contract v1 keeps explicitly supplied async acceptance and file-mutation effects separate from execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "I’ll do that now and report back after implementing.\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
 		const id = `async-v1-separate-${Date.now().toString(36)}`;
 

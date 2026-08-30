@@ -6,7 +6,7 @@ Parameters and actions for the `subagent` tool. These are what the LLM passes wh
 
 ## Execution examples
 
-Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. Host steps are similarly narrow: use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })`; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
+Launch one child directly with `{ agent, task }`; reserve `workflowScript` for orchestration. Chaining is code-driven through `workflowScript`. Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. Host steps are similarly narrow: use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })`; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
 
 Use `{ action: "validate", workflowScript }` to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Dynamic keys and values remain valid because runtime-only cases are not guessed.
 
@@ -19,8 +19,8 @@ Use `workflowScriptPath` instead of `workflowScript` to load the same JavaScript
 ```
 
 ```js
-// One child; return the child promise explicitly
-{ workflowScript: `return runs.run("main", { agent: "scout", task: "Analyze the auth flow" })` }
+// One child
+{ agent: "scout", task: "Analyze the auth flow" }
 
 // Sequential workflow
 { workflowScript: `
@@ -390,7 +390,7 @@ Use `gate` when one host command is the whole verification contract:
 
 A configured `report` asks the child for a fenced `acceptance-report` JSON block. A configured `verify` runs commands on the host; child-reported command success does not count. The resulting ledger records evidence progress as `claimed`, `attested`, `checked`, `verified`, `reviewed`, or `rejected`, while disabled or absent dimensions are `not-required`.
 
-The parser canonicalizes supported enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous fields fail with field-level diagnostics. Acceptance fences are removed from normal output artifacts, while the raw transcript and complete ledger remain available. A rejected inferred or explicit contract blocks when `onFailure: "fail"`; explicit opt-out remains non-blocking.
+The parser canonicalizes supported enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous fields fail with field-level diagnostics. Acceptance fences are removed from normal output artifacts, while the raw transcript and complete ledger remain available. A rejected inferred or explicit contract blocks when `onFailure: "fail"`; explicit opt-out remains non-blocking. Under `agentContract: { version: 1 }`, omitted or auto-inferred acceptance still fails closed. Only explicitly supplied v1 acceptance retains the compatibility projection where acceptance is separate from execution and rejection is non-blocking unless `gateOn: "acceptance"` is set.
 
 ## Herdr project panes
 
