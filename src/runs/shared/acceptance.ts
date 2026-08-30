@@ -156,7 +156,7 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 	if (gate === undefined) return acceptance === undefined ? { ok: true } : { ok: true, acceptance };
 	if (typeof gate !== "string" || !gate.trim()) return { ok: false, error: "gate must be a non-empty command string." };
 	if (acceptance !== undefined) return { ok: false, error: "gate cannot be combined with acceptance; use one gate command or acceptance.verify." };
-	return { ok: true, acceptance: { level: "verified", verify: [{ id: "gate", command: gate.trim() }] } };
+	return { ok: true, acceptance: { verify: [{ id: "gate", command: gate.trim() }] } };
 }
 
 export interface AdaptedAcceptance {

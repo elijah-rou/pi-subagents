@@ -140,7 +140,7 @@ import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChai
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
-import { checkpointSteeringTargetIndexes } from "../shared/checkpoint.ts";
+import { checkpointCanReachSteerableStep, checkpointSteeringTargetIndexes } from "../shared/checkpoint.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
@@ -1388,6 +1388,7 @@ async function runSingleStepInner(
 				sessionFile: imported.sessionFile,
 				intercomTarget: imported.intercomTarget,
 				model: imported.model,
+				childProfile: imported.childProfile,
 				attemptedModels: imported.attemptedModels,
 				modelAttempts: imported.modelAttempts,
 				contextOverflow: imported.contextOverflow,
@@ -3933,7 +3934,13 @@ async function runSubagentInner(
 		checkpointTimer = setInterval(() => {
 			if (Date.now() < config.checkpointAt! || statusPayload.checkpointDelivered) return;
 			const activeIndexes = checkpointSteeringTargetIndexes(statusPayload.steps);
-			if (activeIndexes.length === 0) return;
+			if (activeIndexes.length === 0) {
+				if (!checkpointCanReachSteerableStep(statusPayload.steps)) {
+					if (checkpointTimer) clearInterval(checkpointTimer);
+					checkpointTimer = undefined;
+				}
+				return;
+			}
 			const deliveredAt = Date.now();
 			for (const index of activeIndexes) {
 				enqueueStepSteer(asyncDir, index, { type: "steer", id: `duration-checkpoint-${id}-${index}`, ts: deliveredAt, message: SOFT_CHECKPOINT_MESSAGE, targetIndex: index, source: "duration-checkpoint" });
@@ -4351,6 +4358,7 @@ async function runSubagentInner(
 				if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
+				setOptionalProperty(requiredStatusStep(statusPayload, fi), "childProfile", singleResult.childProfile ?? requiredStatusStep(statusPayload, fi).childProfile);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "modelAttempts", singleResult.modelAttempts);
@@ -4760,6 +4768,7 @@ async function runSubagentInner(
 						if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
+						setOptionalProperty(requiredStatusStep(statusPayload, fi), "childProfile", singleResult.childProfile ?? requiredStatusStep(statusPayload, fi).childProfile);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "modelAttempts", singleResult.modelAttempts);
@@ -5210,6 +5219,7 @@ async function runSubagentInner(
 			if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "sessionName", singleResult.sessionName);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "model", singleResult.model);
+			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "childProfile", singleResult.childProfile ?? requiredStatusStep(statusPayload, flatIndex).childProfile);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, flatIndex).thinking));
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "attemptedModels", singleResult.attemptedModels);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "modelAttempts", singleResult.modelAttempts);

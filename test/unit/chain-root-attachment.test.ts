@@ -34,18 +34,19 @@ describe("async chain root attachment", () => {
 	it("imports an already completed async child result", async () => {
 		const importedRoot = root();
 		const sessionFile = path.join(tempDir, "child.jsonl");
+		const childProfile = { profile: "review", source: "test-router", confidence: 86 };
 		fs.writeFileSync(sessionFile, "", "utf-8");
 		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
 			runId: importedRoot.runId,
 			mode: "single",
 			state: "complete",
 			startedAt: 1,
-			steps: [{ agent: "worker", status: "complete", sessionFile }],
+			steps: [{ agent: "worker", status: "complete", sessionFile, childProfile }],
 		});
 		writeJson(importedRoot.resultPath, {
 			state: "complete",
 			success: true,
-		results: [{ agent: "worker", output: "root output", success: true, sessionFile, usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 } }],
+			results: [{ agent: "worker", output: "root output", success: true, sessionFile, childProfile, usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 } }],
 		});
 
 		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
@@ -56,12 +57,14 @@ describe("async chain root attachment", () => {
 			exitCode: result.exitCode,
 			sessionFile: result.sessionFile,
 			usage: result.usage,
+			childProfile: result.childProfile,
 		}, {
 			agent: "worker",
 			output: "root output",
 			exitCode: 0,
 			sessionFile,
 			usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 },
+			childProfile,
 		});
 	});
 

@@ -3434,20 +3434,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("runs a direct child gate as host-verified acceptance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const markerFile = "direct-gate.txt";
 		const markerPath = path.join(tempDir, markerFile);
-		mockPi.onCall({ output: [
-			"done",
-			"```acceptance-report",
-			JSON.stringify({
-				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "implemented" }],
-				changedFiles: ["src/file.ts"],
-				testsAddedOrUpdated: ["test/file.test.ts"],
-				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
-				validationOutput: ["tests passed"],
-				residualRisks: [],
-				noStagedFiles: true,
-			}),
-			"```",
-		].join("\n") });
+		mockPi.onCall({ output: "done without an acceptance report" });
 		const executor = makeExecutor([makeAgent("echo")]);
 
 		const result = await executor.execute(
@@ -3461,6 +3448,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "direct gate failed");
 		assert.equal(fs.readFileSync(markerPath, "utf-8"), "verified");
 		assert.equal(result.details.results[0]?.acceptance?.status, "verified");
+		assert.equal(result.details.results[0]?.acceptance?.effectiveAcceptance.report, false);
+		assert.deepEqual(result.details.results[0]?.acceptance?.criteria, []);
+		assert.equal(result.details.results[0]?.acceptance?.childReportParseError, undefined);
 		assert.equal(result.details.results[0]?.acceptance?.verifyRuns[0]?.id, "gate");
 	});
 

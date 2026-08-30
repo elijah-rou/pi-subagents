@@ -778,6 +778,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
 		const sourceResultPath = path.join(RESULTS_DIR, `${sourceRunId}.json`);
 		const sourceSession = path.join(tempDir, "source-child.jsonl");
+		const childProfile = { profile: "review", source: "test-router", confidence: 86 };
 		try {
 			fs.mkdirSync(sourceAsyncDir, { recursive: true });
 			fs.mkdirSync(RESULTS_DIR, { recursive: true });
@@ -791,7 +792,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				startedAt: 100,
 				lastUpdate: 100,
 				cwd: tempDir,
-				steps: [{ agent: "worker", status: "running", sessionFile: sourceSession }],
+				steps: [{ agent: "worker", status: "running", sessionFile: sourceSession, childProfile }],
 			}, null, 2), "utf-8");
 			fs.writeFileSync(sourceResultPath, JSON.stringify({
 				id: sourceRunId,
@@ -801,7 +802,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				success: true,
 				state: "complete",
 				summary: "root output",
-				results: [{ agent: "worker", output: "root output", success: true, sessionFile: sourceSession }],
+				results: [{ agent: "worker", output: "root output", success: true, sessionFile: sourceSession, childProfile }],
 			}, null, 2), "utf-8");
 			const { executor, events } = makeExecutor({ agents: [makeAgent("worker"), makeAgent("reviewer")] });
 
@@ -836,7 +837,12 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			assert.equal(attachedStatus.chainStepCount, 2);
 			assert.deepEqual(attachedStatus.steps?.map((step) => step.agent), ["worker", "reviewer"]);
 			assert.match(attachedStatus.steps?.[0]?.label ?? "", /Attached resume-chain-root-/);
-			await waitForFile(path.join(RESULTS_DIR, `${attachedId}.json`));
+			const attachedResultPath = path.join(RESULTS_DIR, `${attachedId}.json`);
+			await waitForFile(attachedResultPath);
+			const terminalStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { steps?: Array<{ childProfile?: unknown }> };
+			const attachedResult = JSON.parse(fs.readFileSync(attachedResultPath, "utf-8")) as { results?: Array<{ childProfile?: unknown }> };
+			assert.deepEqual(terminalStatus.steps?.[0]?.childProfile, childProfile);
+			assert.deepEqual(attachedResult.results?.[0]?.childProfile, childProfile);
 		} finally {
 			fs.rmSync(sourceAsyncDir, { recursive: true, force: true });
 			fs.rmSync(sourceResultPath, { force: true });

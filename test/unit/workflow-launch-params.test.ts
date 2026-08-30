@@ -222,7 +222,7 @@ describe("workflow launch params", () => {
 				async: false,
 				workflowParentRunId: "workflow-run",
 				workflowKey: "gated",
-				acceptance: { level: "verified", verify: [{ id: "gate", command: "npm test" }] },
+				acceptance: { verify: [{ id: "gate", command: "npm test" }] },
 			},
 		);
 	});
