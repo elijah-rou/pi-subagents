@@ -13,6 +13,7 @@ export const SUBAGENT_GUIDE_TOPICS = [
 	"models",
 	"watchdog",
 	"extension-api",
+	"migration-v059",
 ] as const;
 
 export type SubagentGuideTopic = (typeof SUBAGENT_GUIDE_TOPICS)[number];

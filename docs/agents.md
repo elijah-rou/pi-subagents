@@ -1,5 +1,7 @@
 # Agents
 
+Upgrading from the fork before v0.59? Review [global-instruction, read-only-role, and external-profile migration](migration-v059.md).
+
 An agent is a markdown file: YAML frontmatter on top, a system prompt below. The frontmatter defines the specialist that runs in the child Pi process.
 
 ```yaml

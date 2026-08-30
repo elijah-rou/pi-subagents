@@ -101,13 +101,17 @@ For bounded orchestration, `maxSubagentSpawnsPerRun` limits cumulative logical c
 
 ## If something feels off
 
+Run the read-only diagnostic command:
+
 ```text
 /subagents-doctor
 ```
 
 or ask: "Check whether subagents and intercom are set up correctly."
 
-For installed-version help, use `/subagents-guide [topic]` or `subagent({ action: "guide", topic: "workflows" })`. The default topic is `overview`; available topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, and `extension-api`.
+For installed-version help, use `/subagents-guide [topic]` or `subagent({ action: "guide", topic: "workflows" })`. The default topic is `overview`; available topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, `extension-api`, and `migration-v059`.
+
+Upgrading from the fork before v0.59? Start with the [pre-v0.59 migration guide](https://github.com/nicobailon/pi-subagents/blob/main/docs/migration-v059.md).
 
 ## Documentation
 
@@ -124,3 +128,4 @@ The full reference lives in `docs/`:
 | [Missions and schedules](https://github.com/nicobailon/pi-subagents/blob/main/docs/missions.md) | Durable mission records, delivery receipts, timed and recurring runs. |
 | [Configuration](https://github.com/nicobailon/pi-subagents/blob/main/docs/configuration.md) | Every `config.json` key and environment variable. |
 | [Extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md) | The RPC, delegation API, preflight, capability ceilings, background-work providers, Herdr integration. |
+| [Pre-v0.59 migration](https://github.com/nicobailon/pi-subagents/blob/main/docs/migration-v059.md) | Required upgrade actions, changed defaults, removed APIs, compatibility readers, and reload requirements. |

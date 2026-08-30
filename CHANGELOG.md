@@ -12,6 +12,9 @@
 - Add bounded project watchdog guidance from `WATCHDOG.md` and an explicit configured path.
 
 ### Changed
+- Add one packaged [pre-v0.59 fork migration guide](docs/migration-v059.md) covering required configuration, profile, workflow, storage, validation, and restart changes.
+- Keep `worktree.cleanup` public guidance plan-only by rejecting caller-supplied `planId` and removed `apply` mode, and remove the `pi-subagents/project-panes` package export while retaining host-selected Herdr project actions and passive observation.
+- Keep compatibility readers for persisted legacy acceptance contracts, inheritance recovery descriptors, turn-budget status fields, workflow artifacts, and cleanup metadata; new launches and public guidance use only the current canonical contracts.
 - Remove bundled Codex, Claude Code, and Cursor profiles from default discovery and model-facing descriptions. Their code-owned adapters remain available to explicitly defined custom or package profiles, with separate read-only and writer examples in the agent documentation.
 - Default active top-level async runs to four per parent session, with admission before run artifacts or child startup; set `maxActiveAsyncRunsPerSession: 0` to retain unlimited active runs. Clarify `globalConcurrencyLimit` as the compatibility key for per-run child concurrency (still defaulting to 20), while keeping the 64-child cumulative per-run bound and unlimited cumulative session launches by default.
 - Restore authoritative operator-global instruction inheritance when an agent inherits project context and omits `inheritGlobalContext`; explicit `false` remains the isolation and token-saving control.

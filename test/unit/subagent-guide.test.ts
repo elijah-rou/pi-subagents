@@ -33,4 +33,32 @@ describe("subagent guide", () => {
 		assert.match(guide, /future removal\/apply behavior[\s\S]*requires a separate owner-approved design/i);
 		assert.doesNotMatch(guide, /cleanup planning\/apply|apply-time Git\/ownership revalidation belong/i);
 	});
+
+	it("packages the complete pre-v0.59 migration inventory", () => {
+		const guide = readSubagentGuide("migration-v059");
+		for (const required of [
+			/acceptance: false[\s\S]*level: \"none\"/,
+			/inheritGlobalContext: false/,
+			/maxActiveAsyncRunsPerSession` now means `4`/,
+			/\{ "maxActiveAsyncRunsPerSession": 0 \}/,
+			/globalConcurrencyLimit` \| `20`/,
+			/maxSubagentSpawnsPerRun` \| `64`/,
+			/maxSubagentSpawnsPerSession` \| unlimited/,
+			/codex-exec`[\s\S]*claude-code`[\s\S]*cursor-agent`/,
+			/turnBudget` and `maxTurns`/,
+			/\.pi-subagents\/[\s\S]*\.pi\/subagents\//,
+			/reviewer` has only `read`, `grep`, `find`, and `ls`/,
+			/active host model registry[\s\S]*final filtered registry[\s\S]*External CLI profile metadata/,
+			/worktree\.cleanup` is plan-only[\s\S]*caller-supplied `planId`[\s\S]*no cleanup `apply` mode/,
+			/package export `pi-subagents\/project-panes` was removed/,
+			/reload Pi[\s\S]*restart/,
+		]) assert.match(guide, required);
+	});
+
+	it("keeps agent discovery, management, and diagnostics distinct", () => {
+		const guide = readSubagentGuide("migration-v059");
+		assert.match(guide, /read-only diagnostic command[\s\S]*action: \"doctor\"/);
+		assert.match(guide, /action: \"list\"[\s\S]*do not expect `doctor` to appear there/);
+		assert.doesNotMatch(guide, /doctor (?:agent|subagent)|(?:agent|subagent) doctor/i);
+	});
 });

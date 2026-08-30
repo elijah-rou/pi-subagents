@@ -1,5 +1,7 @@
 # Models
 
+Upgrading from the fork before v0.59? Review the [model and external-runner validation migration](migration-v059.md).
+
 How subagents pick models, and how to change that.
 
 Builtin agents inherit your current Pi default model. This keeps new installs from depending on a provider you may not have configured. From there you can layer defaults and overrides:

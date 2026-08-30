@@ -218,7 +218,7 @@ Resume behavior:
 - Direct revival holds an exclusive cross-process lease on the canonical child session file until the new child finishes. Concurrent attempts fail before Pi starts and identify the owning revived run; stale ownership is reclaimed only when the recorded process is demonstrably gone or reused.
 - If the chosen child has no persisted `.jsonl` session file, resume fails and reports that directly.
 
-Use diagnostics when setup or child startup looks wrong:
+Use the doctor action when setup or child startup looks wrong:
 
 ```typescript
 subagent({ action: "doctor" })
@@ -253,7 +253,7 @@ subagent({ action: "schedule.delete", id: "backlog" })
 
 `schedule.create` accepts exactly one target, `workflowScript`, and exactly one trigger (`at`, or a fixed `every` interval using `m`, `h`, `d`, or `w`). Runs always launch async with fresh context and no automatic mission; mission attachment is deferred from this first slice. `overlap` is currently `skip`; `catchUp` supports `latest` and `none`. `schedule.run-due` is the headless external-launcher seam. Calendar recurrence, cron, and the schedule inspector are deferred from this first safe slice. Definitions, bounded history, append-only events, and per-run receipts remain project-scoped across Pi sessions.
 
-Humans can use `/subagents-doctor` for the same read-only report. It checks runtime paths, discovery counts, async support, current session context, and intercom bridge state.
+Humans can use the `/subagents-doctor` diagnostic command for the same read-only report. It checks runtime paths, discovery counts, async support, current session context, and intercom bridge state.
 
 ### Subagent control
 
@@ -511,4 +511,4 @@ subagent_supervisor({ action: "pending" })
 
 Native supervisor coordination does not expose generic `intercom` as a fallback. Use `subagent_supervisor` for parent replies.
 
-If intercom messages do not show up, run `subagent({ action: "doctor" })` or `/subagents-doctor`.
+If intercom messages do not show up, run the `subagent({ action: "doctor" })` doctor action or the `/subagents-doctor` diagnostic command.

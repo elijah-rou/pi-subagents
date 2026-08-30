@@ -1,5 +1,7 @@
 # Tool reference
 
+Upgrading from the fork before v0.59? Review the [acceptance, validation, cleanup, and removed-API migration](migration-v059.md).
+
 Parameters and actions for the `subagent` tool. These are what the LLM passes when it calls the tool; most users ask naturally or use slash commands instead.
 
 ## Execution examples
@@ -185,7 +187,7 @@ For a simple implementation challenge outside a workflow script, send the challe
 
 ### Guide
 
-`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` to read its packaged `docs/<topic>.md` file instead. Valid topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, and `extension-api`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent.
+`{ action: "guide" }` reads the packaged `README.md` from the installed version. Pass `topic` to read its packaged `docs/<topic>.md` file instead. Valid topics are `overview`, `workflows`, `agents`, `missions`, `observability`, `tool-reference`, `configuration`, `models`, `watchdog`, `extension-api`, and `migration-v059`. Unknown topics list the valid values and do not change files. Use `/subagents-guide [topic]` for the slash equivalent.
 
 Agent definitions are not loaded into context by default. Management actions let the LLM discover, inspect, create, update, and delete agents at runtime. An unknown action returns safe next steps (`status` and `list`) and may suggest a close non-destructive action. Destructive actions are only named for a near-complete one-character typo, and suggestions never execute an action.
 

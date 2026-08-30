@@ -1,5 +1,7 @@
 # Workflows and orchestration
 
+Upgrading from the fork before v0.59? Review the [legacy workflow and project-storage migration](migration-v059.md).
+
 How to compose subagents: the recommended pattern, packaged prompt shortcuts, scripted workflows, direct commands, worktree isolation, and child-to-parent coordination.
 
 ## Recommended orchestration pattern
@@ -429,7 +431,7 @@ Child-side routine completion handoffs are not expected. If a child appears stal
 
 If a `workflowScript` child detaches through `contact_supervisor`, the enclosing async workflow stays `paused` until that child exits. Then the extension reconciles it to `complete` or `failed`. Wait on the child until that happens.
 
-If messages do not show up, run `/subagents-doctor`. Advanced users can tune the bridge with `intercomBridge` in [configuration.md](configuration.md).
+If messages do not show up, run the `/subagents-doctor` diagnostic command. Advanced users can tune the bridge with `intercomBridge` in [configuration.md](configuration.md).
 
 ## Recursion guard
 

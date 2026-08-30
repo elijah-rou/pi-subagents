@@ -1,5 +1,7 @@
 # Configuration
 
+Upgrading from the fork before v0.59? Review the [changed defaults, exact compatibility keys, and reload requirements](migration-v059.md).
+
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`. This page lists every key, plus the environment variables and the settings-file keys that affect config resolution.
 
 Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. Agent inheritance fields use the same frontmatter/settings precedence as other agent fields; when `inheritGlobalContext` is omitted, it follows the resolved `inheritProjectContext` value. See [models.md](models.md), [agents.md](agents.md#prompt-assembly), and [watchdog.md](watchdog.md).
@@ -251,7 +253,7 @@ Caps simultaneously running children inside each top-level run, including durabl
 
 Optionally caps the total number of child subagent launches during one parent session, including completed and failed children, parallel task counts, static chain steps, and bounded dynamic fanout children. Sessions are unlimited by default. Set this value to `0` to disable a configured cap. `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` overrides the config for a process and follows the same positive-cap/zero-unlimited semantics.
 
-`subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, remaining capacity, grants, and the remaining grant allowance for this budget. A user may explicitly call `subagent({ action: "grant-spawn-budget", additional: 10 })` from the root interactive parent after all children settle and confirm the native prompt. Grants are additive: they never erase cumulative usage, are rejected for unlimited sessions and child/headless callers, and total granted capacity cannot exceed the original configured cap. Compaction remains part of the same logical parent session and does not reset usage or grants; starting a new parent session does.
+`subagent({ action: "status" })`, fleet status, and the `subagent({ action: "doctor" })` doctor action expose used, effective limit, remaining capacity, grants, and the remaining grant allowance for this budget. A user may explicitly call `subagent({ action: "grant-spawn-budget", additional: 10 })` from the root interactive parent after all children settle and confirm the native prompt. Grants are additive: they never erase cumulative usage, are rejected for unlimited sessions and child/headless callers, and total granted capacity cannot exceed the original configured cap. Compaction remains part of the same logical parent session and does not reset usage or grants; starting a new parent session does.
 
 ## `maxSubagentSpawnsPerRun`
 
@@ -283,7 +285,7 @@ The default is `1200000` milliseconds (20 minutes). The policy releases only a f
 
 This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, the default-`64` cumulative `maxSubagentSpawnsPerRun`, and per-run child concurrency (`globalConcurrencyLimit`, default `20`). `maxSubagentSpawnsPerSession` remains unlimited by default.
 
-`subagent({ action: "status" })`, fleet status, and `subagent({ action: "doctor" })` expose used and effective top-level async capacity for the current parent session, explicitly excluding foreground and nested/workflow children. Status and doctor also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
+`subagent({ action: "status" })`, fleet status, and the `subagent({ action: "doctor" })` doctor action expose used and effective top-level async capacity for the current parent session, explicitly excluding foreground and nested/workflow children. Status and the doctor action also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
 
 ### Migration: retaining unlimited active async runs
 

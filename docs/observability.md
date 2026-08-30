@@ -98,7 +98,7 @@ Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes
 }
 ```
 
-If something feels misconfigured, run `/subagents-doctor` or ask: "Check whether subagents and intercom are set up correctly."
+If something feels misconfigured, run the `/subagents-doctor` diagnostic command or ask: "Check whether subagents and intercom are set up correctly."
 
 ## Host inspection protocol (RPC)
 

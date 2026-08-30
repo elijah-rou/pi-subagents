@@ -94,6 +94,8 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
 	assert.equal(packageJson.files?.includes("index.ts"), true);
 	assert.equal(packageJson.files?.includes("*.mjs"), true);
+	assert.equal(packageJson.files?.includes("docs/**/*"), true);
+	assert.equal(fs.existsSync(path.join(projectRoot, "docs", "migration-v059.md")), true, "the pre-v0.59 migration guide must be published");
 	for (const profile of ["codex-exec", "codex-exec-writer", "claude-code", "claude-code-writer", "cursor-agent", "cursor-agent-writer"]) {
 		assert.equal(fs.existsSync(path.join(projectRoot, "agents", `${profile}.md`)), false, `${profile} must not be bundled`);
 	}
