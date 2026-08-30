@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { editableAgentConfig, handleCreate, handleList, handleManagementAction, handleUpdate } from "../../src/agents/agent-management.ts";
-import { EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
+import { discoverAgents, EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../src/shared/utils.ts";
@@ -889,6 +889,47 @@ Drive the failing test first.
 		assert.match(afterText, /System prompt mode: append/);
 		assert.match(afterText, /Inherit project context: true/);
 		assert.match(afterText, /Inherit skills: true/);
+	});
+
+	it("preserves omitted global-context provenance when project inheritance is updated", () => {
+		const ctx = { cwd: tempDir, modelRegistry: { getAvailable: () => [] } };
+		const agentsDir = path.join(tempDir, ".pi", "agents");
+		const agentPath = path.join(agentsDir, "context-follower.md");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(agentPath, `---
+name: context-follower
+description: Context follower
+inheritProjectContext: true
+---
+
+Follow inherited instructions.
+`, "utf-8");
+
+		let effective = discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "context-follower");
+		assert.equal(effective?.inheritGlobalContext, true);
+		assert.equal(handleUpdate({ agent: "context-follower", config: { inheritProjectContext: false } }, ctx).isError, false);
+		let content = fs.readFileSync(agentPath, "utf-8");
+		assert.match(content, /^inheritProjectContext: false$/m);
+		assert.doesNotMatch(content, /^inheritGlobalContext:/m);
+		effective = discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "context-follower");
+		assert.equal(effective?.inheritGlobalContext, false);
+
+		assert.equal(handleUpdate({ agent: "context-follower", config: { inheritProjectContext: true } }, ctx).isError, false);
+		content = fs.readFileSync(agentPath, "utf-8");
+		assert.match(content, /^inheritProjectContext: true$/m);
+		assert.doesNotMatch(content, /^inheritGlobalContext:/m);
+		effective = discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "context-follower");
+		assert.equal(effective?.inheritGlobalContext, true);
+
+		fs.writeFileSync(path.join(tempDir, ".pi", "settings.json"), JSON.stringify({
+			subagents: { agentOverrides: { "context-follower": { inheritGlobalContext: false } } },
+		}, null, 2), "utf-8");
+		assert.equal(handleUpdate({ agent: "context-follower", config: { inheritProjectContext: false } }, ctx).isError, false);
+		content = fs.readFileSync(agentPath, "utf-8");
+		assert.doesNotMatch(content, /^inheritGlobalContext:/m);
+		effective = discoverAgents(tempDir, "project").agents.find((agent) => agent.name === "context-follower");
+		assert.equal(effective?.inheritProjectContext, false);
+		assert.equal(effective?.inheritGlobalContext, false);
 	});
 
 	it("preserves blank output and defaultReads frontmatter that blocks settings overrides during updates", () => {

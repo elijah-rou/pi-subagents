@@ -1310,7 +1310,7 @@ function applyBuiltinOverride(
 ): AgentConfig {
 	const next: AgentConfig = {
 		...agent,
-		override: { ...meta, base: cloneOverrideBase(agent) },
+		override: { ...meta, base: agent.override?.base ?? cloneOverrideBase(agent) },
 	};
 
 	if (override.description !== undefined) next.description = override.description;
@@ -1345,12 +1345,6 @@ function applyBuiltinOverride(
 	if (override.completionGuard !== undefined) next.completionGuard = override.completionGuard;
 	if (override.toolBudget !== undefined) { if (override.toolBudget === false) delete next.toolBudget; else next.toolBudget = override.toolBudget; }
 
-	if (
-		override.inheritProjectContext !== undefined
-		&& override.inheritGlobalContext === undefined
-		&& !agentHasFrontmatterField(agent, "inheritGlobalContext")
-	) next.inheritGlobalContext = next.inheritProjectContext;
-
 	return next;
 }
 
@@ -1381,37 +1375,29 @@ function applyBuiltinOverrides(
 	};
 
 	return builtinAgents.map((agent) => {
+		const userOverride = userSettings.overrides[agent.name];
+		let resolved = userOverride
+			? applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath })
+			: userBulkDisabled
+				? applyBuiltinOverride(agent, { disabled: true }, { scope: "user", path: userSettingsPath })
+				: agent;
+
 		const projectOverride = projectSettings.overrides[agent.name];
 		if (projectOverride && projectSettingsPath) {
-			return applyGlobalThinking(
-				applyBuiltinOverride(agent, projectOverride, { scope: "project", path: projectSettingsPath }),
-				projectOverride.thinking !== undefined,
-			);
+			resolved = applyBuiltinOverride(resolved, projectOverride, { scope: "project", path: projectSettingsPath });
+		} else if (projectBulkDisabled && projectSettingsPath) {
+			resolved = applyBuiltinOverride(resolved, { disabled: true }, { scope: "project", path: projectSettingsPath });
 		}
 
-		if (projectBulkDisabled && projectSettingsPath) {
-			return applyGlobalThinking(
-				applyBuiltinOverride(agent, { disabled: true }, { scope: "project", path: projectSettingsPath }),
-				false,
-			);
-		}
+		const hasExplicitGlobalContext = agentHasFrontmatterField(agent, "inheritGlobalContext")
+			|| userOverride?.inheritGlobalContext !== undefined
+			|| projectOverride?.inheritGlobalContext !== undefined;
+		if (!hasExplicitGlobalContext) resolved.inheritGlobalContext = resolved.inheritProjectContext;
 
-		const userOverride = userSettings.overrides[agent.name];
-		if (userOverride) {
-			return applyGlobalThinking(
-				applyBuiltinOverride(agent, userOverride, { scope: "user", path: userSettingsPath }),
-				!projectThinkingConfigured && userOverride.thinking !== undefined,
-			);
-		}
-
-		if (userBulkDisabled) {
-			return applyGlobalThinking(
-				applyBuiltinOverride(agent, { disabled: true }, { scope: "user", path: userSettingsPath }),
-				false,
-			);
-		}
-
-		return applyGlobalThinking(agent, false);
+		const hasExplicitThinkingOverride = projectOverride
+			? projectOverride.thinking !== undefined
+			: !projectThinkingConfigured && userOverride?.thinking !== undefined;
+		return applyGlobalThinking(resolved, hasExplicitThinkingOverride);
 	});
 }
 

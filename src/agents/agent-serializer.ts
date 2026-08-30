@@ -51,6 +51,7 @@ function joinComma(values: string[] | undefined): string | undefined {
 
 interface SerializeAgentOptions {
 	preserveFrontmatterFields?: ReadonlySet<string>;
+	omitInheritGlobalContext?: boolean;
 }
 
 export function serializeAgent(config: AgentConfig, options: SerializeAgentOptions = {}): string {
@@ -83,7 +84,9 @@ export function serializeAgent(config: AgentConfig, options: SerializeAgentOptio
 	}
 	if (!preservingExistingFrontmatter || preserve("systemPromptMode")) lines.push(`systemPromptMode: ${config.systemPromptMode}`);
 	if (!preservingExistingFrontmatter || preserve("inheritProjectContext")) lines.push(`inheritProjectContext: ${config.inheritProjectContext ? "true" : "false"}`);
-	if (config.inheritGlobalContext || preserve("inheritGlobalContext")) lines.push(`inheritGlobalContext: ${config.inheritGlobalContext ? "true" : "false"}`);
+	if (!options.omitInheritGlobalContext && (config.inheritGlobalContext || preserve("inheritGlobalContext"))) {
+		lines.push(`inheritGlobalContext: ${config.inheritGlobalContext ? "true" : "false"}`);
+	}
 	if (!preservingExistingFrontmatter || preserve("inheritSkills")) lines.push(`inheritSkills: ${config.inheritSkills ? "true" : "false"}`);
 	if (config.defaultContext || preserve("defaultContext")) lines.push(`defaultContext: ${config.defaultContext ?? ""}`);
 	if (config.runner || preserve("runner")) {

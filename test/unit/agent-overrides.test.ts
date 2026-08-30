@@ -466,21 +466,38 @@ describe("builtin agent overrides", () => {
 		);
 	});
 
-	it("prefers project settings overrides over user settings overrides", () => {
+	it("layers builtin user and project overrides per field with project precedence", () => {
 		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
-			subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4" } } },
+			subagents: {
+				agentOverrides: {
+					reviewer: {
+						model: "openai/gpt-5.4",
+						fallbackModels: ["openai/gpt-5-mini"],
+						inheritGlobalContext: false,
+					},
+					worker: { inheritGlobalContext: false },
+				},
+			},
 		});
 		writeJson(path.join(tempProject, ".pi", "settings.json"), {
-			subagents: { agentOverrides: { reviewer: { model: "openai-codex/gpt-5.4-mini", thinking: "high" } } },
+			subagents: {
+				agentOverrides: {
+					reviewer: { model: "openai-codex/gpt-5.4-mini", thinking: "high" },
+					worker: { inheritGlobalContext: true },
+				},
+			},
 		});
 
 		const reviewer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "reviewer");
 		assert.ok(reviewer);
 		assert.equal(reviewer.model, "openai-codex/gpt-5.4-mini");
+		assert.deepEqual(reviewer.fallbackModels, ["openai/gpt-5-mini"]);
 		assert.equal(reviewer.thinking, "high");
+		assert.equal(reviewer.inheritGlobalContext, false);
 		assert.equal(reviewer.override?.scope, "project");
 		assert.equal(reviewer.override?.path, path.join(tempProject, ".pi", "settings.json"));
+		assert.equal(discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "worker")?.inheritGlobalContext, true);
 	});
 
 	it("layers active-provider overrides over default agentOverrides", () => {

@@ -982,6 +982,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	}
 	const applyError = applyAgentConfig(updated, cfg);
 	if (applyError) return result(applyError, true);
+	const omitInheritGlobalContext = !readAgentFrontmatterFields(target.filePath).has("inheritGlobalContext")
+		&& !hasKey(cfg, "inheritGlobalContext");
 	const preserveFrontmatterFields = preservedAgentFrontmatterFields(target, cfg);
 	updated.localName = newLocalName;
 	if (newPackageName !== undefined) updated.packageName = newPackageName;
@@ -1007,7 +1009,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		if (renamed.error) return result(renamed.error, true);
 		updated.filePath = renamed.filePath!;
 	}
-	fs.writeFileSync(updated.filePath, serializeAgent(updated, { preserveFrontmatterFields }), "utf-8");
+	fs.writeFileSync(updated.filePath, serializeAgent(updated, { preserveFrontmatterFields, omitInheritGlobalContext }), "utf-8");
 	const headline = updated.name === oldName
 		? `Updated agent '${updated.name}' at ${updated.filePath}.`
 		: `Updated agent '${oldName}' to '${updated.name}' at ${updated.filePath}.`;
