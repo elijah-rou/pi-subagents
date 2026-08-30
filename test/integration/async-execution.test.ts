@@ -2398,18 +2398,19 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.workflowGraph?.nodes?.[2]?.status, "completed");
 	});
 
-	it("async dynamic status shows a placeholder before materialization", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("async dynamic status materializes routed child profile provenance", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ delay: 800, output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		mockPi.onCall({ output: "review-a", structuredOutput: { ok: "a" } });
 		mockPi.onCall({ output: "review-b", structuredOutput: { ok: "b" } });
 		mockPi.onCall({ output: "used reviews" });
 		const id = `async-dynamic-placeholder-${Date.now().toString(36)}`;
+		const childProfile = { profile: "review", source: "test-router", confidence: 92 };
 		const result = executeAsyncChain(id, {
 			chain: [
 				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", label: "Review {target.path}", outputSchema: { type: "object" } },
+					parallel: { agent: "reviewer", task: "Review {target.path}", label: "Review {target.path}", outputSchema: { type: "object" }, modelSource: "resolver", childProfile },
 					collect: { as: "reviews" },
 					concurrency: 1,
 				},
@@ -2422,7 +2423,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 		});
 
-		assert.ok(!result.isError);
+		assert.ok(!result.isError, JSON.stringify(result.content));
 		const statusPath = path.join(ASYNC_DIR, id, "status.json");
 		const deadline = Date.now() + 5_000;
 		let status: AsyncStatusPayload | undefined;
@@ -2441,6 +2442,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
 		assert.deepEqual(finalStatus.steps?.map((step) => step.agent), ["producer", "reviewer", "reviewer", "consumer"]);
+		assert.deepEqual(finalStatus.steps?.slice(1, 3).map((step) => (step as typeof step & { childProfile?: unknown }).childProfile), [childProfile, childProfile]);
+		assert.deepEqual((payload.results as Array<{ childProfile?: unknown }>).slice(1, 3).map((entry) => entry.childProfile), [childProfile, childProfile]);
 		assert.deepEqual(finalStatus.parallelGroups, [{ start: 1, count: 2, stepIndex: 1 }]);
 	});
 

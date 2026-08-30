@@ -14,6 +14,7 @@ import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-i
 import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
 import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
+import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -52,6 +53,7 @@ export type AsyncResumeTarget = {
 	recoveryDescriptor?: SteeringRecoveryDescriptor;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
 	launchContractDigest?: string;
+	childProfile?: NonNullable<AsyncStatus["steps"]>[number]["childProfile"];
 	runner?: NonNullable<AsyncStatus["steps"]>[number]["runner"];
 	externalJob?: NonNullable<AsyncStatus["steps"]>[number]["externalJob"];
 	acceptance?: EffectiveAcceptanceInput;
@@ -71,8 +73,9 @@ interface AsyncResultFile {
 	model?: string;
 	thinking?: string;
 	launchContractDigest?: string;
+	childProfile?: NonNullable<AsyncStatus["steps"]>[number]["childProfile"];
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	results?: Array<{ agent?: string; sessionName?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; acceptanceInput?: unknown }>;
+	results?: Array<{ agent?: string; sessionName?: string; success?: boolean; sessionFile?: string; intercomTarget?: string; model?: string; thinking?: string; launchContractDigest?: string; childProfile?: NonNullable<AsyncStatus["steps"]>[number]["childProfile"]; capabilityCeiling?: ResolvedSubagentCapabilityCeiling; acceptanceInput?: unknown }>;
 }
 
 export interface AsyncRunLocation {
@@ -99,6 +102,11 @@ function validateOptionalString(value: Record<string, unknown>, field: string, s
 	return fieldValue;
 }
 
+function childProfileField(...values: unknown[]): { childProfile?: NonNullable<AsyncStatus["steps"]>[number]["childProfile"] } {
+	const value = values.find((candidate) => candidate !== undefined);
+	return value === undefined ? {} : { childProfile: parseChildProfileProvenance(value, "async resume childProfile") };
+}
+
 function validateResultFile(value: unknown, resultPath: string): AsyncResultFile {
 	const data = ensureObject(value, resultPath);
 	const resultsValue = data.results;
@@ -114,10 +122,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
 			const thinking = validateOptionalString(child, "thinking", resultPath, `results[${index}].thinking`);
 			const launchContractDigest = validateOptionalString(child, "launchContractDigest", resultPath, `results[${index}].launchContractDigest`);
+			const childProfile = child.childProfile === undefined ? undefined : parseChildProfileProvenance(child.childProfile, `async result file '${resultPath}' results[${index}].childProfile`);
 			const capabilityCeiling = child.capabilityCeiling === undefined ? undefined : parseSubagentCapabilityCeiling(child.capabilityCeiling, `async result file '${resultPath}' results[${index}].capabilityCeiling`);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
-			return { agent, sessionName, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}), ...(child.acceptanceInput !== undefined ? { acceptanceInput: child.acceptanceInput } : {}) };
+			return { agent, sessionName, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(childProfile ? { childProfile } : {}), ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}), ...(child.acceptanceInput !== undefined ? { acceptanceInput: child.acceptanceInput } : {}) };
 		});
 	}
 	const success = data.success;
@@ -134,6 +143,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 		model: validateOptionalString(data, "model", resultPath),
 		thinking: validateOptionalString(data, "thinking", resultPath),
 		launchContractDigest: validateOptionalString(data, "launchContractDigest", resultPath),
+		...(data.childProfile === undefined ? {} : { childProfile: parseChildProfileProvenance(data.childProfile, `async result file '${resultPath}' childProfile`) }),
 		...(data.capabilityCeiling === undefined ? {} : { capabilityCeiling: parseSubagentCapabilityCeiling(data.capabilityCeiling, `async result file '${resultPath}' capabilityCeiling`) }),
 		...(typeof success === "boolean" ? { success } : {}),
 		...(results ? { results } : {}),
@@ -319,7 +329,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"subagentOnlyExtensions", "mcpDirectTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "completionGuard", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget", "lane",
+		"launchResolvedExtensions", "childProfile", "runFanoutBudget", "lane",
 		"extensionBindings",
 	]);
 	for (const field of Object.keys(parsed)) {
@@ -335,6 +345,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	} catch (error) {
 		throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${error instanceof Error ? error.message : String(error)}`);
 	}
+	if (parsed.childProfile !== undefined) parsed.childProfile = parseChildProfileProvenance(parsed.childProfile, `async recovery descriptor '${descriptorPath}' childProfile`);
 	if (parsed.capabilityCeiling !== undefined) parsed.capabilityCeiling = parseSubagentCapabilityCeiling(parsed.capabilityCeiling, `async recovery descriptor '${descriptorPath}' capabilityCeiling`);
 	if (parsed.thinkingCeiling !== undefined) parsed.thinkingCeiling = parseThinkingLevel(parsed.thinkingCeiling, `async recovery descriptor '${descriptorPath}' thinkingCeiling`);
 	if (parsed.extensionBindings !== undefined) parsed.extensionBindings = normalizeExtensionBindings(parsed.extensionBindings)!.value;
@@ -495,6 +506,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					model: selectedStep.model,
 					thinking: selectedStep.thinking,
 					launchContractDigest: selectedStep.launchContractDigest ?? result?.results?.[requestedIndex]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
+					...childProfileField(selectedStep.childProfile, result?.results?.[requestedIndex]?.childProfile, result?.childProfile, recoveryDescriptor?.childProfile),
 					...(selectedStep.runner ? { runner: selectedStep.runner } : {}),
 					...(selectedStep.externalJob ? { externalJob: selectedStep.externalJob } : {}),
 					...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -527,6 +539,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				model: selected.step.model,
 				thinking: selected.step.thinking,
 				launchContractDigest: selected.step.launchContractDigest ?? result?.results?.[selected.index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
+				...childProfileField(selected.step.childProfile, result?.results?.[selected.index]?.childProfile, result?.childProfile, recoveryDescriptor?.childProfile),
 				...(selected.step.runner ? { runner: selected.step.runner } : {}),
 				...(selected.step.externalJob ? { externalJob: selected.step.externalJob } : {}),
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
@@ -586,6 +599,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		index, ...(resumeCwd ? { cwd: resumeCwd } : {}), ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}), ...(stepThinking ? { thinking: stepThinking } : {}),
 		launchContractDigest: statusStep?.launchContractDigest ?? resultStep?.launchContractDigest ?? fallbackResultStep?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
+		...childProfileField(statusStep?.childProfile, resultStep?.childProfile, fallbackResultStep?.childProfile, result?.childProfile, recoveryDescriptor?.childProfile),
 		...(statusStep?.runner ? { runner: statusStep.runner } : {}), ...(statusStep?.externalJob ? { externalJob: statusStep.externalJob } : {}),
 		...(capabilityCeiling ? { capabilityCeiling } : {}), ...(thinkingCeiling ? { thinkingCeiling } : {}),
 		...(acceptance !== undefined ? { acceptance } : {}), ...(recoveryDescriptor ? { recoveryDescriptor } : {}),

@@ -35,6 +35,18 @@ describe("dynamic fanout helpers", () => {
 		assert.deepEqual(materialized.parallel.map((task) => task.label), ["Review src/a.ts", "Review src/b.ts"]);
 	});
 
+	it("preserves bounded routed provenance through runner materialization", () => {
+		const childProfile = { profile: "review", source: "test-router", confidence: 91 };
+		const step = {
+			expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
+			parallel: { agent: "reviewer", task: "Review {target.path}", model: "test/routed", thinking: "high", modelSource: "resolver", childProfile },
+			collect: { as: "reviews" },
+		} as unknown as ChainStep;
+		const materialized = materializeDynamicParallelStep(step, outputs, 1, { allowRunnerFields: true });
+		assert.deepEqual(materialized.parallel.map((task) => (task as typeof task & { childProfile?: unknown }).childProfile), [childProfile, childProfile]);
+		assert.throws(() => materializeDynamicParallelStep({ ...step, parallel: { ...(step as unknown as { parallel: Record<string, unknown> }).parallel, childProfile: { ...childProfile, confidence: 101 } } } as ChainStep, outputs, 1, { allowRunnerFields: true }), /confidence/);
+	});
+
 	it("rejects missing structured sources, over-limit arrays, duplicate keys, colliding ids, and bad templates", () => {
 		const base: ChainStep = {
 			expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },

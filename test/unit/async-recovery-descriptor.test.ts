@@ -23,9 +23,11 @@ describe("async recovery descriptor", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-recovery-digest-"));
 		try {
 			const digest = "launch-contract-digest";
+			const childProfile = { profile: "review", source: "test-router", confidence: 87 };
 			fs.writeFileSync(path.join(root, "recovery-descriptor.json"), JSON.stringify({
 				version: 1,
 				launchContractDigest: digest,
+				childProfile,
 				runFanoutBudget: runFanoutBudget("run-digest"),
 				sourceRunId: "run-digest",
 				agent: "worker",
@@ -43,6 +45,7 @@ describe("async recovery descriptor", () => {
 			const descriptor = readAsyncRecoveryDescriptor(root);
 
 			assert.equal(descriptor?.launchContractDigest, digest);
+			assert.deepEqual(descriptor?.childProfile, childProfile);
 			assert.equal(descriptor?.context, "fork");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });

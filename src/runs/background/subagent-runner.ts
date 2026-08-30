@@ -4188,6 +4188,7 @@ async function runSubagentInner(
 					...(task.label ? { label: task.label } : {}),
 					structured: Boolean(task.structuredOutputSchema),
 					...(task.agentContract ? { agentContract: task.agentContract } : {}),
+					...(task.childProfile ? { childProfile: task.childProfile } : {}),
 					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
 					status: "pending",

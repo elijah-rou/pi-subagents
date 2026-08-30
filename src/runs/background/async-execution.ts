@@ -237,6 +237,7 @@ interface AsyncSingleParams {
 	agentContract?: AgentContract;
 	structuredOutputSchema?: JsonSchemaObject;
 	modelOverride?: string;
+	childProfile?: import("../../shared/types.ts").ChildProfileProvenance;
 	modelOverrideFromParent?: boolean;
 	fast?: boolean;
 	thinkingOverride?: AgentConfig["thinking"];
@@ -1756,6 +1757,7 @@ export function executeAsyncSingle(
 		version: 1,
 		...(lane ? { lane } : {}),
 		launchContractDigest,
+		...(params.childProfile ? { childProfile: params.childProfile } : {}),
 		...(extensionBindings ? { extensionBindings } : {}),
 		runFanoutBudget,
 		sourceRunId: id,
@@ -1868,6 +1870,7 @@ export function executeAsyncSingle(
 						definitionDigest: agentDefinitionDigest(agentConfig),
 						launchBindingTask: task,
 						launchContractDigest,
+						...(params.childProfile ? { childProfile: params.childProfile } : {}),
 						...(extensionBindings ? { extensionBindings } : {}),
 						launchResolvedExtensions,
 						effectiveAcceptance: resolvedAcceptance,

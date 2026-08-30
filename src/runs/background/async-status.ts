@@ -23,6 +23,7 @@ import { validateAsyncStatusLaneMetadata } from "../shared/lane-metadata.ts";
 import { formatWorkflowPreflightPlanSummary, formatWorkflowPreflightWarningSummary } from "../../workflows/workflow-preflight.ts";
 import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { formatTimeoutRecoveryLines, projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
+import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -78,6 +79,7 @@ interface AsyncRunStepSummary {
 	effects?: AsyncJobStep["effects"];
 	processTerminal?: AsyncJobStep["processTerminal"];
 	timeoutRecovery?: TimeoutRecoveryProjection;
+	childProfile?: AsyncJobStep["childProfile"];
 	launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
@@ -342,6 +344,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.acceptance ? { acceptance: step.acceptance } : {}),
 			...(step.agentContract ? { agentContract: step.agentContract } : {}),
 			...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
+			...(step.childProfile ? { childProfile: parseChildProfileProvenance(step.childProfile, `async status step ${index}.childProfile`) } : {}),
 			...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
 			...(step.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: step.runtimeAcknowledgedExtensions } : {}),
 			...(step.execution ? { execution: step.execution } : {}),

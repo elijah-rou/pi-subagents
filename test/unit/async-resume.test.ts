@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { asyncReviveRequiresRecoveryDescriptor, buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import { summarizeAsyncStatus } from "../../src/runs/background/async-status.ts";
+import type { AsyncStatus } from "../../src/shared/types.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 
 function writeJson(filePath: string, value: object): void {
@@ -37,6 +39,31 @@ describe("async resume lookup", () => {
 			assert.equal(target.agent, "worker");
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.cwd, root);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("preserves bounded child profile provenance through status and result reload", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-profile-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "run-profile");
+			const sessionFile = path.join(root, "session.jsonl");
+			const childProfile = { profile: "review", source: "test-router", confidence: 88 };
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			const status = { runId: "run-profile", mode: "single", state: "complete", startedAt: 100, endedAt: 200, lastUpdate: 200, cwd: root, steps: [{ agent: "worker", status: "complete", sessionFile, childProfile }] } as AsyncStatus;
+			writeJson(path.join(asyncDir, "status.json"), status);
+			assert.deepEqual(summarizeAsyncStatus(asyncDir, status).steps[0]?.childProfile, childProfile);
+			assert.throws(() => summarizeAsyncStatus(asyncDir, { ...status, steps: [{ ...status.steps![0]!, childProfile: { ...childProfile, profile: "x".repeat(65) } }] }), /childProfile.profile/);
+			assert.deepEqual(resolveAsyncResumeTarget({ id: "run-profile" }, { asyncDirRoot: asyncRoot, resultsDir }).childProfile, childProfile);
+
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			writeJson(path.join(resultsDir, "run-profile.json"), { runId: "run-profile", mode: "single", state: "complete", success: true, cwd: root, results: [{ agent: "worker", success: true, sessionFile, childProfile }] });
+			assert.deepEqual(resolveAsyncResumeTarget({ id: "run-profile" }, { asyncDirRoot: asyncRoot, resultsDir }).childProfile, childProfile);
+			writeJson(path.join(resultsDir, "run-profile.json"), { runId: "run-profile", mode: "single", state: "complete", success: true, cwd: root, results: [{ agent: "worker", success: true, sessionFile, childProfile: { ...childProfile, source: "x".repeat(257) } }] });
+			assert.throws(() => resolveAsyncResumeTarget({ id: "run-profile" }, { asyncDirRoot: asyncRoot, resultsDir }), /childProfile.source/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

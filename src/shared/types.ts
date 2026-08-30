@@ -748,6 +748,7 @@ export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
 export interface SteeringRecoveryDescriptor {
 	version: 1;
 	launchContractDigest?: string;
+	childProfile?: ChildProfileProvenance;
 	extensionBindings?: ExtensionBindings;
 	runFanoutBudget: RunFanoutBudgetDescriptor;
 	sourceRunId: string;
@@ -1877,6 +1878,7 @@ export interface AsyncStatus {
 		acceptanceInput?: AcceptanceInput;
 		agentContract?: AgentContract;
 		launchContractDigest?: string;
+		childProfile?: ChildProfileProvenance;
 		launchResolvedExtensions?: LaunchResolvedChildExtensionsV1;
 		runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 		execution?: ExecutionProjection;
