@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { checkPidLiveness, reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 
 function tempRoot(prefix: string): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -34,6 +35,9 @@ describe("async stale-run reconciliation", () => {
 		try {
 			const asyncDir = path.join(root, "run-dead");
 			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "session.jsonl");
+			const childProfile = { profile: "repair", source: "test-router", confidence: 82 };
+			fs.writeFileSync(sessionFile, "", "utf-8");
 			writeStatus(asyncDir, {
 				lifecycleArtifactVersion: 3,
 				runId: "run-dead",
@@ -46,7 +50,7 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1000,
 				currentStep: 0,
-				steps: [{ agent: "scout", status: "running", startedAt: 1000, contextOverflow: true }],
+				steps: [{ agent: "scout", status: "running", startedAt: 1000, contextOverflow: true, sessionFile, childProfile }],
 			});
 
 			const result = reconcileAsyncRun(asyncDir, {
@@ -71,6 +75,7 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(resultJson.state, "failed");
 			assert.equal(resultJson.exitCode, 1);
 			assert.equal(resultJson.results[0].contextOverflow, true);
+			assert.deepEqual(resultJson.results[0].childProfile, childProfile);
 			assert.match(resultJson.summary, /process 12345 exited or disappeared/);
 			assert.match(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"), /subagent\.run\.repaired_stale/);
 
@@ -82,6 +87,8 @@ describe("async stale-run reconciliation", () => {
 			});
 			assert.equal(second.repaired, false);
 			assert.equal(fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"), resultText);
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			assert.deepEqual(resolveAsyncResumeTarget({ id: "run-dead" }, { asyncDirRoot: path.join(root, "missing-async"), resultsDir }).childProfile, childProfile);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

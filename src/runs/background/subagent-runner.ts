@@ -85,6 +85,7 @@ import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidT
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
+import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, formatSubagentModelVerificationError, isContextOverflow, isRetryableModelFailureAttempt, recordRetryableModelFailure } from "../shared/model-fallback.ts";
@@ -2916,6 +2917,7 @@ async function runSubagentInner(
 				success: statusResultSuccess(state, step),
 				sessionFile: step.sessionFile,
 				model: step.model,
+				...(step.childProfile ? { childProfile: parseChildProfileProvenance(step.childProfile, "recoverable async result childProfile") } : {}),
 				attemptedModels: step.attemptedModels,
 				modelAttempts: step.modelAttempts,
 				usage: usageFromAttempts(step.modelAttempts),
@@ -5508,7 +5510,7 @@ async function runSubagentInner(
 				transcriptError: r.transcriptError,
 				agentContract: r.agentContract,
 				launchContractDigest: r.launchContractDigest,
-				childProfile: r.childProfile,
+				childProfile: r.childProfile ?? (statusPayload.steps[resultIndex]?.childProfile ? parseChildProfileProvenance(statusPayload.steps[resultIndex].childProfile, "terminal async result childProfile") : undefined),
 				launchResolvedExtensions: r.launchResolvedExtensions,
 				runtimeAcknowledgedExtensions: r.runtimeAcknowledgedExtensions,
 				runner: r.runner,

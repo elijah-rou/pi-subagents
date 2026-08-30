@@ -9,6 +9,7 @@ import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
+import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
 export type PidLiveness = "alive" | "dead" | "unknown";
 
@@ -263,6 +264,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 				error: step.status === "complete" || step.status === "completed" ? undefined : step.error ?? message,
 				success: step.status === "complete" || step.status === "completed",
 				model: step.model,
+				...(step.childProfile ? { childProfile: parseChildProfileProvenance(step.childProfile, "stale-run repair childProfile") } : {}),
 				attemptedModels: step.attemptedModels,
 				modelAttempts: step.modelAttempts,
 				contextOverflow: step.contextOverflow,

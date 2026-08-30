@@ -86,13 +86,15 @@ describe("external CLI async lifecycle", () => {
 		const resultPath = path.join(dir, "result.json");
 		fs.mkdirSync(resultPath);
 		const configPath = path.join(dir, "config.json");
+		const childProfile = { profile: "recovery", source: "test-router", confidence: 84 };
 		fs.writeFileSync(configPath, JSON.stringify({
 			id: "external-pending-result",
 			sessionId: "session-external",
 			steps: [{
 				agent: "external",
 				task: "Task text",
-				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('ok')"] },
+				childProfile,
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stderr.write('failed'); process.exit(1)"] },
 				inheritProjectContext: false,
 				inheritSkills: false,
 			}],
@@ -107,13 +109,15 @@ describe("external CLI async lifecycle", () => {
 		const exitCode = await runProcess(process.execPath, [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts"), configPath], repo);
 		assert.equal(exitCode, 0);
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-		assert.equal(status.state, "complete");
+		assert.equal(status.state, "failed");
+		assert.deepEqual(status.steps[0].childProfile, childProfile);
 
 		fs.rmSync(resultPath, { recursive: true, force: true });
 		assert.deepEqual(resultFilesForSession(dir, "session-external"), ["result.json"]);
 		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-		assert.equal(result.success, true);
-		assert.equal(result.results[0].output, "ok");
+		assert.equal(result.success, false);
+		assert.equal(result.results[0].success, false);
+		assert.deepEqual(result.results[0].childProfile, childProfile);
 	});
 
 	it("mirrors a child into Orca without replacing its configured runner", { skip: process.platform === "win32" ? "Orca progress tabs are not supported on Windows" : undefined }, async () => {
