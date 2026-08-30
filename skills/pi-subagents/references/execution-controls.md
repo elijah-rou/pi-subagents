@@ -10,7 +10,7 @@ Omit `action` for execution. Use one direct `{ agent, task? }` call for one chil
 
 Agent authoring is human-only through `/subagents`. Refinement uses `/subagents-refine`. Watchdog administration uses `/subagents-watchdog`. Profile administration uses `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, and `/subagents-check-profile`. Fleet inspection uses `/subagents-fleet`. Trusted RPC clients retain the existing schedule-management RPC methods.
 
-Missions, lane merge/supersession policy, broad worktree cleanup, and optional pane administration do not have a supported human replacement in Package 1. Their runtime remains temporarily retained, but primary access is removed pending Packages 2 and 3. Do not invent a slash command for them.
+Package 2a removed mission/goal administration and all new mission writes. One-release legacy readers and completion synchronization are not a callable workflow surface. Lane merge/supersession policy, broad worktree cleanup, and optional pane administration remain unavailable to models. Do not invent a mission slash command.
 
 `append-step` is internal executor compatibility. Models, slash commands, and RPC calls cannot use it.
 

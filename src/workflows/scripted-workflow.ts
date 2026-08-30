@@ -1755,7 +1755,7 @@ export async function runWorkflowScript(options: RunWorkflowScriptOptions): Prom
 				);
 			};
 			if (message.method === "state.get" || message.method === "state.set") {
-				if (!options.state) return respond(Promise.reject(new Error("Workflow state is unavailable without a mission.")));
+				if (!options.state) return respond(Promise.reject(new Error("Workflow-owned state is unavailable for this workflow.")));
 				let key: string;
 				try {
 					key = validateKey(message.args.key, "state");

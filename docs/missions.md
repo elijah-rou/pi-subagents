@@ -1,18 +1,11 @@
-# Missions: Package 1 access and migration status
+# Legacy mission compatibility
 
-Mission runtime and persisted records are temporarily retained for compatibility and recovery while simplification Packages 2 and 3 decide their final disposition.
+Package 2a removed mission and goal management from new delegation. Direct runs, workflows, workflow children, and schedules do not create mission records, bindings, indexes, details, content, or goal notices. Former mission actions and request fields are rejected on model and trusted-host surfaces.
 
-Package 1 removed mission actions and mission launch fields from the model-facing `subagent` schema. Models cannot create, list, show, update, attach, resolve, close, disable, or explicitly bind missions. There is no supported slash-command, RPC, or other human replacement for mission administration in Package 1. Do not invent one.
+Existing records remain passively readable by status, Fleet, and Herdr. Async directories that already contain a schema-v1 `mission.json` binding retain completion synchronization so in-flight pre-Package-2a results are not lost. No current launch creates that binding or a mission observer index. Unknown artifacts are preserved without rewriting.
 
-Ordinary delegation may still interact with automatic mission runtime behavior internally. Existing mission records, links, journals, decisions, receipts, workflow state, and recovery readers remain implementation details during this transition. Their presence does not make their former action names or fields callable.
+The `missions` configuration key is deprecated and retained only to locate legacy records. This compatibility reader/writer may be removed no earlier than after one published release containing Package 2a.
 
-For current model-visible recovery, use retained lifecycle surfaces:
+Use `status`, `debug.run`, Fleet, `subagent_wait`, async status/events/results, process-terminal proof, workflow receipts, and workflow-child summaries for recovery. Use native `steer`, `interrupt`, `resume`, and `stop` controls where supported. `runs.state.get/set` is workflow-owned and writes bounded atomic state under the workflow lifecycle or artifact root.
 
-- `status` and `debug.run` for bounded run state and diagnostics;
-- `children.list` before `resume`;
-- `steer`, `interrupt`, `resume`, and `stop` for supported run control;
-- Fleet and `subagent_wait` for background visibility and completion.
-
-Do not pass former mission fields in direct or workflow requests. Do not call former mission or schedule actions through the model tool. Existing trusted RPC schedule management is separate and does not expose mission administration.
-
-Packages 2 and 3 must define any artifact horizon, migration command, extraction, or replacement before mission runtime or readers are removed. Until then, preserve existing records and avoid rewriting unknown artifacts.
+Schedules remain operational and independent of missions.

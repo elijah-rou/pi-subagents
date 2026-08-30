@@ -323,7 +323,7 @@ const task = [
 return runs.run("test", { agent: "worker", task });
 ````
 
-The retained runtime may create one enclosing mission automatically. Its children do not create separate missions. Package 1 removed mission launch fields from the model schema; mission access and migration status are documented in [Missions](missions.md).
+Package 2a does not create missions for workflows or their children. Recovery uses workflow receipts, child summaries, async status/events/results, and workflow-owned state. Existing pre-Package-2a mission records remain passively readable for one release; see [Legacy missions](missions.md).
 
 ### Repeatable workflows
 

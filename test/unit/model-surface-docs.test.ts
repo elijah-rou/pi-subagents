@@ -40,6 +40,6 @@ describe("model-facing docs and skill contract", () => {
 		assert.doesNotMatch(modelGuidance, /action\s*:\s*["'](?:create|update|delete|eject|disable|enable|reset|refine(?:\.[\w-]+)?|schedule\.[\w-]+|watchdog\.[\w-]+|mission\.[\w-]+|inspector\.[\w-]+|project\.[\w-]+|lane\.record[\w-]+|worktree\.cleanup|grant-spawn-budget)["']/i);
 		assert.doesNotMatch(modelGuidance, /\b(?:missionId|missionUpdate|missionStatus|missionScope|runMode|runStatus|supersession)\s*:/i);
 		assert.doesNotMatch(modelGuidance, /\bmission\s*:\s*false\b/i);
-		assert.match(modelGuidance, /Mission administration, lane merge\/supersession policy, broad worktree cleanup, and optional pane administration have no supported human replacement/i);
+		assert.match(modelGuidance, /Package 2a removed mission(?: and goal|\/goal)? administration and all new mission writes/i);
 	});
 });

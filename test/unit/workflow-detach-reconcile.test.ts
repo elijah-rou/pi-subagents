@@ -158,6 +158,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({ runId: "child-1", mode: "single", state: "complete", startedAt: 1, lastUpdate: 2, sessionId: "session-1", steps: [{ agent: "worker", status: "complete", sessionFile }] }), "utf-8");
 		const status = { ...pausedWorkflow("child-1"), runId: workflowRunId, sessionId: "session-1" };
 		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(status), "utf-8");
+		fs.writeFileSync(path.join(asyncDir, "workflow-state.json"), JSON.stringify({ review: "waiting" }), "utf-8");
 		writeWorkflowReceipt(asyncDir, buildWorkflowReceipt({
 			workflowRunId,
 			state: "paused",
@@ -205,6 +206,7 @@ describe("reconcileDetachedWorkflowChildCompletion", () => {
 		assert.match(events, /"state":"failed"/);
 		assert.match(events, /"workflowResolution":"settled-awaiting-resume"/);
 		assert.match(events, /"call":"runs.run"/);
+		assert.equal(fs.existsSync(path.join(asyncDir, "workflow-state.json")), false);
 	});
 
 	it("classifies interrupted detached settlement without losing child details", () => {

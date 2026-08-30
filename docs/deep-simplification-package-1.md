@@ -8,7 +8,7 @@ The model-facing `subagent` action surface is exactly: `list`, `get`, `models`, 
 
 The executor retains a separate trusted-host dispatch list containing all 56 pre-Package-1 actions. Internal `append-step` compatibility remains executable only through the executor's internal `execute` entrypoint; model, slash, and RPC normalizers reject it. Public normalization rejects every non-model action. Supported administration is limited to `/subagents`, `/subagents-refine`, `/subagents-watchdog`, the profile slash commands, `/subagents-fleet`, and current RPC schedule management. Slash and RPC hosts use a distinct trusted normalization and executor entrypoint. The root and fanout model tools use only the public entrypoint.
 
-This is a surface contraction, not subsystem removal. Agent authoring uses `/subagents`; refinement uses `/subagents-refine`; watchdog administration uses `/subagents-watchdog`; profile administration uses the existing profile slash commands; Fleet inspection uses `/subagents-fleet`; and existing RPC schedule management remains supported. Missions, lane merge/supersession policy, broad cleanup, and optional pane administration have no supported human replacement in Package 1. Their runtime is temporarily retained while primary access is removed pending Packages 2 and 3. Existing RPC spawn requests still pass public execution normalization, so legacy public orchestration shapes remain rejected.
+This is a surface contraction, not subsystem removal. Agent authoring uses `/subagents`; refinement uses `/subagents-refine`; watchdog administration uses `/subagents-watchdog`; profile administration uses the existing profile slash commands; Fleet inspection uses `/subagents-fleet`; and existing RPC schedule management remains supported. At Package 1, missions, lane merge/supersession policy, broad cleanup, and optional pane administration had no supported human replacement. Package 2a subsequently removed new mission/goal runtime writes while retaining one-release legacy readers and completion synchronization. Existing RPC spawn requests still pass public execution normalization, so legacy public orchestration shapes remain rejected.
 
 ## Schema delta
 
@@ -24,7 +24,7 @@ Direct and `workflowScript` execution, acceptance, capability and resource ceili
 
 ## Migration
 
-Models must use only the 15 retained actions. The supported human/RPC interfaces are exactly those named above. Missions, lane merge/supersession, broad cleanup, and panes have no supported replacement pending Packages 2 and 3. Do not route trusted execution through root or child model tools.
+Models must use only the 15 retained actions. The supported human/RPC interfaces are exactly those named above. Package 2a subsequently removed mission administration and all new mission writes. Lane merge/supersession, broad cleanup, and panes still have no supported replacement pending Package 3. Do not route trusted execution through root or child model tools.
 
 Current tool reference and execution-control skill guidance now distinguish the model surface from trusted temporary administration. Package 0 evidence and the committed baseline were not rewritten.
 

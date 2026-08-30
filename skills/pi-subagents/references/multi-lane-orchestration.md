@@ -1,6 +1,6 @@
 # Multi-Lane Orchestration
 
-Use this reference when several independent tasks need coordinated workers, worktrees, or repositories. It defines lane ownership; use the other pi-subagents references for run controls, prompts, and mission details. The parent remains the final decision-maker.
+Use this reference when several independent tasks need coordinated workers, worktrees, or repositories. It defines lane ownership; use the other pi-subagents references for run controls, prompts, and workflow recovery. The parent remains the final decision-maker.
 
 Create lanes only when delegation materially improves evidence, independent review, or isolated execution. Do not manufacture parallelism: keep dependent work serial, and only split work when each lane has a distinct decision and useful output.
 
@@ -38,13 +38,13 @@ async lanes are launched or triaged, yield rather than use
 done” means keep the board moving while safe immediate work remains. If only
 async lanes are running, record the revisit trigger and yield.
 
-An ordinary coordinated workflow has one mission. Use its durable state, artifacts, run records, and receipts for recovery. Treat a receipt as evidence, not as authority or acceptance.
+An ordinary coordinated workflow uses workflow-owned state, artifacts, async status/events/results, child summaries, and receipts for recovery. Package 2a creates no mission. Treat a receipt as evidence, not as authority or acceptance.
 
 After a writer produces a candidate, run the required fresh-context, read-only reviewer. The reviewer inspects the exact worktree and returns evidence-backed findings. The parent decides which findings are in scope and whether the lane is ready. Use `review-and-validation.md` for finding disposition, validation, and gate-failure triage. Send accepted fixes to that lane's sole writer, then rerun only the affected gate.
 
 ## Handoff, cleanup, and recovery
 
-Use stable lane-qualified artifact paths for reports and review output. A handoff states the lane status, repository and worktree, changed files, validation, open decisions, next action, and artifact or receipt paths. Copy only the final evidence to memory, a mission record, or a PR/comment, then remove scratch files from the active worktree before closing the lane.
+Use stable lane-qualified artifact paths for reports and review output. A handoff states the lane status, repository and worktree, changed files, validation, open decisions, next action, and artifact or receipt paths. Copy only the final evidence to memory, a workflow artifact, or a PR/comment, then remove scratch files from the active worktree before closing the lane.
 
 Keep a worktree until its handoff is durable, no run owns it, and no later gate needs it. Clean up only inside the recorded authority boundary. If a run stops or needs attention, preserve its worktree and artifacts, record the last known state and recovery owner, then resume that run or create one replacement lane from the handoff. Do not start another writer while worktree ownership is uncertain.
 

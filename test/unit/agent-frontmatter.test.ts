@@ -603,7 +603,15 @@ Do work
 	it("loads packaged worker and oracle with fork defaultContext and advisor alias", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-context-"));
 		tempDirs.push(dir);
-		const agents = discoverAgentsAll(dir).builtin;
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		let agents: ReturnType<typeof discoverAgentsAll>["builtin"];
+		process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent-home");
+		try {
+			agents = discoverAgentsAll(dir).builtin;
+		} finally {
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
 
 		for (const name of ["worker", "oracle"]) {
 			const agent = agents.find((candidate) => candidate.name === name);

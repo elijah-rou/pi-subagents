@@ -303,7 +303,7 @@ This override affects only active top-level async runs in one parent session. It
 { "scheduledRuns": { "enabled": false, "maxPending": 20 } }
 ```
 
-Durable schedules are enabled by default and stored per project under `.pi/subagents/schedules/<id>/`. See [missions.md](missions.md#schedules) for usage.
+Durable schedules are enabled by default and stored per project under `.pi/subagents/schedules/<id>/`. See [Schedules](schedules.md) for usage.
 
 Set `storeRoot` to keep durable schedules outside project repositories. It must be an absolute path or a `~/` path, which expands from the user home directory. Each project is stored under a hash of its resolved working directory, so projects do not share schedules.
 
@@ -431,12 +431,13 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 }
 ```
 
-Automatic mission runtime remains enabled by default for ordinary launches with a task. Package 1 removed per-launch mission fields and mission actions from the model surface. Set `enabled: false` in configuration to disable automatic creation globally; see [Missions](missions.md) for the temporary access and migration status.
+Deprecated compatibility setting. Package 2a stopped mission creation and mission actions. Only `directory` changes where passive Fleet/Herdr/status readers look for records created before Package 2a. Remove the setting after old runs are no longer needed. Compatibility may be removed no earlier than after one published release containing Package 2a; see [Package 2a](deep-simplification-package-2a.md).
 
-- Mission records default to a project-keyed directory under pi's agent directory (`~/.pi/agent/missions/projects/<project-hash>/`). This keeps the project worktree clean.
-- `directory` may be absolute, `~/...`, or project-relative. Set it to `.pi/subagents/missions` to opt in to project-scoped records.
-- `retainTerminal` is a positive count (default `200`); pruning removes only the oldest completed, failed, or cancelled records and their pointers, never planned, active, waiting, needs-decision, or corrupt records.
-- The user-global index contains pointers only; missing-record pointers self-heal when globally listed. Set `globalIndex: false` to disable writes or `globalIndexDir` to redirect it.
+- Legacy mission records default to a project-keyed directory under pi's agent directory (`~/.pi/agent/missions/projects/<project-hash>/`). This keeps the project worktree clean.
+- `directory` may be absolute, `~/...`, or project-relative. It is only a passive lookup location for existing records.
+- The legacy `enabled`, `globalIndex`, `globalIndexDir`, and `retainTerminal` config shapes remain accepted but inert.
+- Persisted legacy bindings may also contain `writeGlobalIndex` and `retainTerminal`. They are accepted for schema-v1 compatibility and do not enable writes.
+- Compatibility readers never prune records, heal pointers, or write global indexes.
 
 ## `authorityPolicy`
 
@@ -507,7 +508,7 @@ Atomic status and result writes retry on `EACCES`, `EBUSY`, and `EPERM`, which o
 
 That is the right trade-off for a CLI. It is the wrong one for a long-lived process that loads `pi-subagents` in-process and runs those writers on its event loop: one contended rename stalls everything it serves for the length of the ladder, and because the thread is parked rather than busy, it presents as an unresponsive process sitting at 0% CPU. A wide fanout makes contention on a single `status.json` likely.
 
-Set this to bound that stall. The ladder keeps its number of attempts and only the sleeps shrink, because `run-fanout-budget` and mission state locking use the ladder's length as their attempt budget:
+Set this to bound that stall. The ladder keeps its number of attempts and only the sleeps shrink, because `run-fanout-budget` and workflow state locking use the ladder's length as their attempt budget:
 
 ```text
 PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS=1000

@@ -428,7 +428,6 @@ function executionParams(schedule: ScheduleRecord): SubagentParamsLike {
 		async: true,
 		context: "fresh",
 		cwd: schedule.cwd,
-		mission: false,
 		// Scheduled fires have no operator watching, so completions must name the origin.
 		scheduleOrigin: { id: schedule.id, ...(schedule.name ? { name: schedule.name } : {}) },
 		...(schedule.timeoutMs === undefined ? {} : { timeoutMs: schedule.timeoutMs }),
@@ -558,7 +557,6 @@ export class ScheduledRunManager {
 		if (Boolean(at) === Boolean(every)) return textResult("schedule.create requires exactly one trigger: at or every.", undefined, undefined, true);
 		if (params.overlap !== undefined && params.overlap !== "skip") return textResult("This first recurring slice supports overlap='skip' only.", undefined, undefined, true);
 		if (params.catchUp !== undefined && params.catchUp !== "none" && params.catchUp !== "latest") return textResult("catchUp must be 'none' or 'latest'.", undefined, undefined, true);
-		if (params.missionId !== undefined || params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) return textResult("Mission attachment is deferred from this first schedule slice.", undefined, undefined, true);
 		if (params.on !== undefined || params.timezone !== undefined || every === "day" || every === "week" || every === "month" || every === "year") return textResult("Calendar schedules are deferred from this first safe slice. Use a fixed interval such as every:'24h' or every:'7d'.", undefined, undefined, true);
 		const sessionId = ctx.sessionManager.getSessionId() ?? "unknown";
 		if (this.deps.resolveCapabilityCeiling?.(sessionId)) return textResult("Cannot persist a schedule while a capability ceiling is active.", undefined, undefined, true);

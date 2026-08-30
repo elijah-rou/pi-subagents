@@ -27,7 +27,7 @@ Runtime config can change orchestration behavior. `intercomBridge.resultDelivery
 
 Treat lane reports, review notes, council pass reports, and gate logs as scratch unless the user explicitly asks to keep them. Prefer `output: false` and the aggregate workflow result for short reports. When a later step needs a file, use the runtime-managed output artifact by setting a stable child key plus a relative `output` path such as `plans/deploy.md`; relative child outputs are saved under the run artifact directory, not the project root. Do not put `reports/...`, `*-report.json`, or similar repo-root paths in child task text.
 
-For durable evidence, copy only the final summary to session memory, a PR body/comment, a mission artifact, or a user-approved docs path outside the repo. After the PR, issue, or gate reaches a terminal state, delete or move scratch reports from the active worktree before reporting completion. Keep a project `.gitignore` entry for ad-hoc report patterns only as a safety net; it is not the cleanup mechanism.
+For durable evidence, copy only the final summary to session memory, a PR body/comment, a workflow artifact, or a user-approved docs path outside the repo. After the PR, issue, or gate reaches a terminal state, delete or move scratch reports from the active worktree before reporting completion. Keep a project `.gitignore` entry for ad-hoc report patterns only as a safety net; it is not the cleanup mechanism.
 
 ## Best Practices
 
@@ -46,7 +46,7 @@ This reference keeps cross-cutting policy and failure handling. Load the matchin
 
 | Need | Read |
 | --- | --- |
-| Execution syntax, lifecycle, async/wait, missions, controls, watchdog, or worktrees | [`references/execution-controls.md`](execution-controls.md) |
+| Execution syntax, lifecycle, async/wait, workflow state, controls, watchdog, or worktrees | [`references/execution-controls.md`](execution-controls.md) |
 | Role choice, prompt contracts, review/research/cleanup techniques, or model tiering | [`references/prompting-and-roles.md`](prompting-and-roles.md) |
 | Fresh review, validation, gate failures, finding disposition, and final delivery checks | [`references/review-and-validation.md`](review-and-validation.md) |
 | Independent lanes, repositories, worktrees, and handoffs | [`references/multi-lane-orchestration.md`](multi-lane-orchestration.md) |

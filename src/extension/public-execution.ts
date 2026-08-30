@@ -37,6 +37,11 @@ export interface PublicSubagentExecutionParams {
 	suppressRoutineResultIntercom?: unknown;
 	runFanoutBudget?: unknown;
 	runFanoutAdmitted?: unknown;
+	missionId?: unknown;
+	mission?: unknown;
+	missionUpdate?: unknown;
+	missionStatus?: unknown;
+	missionScope?: unknown;
 }
 
 export type PublicSubagentExecutionMode = "workflow" | "management";
@@ -59,6 +64,9 @@ export function normalizeTrustedHostSubagentExecution<T extends PublicSubagentEx
 }
 
 function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, trustedHost: boolean): PublicSubagentExecutionNormalization<T> {
+	if (params.missionId !== undefined || params.mission !== undefined || params.missionUpdate !== undefined || params.missionStatus !== undefined || params.missionScope !== undefined) {
+		return { ok: false, error: "Mission fields were removed. Workflow recovery uses run status, events, results, receipts, and workflow-owned state.", mode: params.action === undefined ? "workflow" : "management" };
+	}
 	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
 		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
 	}

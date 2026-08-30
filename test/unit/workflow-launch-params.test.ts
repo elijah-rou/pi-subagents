@@ -335,7 +335,6 @@ describe("workflow launch params", () => {
 				workflowParentRunId: "workflow-run",
 				workflowKey: "continue",
 				runFanoutBudget: { version: 1, rootRunId: "root-run", directory: "/tmp/fanout", limit: 64, parentPath: "parent/workflow[continue]" },
-				mission: false,
 				timeoutMs: 5_000,
 				toolBudget: { soft: 2, hard: 4, block: "*" },
 			},

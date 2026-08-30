@@ -63,10 +63,7 @@ import { applyModelExclusionsConfig, loadConfig, resolveAsyncByDefault, resolveS
 import { buildSubagentToolDescription, buildSubagentToolPromptMetadata } from "./tool-description.ts";
 import { formatWorkflowPreflightSummary, normalizeWorkflowPreflight } from "../workflows/workflow-preflight.ts";
 import { finalizeToolResult } from "./tool-result.ts";
-import { collectGoalContinuationNotices } from "../missions/goal-driver.ts";
 import { restoreForegroundRunHistory } from "../runs/foreground/foreground-history.ts";
-import { resolveMissionStoreLocation } from "../missions/store.ts";
-import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
 	type Details,
 	type MainWindowRendererConfig,
@@ -499,7 +496,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		}, { placement: fleetViewPlacement })
 		: undefined;
 	let executorScheduled: ((id: string, params: SubagentParamsLike, signal: AbortSignal, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
-	let goalTurnId = 0;
 	let parentSessionEnvValue: string | null = null;
 	const scheduledStoreRoot = config.scheduledRuns?.storeRoot === undefined ? undefined : resolveScheduledStoreRoot(config.scheduledRuns.storeRoot);
 	const scheduledRunManager = createScheduledRunManager({
@@ -761,23 +757,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events });
-		const ownerSessionId = state.currentSessionId;
-		if (!ownerSessionId) return;
-		goalTurnId += 1;
-		try {
-			const location = resolveMissionStoreLocation({ projectRoot: state.baseCwd, ...(config.missions ? { config: config.missions } : {}) });
-			const retainedChildren = listRetainedChildren(DIRS.async, ownerSessionId);
-			for (const notice of collectGoalContinuationNotices({ location, ownerSessionId, retainedChildren, turnId: goalTurnId })) {
-				handleSubagentControlNotice({
-					pi,
-					state,
-					visibleControlNotices: new Set(),
-					details: { source: "goal", event: notice.event, noticeText: notice.message },
-				});
-			}
-		} catch (error) {
-			console.error("Failed to evaluate goal missions:", error);
-		}
 	});
 
 	const disposeSlashCommands = registerSlashCommands(pi, state, {
@@ -887,7 +866,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const resetSessionState = (ctx: ExtensionContext, recovering: boolean, previousSessionFile?: string) => {
 		state.widgetsSuspended = false;
 		state.baseCwd = ctx.cwd;
-		goalTurnId = 0;
 		const previousRuntimeSessionId = state.currentSessionId;
 		resultDeliveryOwnership.claimPredecessor(previousSessionFile, previousRuntimeSessionId);
 		state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);

@@ -11,8 +11,17 @@ import { createResultDeliveryOwnership } from "../../src/runs/background/result-
 import { writeAsyncResultFile, writePendingAsyncResultFile } from "../../src/runs/background/result-files.ts";
 import { encodeIndexSegment, MAX_INDEX_SEGMENT_BYTES } from "../../src/runs/background/index-segment.ts";
 import { createScheduledRunManager, scheduledRunStorePath } from "../../src/runs/background/scheduled-runs.ts";
-import { prepareMissionLaunch, writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
-import { readMission, updateMission } from "../../src/missions/store.ts";
+import { readMission, resolveMissionStoreLocation } from "../../src/missions/store.ts";
+
+function writeLegacyMissionFixture(projectRoot: string, root: string, asyncDir: string, title: string) {
+	const location = resolveMissionStoreLocation({ projectRoot, config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") } });
+	const missionId = "legacy-1";
+	const timestamp = "2025-01-02T03:04:05.000Z";
+	fs.mkdirSync(location.missionDir, { recursive: true });
+	fs.writeFileSync(path.join(location.missionDir, `${missionId}.json`), JSON.stringify({ schemaVersion: 1, id: missionId, title, objective: title, status: "active", createdAt: timestamp, updatedAt: timestamp, runs: [], decisions: [], artifacts: [], workflowChildren: [{ workflowRunId: "workflow-1", key: "background", runId: "async-child", status: "running", startedAt: timestamp, updatedAt: timestamp, artifactPaths: [asyncDir], heartbeat: { updatedAt: timestamp, status: "running" } }] }));
+	fs.writeFileSync(path.join(asyncDir, "mission.json"), JSON.stringify({ schemaVersion: 1, missionId, projectRoot: location.projectRoot, missionDir: location.missionDir, globalIndexDir: location.globalIndexDir, writeGlobalIndex: location.writeGlobalIndex }));
+	return { missionId, location };
+}
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
@@ -338,24 +347,7 @@ describe("result watcher", () => {
 		fs.mkdirSync(asyncDir, { recursive: true });
 		try {
 			const outputPath = path.join(asyncDir, "output.md");
-			const binding = prepareMissionLaunch({
-				params: { mission: { title: "Workflow mission" }, task: "Run async child" },
-				projectRoot: project,
-				config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") },
-				ownerSessionId: "session-current",
-			});
-			assert.ok(binding);
-			writeMissionAsyncBinding(asyncDir, binding);
-			updateMission(binding.location, binding.missionId, {
-				upsertWorkflowChildren: [{
-					workflowRunId: "workflow-1",
-					key: "background",
-					runId: "async-child",
-					status: "running",
-					artifactPaths: [asyncDir],
-					heartbeat: { status: "running" },
-				}],
-			});
+			const binding = writeLegacyMissionFixture(project, root, asyncDir, "Workflow mission");
 			writeIndexedResult(path.join(resultsDir, "async-child.json"), {
 				id: "async-child",
 				runId: "async-child",
@@ -418,14 +410,7 @@ describe("result watcher", () => {
 				return originalRenameSync(source, destination);
 			}) as typeof fsDefault.renameSync);
 			syncBuiltinESMExports();
-			const binding = prepareMissionLaunch({
-				params: { mission: { title: "Long result mission" }, task: "Run async child" },
-				projectRoot: project,
-				config: { directory: path.join(root, "missions"), globalIndexDir: path.join(root, "global-index") },
-				ownerSessionId: "session-owner",
-			});
-			assert.ok(binding);
-			writeMissionAsyncBinding(asyncDir, binding);
+			const binding = writeLegacyMissionFixture(project, root, asyncDir, "Long result mission");
 			console.error = (...args: unknown[]) => { errors.push(args); };
 			writeIndexedResult(publicResultPath, {
 				id: runId,

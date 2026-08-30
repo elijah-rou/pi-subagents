@@ -55,7 +55,7 @@ When `surf-cli` is installed and loaded, Surf can expose a `gpt-pro` package age
 
 If you disabled the old bundled `gpt-pro` workaround with `agentOverrides.gpt-pro.disabled`, remove that override before using Surf's package agent.
 
-The Pi async run remains the source of truth for status, artifacts, wake/wait, mission attachment, retention, and diagnostics.
+The Pi async run remains the source of truth for status, artifacts, wake/wait, retention, and diagnostics. Package 2a does not attach new mission records.
 
 ### External CLI runner data boundary
 

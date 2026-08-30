@@ -16,7 +16,7 @@ Do not call agent authoring, refinement, profile, schedule, watchdog, mission, p
 
 Existing trusted RPC schedule-management methods remain supported for their current RPC consumers. RPC spawn still accepts only current direct or workflow execution and rejects removed public execution shapes.
 
-Mission administration, lane merge/supersession policy, broad cleanup, and optional pane administration have no supported human replacement in Package 1. Their runtime is temporarily retained while primary access is removed pending Packages 2 and 3. Do not invent or recommend a slash interface for them.
+Package 2a removed mission administration and all new mission writes; only bounded legacy reading and completion synchronization remain for one release. Lane merge/supersession policy, broad cleanup, and optional pane administration still have no supported human replacement. Do not invent or recommend a mission slash interface.
 
 `append-step` remains internal executor compatibility only. Model, slash, and RPC normalizers reject it.
 

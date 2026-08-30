@@ -258,8 +258,6 @@ describe("project schedule management", () => {
 			{ action: "schedule.create", id: "calendar", every: "day", at: "09:00", timezone: "UTC", workflowScript: "return runs.run('main', { agent: 'worker' })" },
 			{ action: "schedule.create", id: "two-targets", every: "1h", agent: "worker", workflowScript: "return 1" },
 			{ action: "schedule.create", id: "fork", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", context: "fork" },
-			{ action: "schedule.create", id: "mission-id", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", missionId: "mission-1" },
-			{ action: "schedule.create", id: "mission-off", every: "1h", workflowScript: "return runs.run('main', { agent: 'worker' })", mission: false },
 		] as const) {
 			const result = await h.manager.handleToolCall(params, h.ctx);
 			assert.equal(result.isError, true, JSON.stringify(params));
@@ -506,7 +504,7 @@ describe("recurring schedule execution", () => {
 		h.clock.now += 3_600_000;
 		h.timers.fireAll();
 		assert.equal(h.launches.length, 1);
-		assert.deepEqual(h.launches[0]?.params, { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Maintain backlog' })", async: true, context: "fresh", cwd: h.ctx.cwd, mission: false, scheduleOrigin: { id: "hourly", name: "workflowScript -> agent worker" } });
+		assert.deepEqual(h.launches[0]?.params, { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Maintain backlog' })", async: true, context: "fresh", cwd: h.ctx.cwd, scheduleOrigin: { id: "hourly", name: "workflowScript -> agent worker" } });
 		h.launches[0]!.resolve({ content: [{ type: "text", text: "Async worker" }], details: { mode: "single", results: [], asyncId: "async-1", asyncDir: "/tmp/async-1" } });
 		await flush();
 		assert.deepEqual([...h.manager.observedCompletionRunIds()], ["async-1"]);

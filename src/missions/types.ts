@@ -76,12 +76,6 @@ export interface MissionWorkflowChild {
 	heartbeat?: MissionChildHeartbeat;
 }
 
-export type MissionWorkflowChildUpdate = Pick<MissionWorkflowChild, "workflowRunId" | "key" | "status"> & Partial<Omit<MissionWorkflowChild, "workflowRunId" | "key" | "status" | "startedAt" | "updatedAt" | "artifactPaths" | "heartbeat">> & {
-	startedAt?: string;
-	artifactPaths?: string[];
-	heartbeat?: Omit<MissionChildHeartbeat, "updatedAt"> & { updatedAt?: string };
-};
-
 export interface MissionArtifact {
 	kind: MissionArtifactKind;
 	path: string;
@@ -171,33 +165,4 @@ export interface GlobalMissionIndexRecord extends MissionIndexEntry {
 export interface GlobalMissionListResult {
 	entries: GlobalMissionIndexRecord[];
 	warnings: string[];
-}
-
-export interface MissionCreateInput {
-	title: string;
-	objective: string;
-	goal?: boolean;
-	budget?: MissionTokenBudget;
-	status?: MissionStatus;
-	labels?: string[];
-	ownerSessionId?: string;
-}
-
-export interface MissionUpdateInput {
-	title?: string;
-	objective?: string;
-	goal?: MissionGoal | false;
-	budget?: MissionTokenBudget;
-	usage?: MissionTokenUsage;
-	status?: MissionStatus;
-	summary?: string;
-	labels?: string[];
-	acceptance?: unknown;
-	addRuns?: MissionRunLink[];
-	upsertWorkflowChildren?: MissionWorkflowChildUpdate[];
-	addArtifacts?: MissionArtifact[];
-	addDecisions?: Array<Omit<MissionDecision, "id" | "status" | "createdAt">>;
-	resolveDecision?: { id: string; resolution: string };
-	addReceipts?: Array<Omit<MissionReceipt, "createdAt">>;
-	addJournal?: Array<Omit<MissionJournalEntry, "id" | "createdAt" | "evidence"> & { evidence?: string[] }>;
 }

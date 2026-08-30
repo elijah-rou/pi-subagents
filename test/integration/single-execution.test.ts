@@ -61,8 +61,6 @@ import {
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { createNestedRoute, nestedRouteEnv, parseNestedEventRecords } from "../../src/runs/shared/nested-events.ts";
-import { resolveMissionStoreLocation } from "../../src/missions/store.ts";
-import { missionStatePath } from "../../src/missions/workflow-state.ts";
 import { discardPreservedWorktrees } from "../../src/runs/shared/parallel-handoff.ts";
 import { createWorktrees } from "../../src/runs/shared/worktree.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
@@ -2551,139 +2549,44 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.rmSync(asyncDir, { recursive: true, force: true });
 	});
 
-	it("keeps a git worktree clean while routing workflow children through one automatic mission", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "scanned auth" });
-		mockPi.onCall({ output: "reviewed auth" });
-		const projectDir = path.join(tempDir, "project");
-		const agentDir = path.join(tempDir, "agent");
-		fs.mkdirSync(projectDir);
-		execFileSync("git", ["init"], { cwd: projectDir, stdio: "ignore" });
-		execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: projectDir });
-		execFileSync("git", ["config", "user.name", "Test User"], { cwd: projectDir });
-		fs.writeFileSync(path.join(projectDir, "base.txt"), "base\n", "utf-8");
-		execFileSync("git", ["add", "base.txt"], { cwd: projectDir });
-		execFileSync("git", ["commit", "-m", "base"], { cwd: projectDir, stdio: "ignore" });
-		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = agentDir;
-		try {
-			const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
-			const result = await executor.execute(
-				"scripted-workflow",
-				{
-					async: false,
-					workflowScript: `
-						const stateType = typeof state;
-						const scan = await runs.run("scan", { agent: "echo", task: "Scan auth" });
-						const review = await runs.run("review", { agent: "echo", task: "Review: " + scan.output });
-						return { output: review.output, stateType };
-					`,
-				},
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(projectDir),
-			);
 
-			assert.equal(result.isError, undefined);
-			assert.match(result.content[0]?.text ?? "", /reviewed auth/);
-			assert.equal(result.details.mode, "workflow");
-			assert.equal(result.details.results.length, 2);
-			assert.equal(result.details.workflow?.value && (result.details.workflow.value as { stateType?: unknown }).stateType, "object");
-			assert.ok(result.details.missionId);
-			const missionFiles = fs.readdirSync(path.join(agentDir, "missions", "projects"), { recursive: true })
-				.filter((entry) => typeof entry === "string" && entry.endsWith(".json"));
-			assert.equal(missionFiles.length, 1);
-			const mission = JSON.parse(fs.readFileSync(path.join(agentDir, "missions", "projects", missionFiles[0]!), "utf-8")) as { objective?: string };
-			assert.equal(mission.objective, utils.PROMPT_REDACTED);
-			assert.deepEqual(result.details.workflow?.trace.filter((entry) => entry.state === "completed").map((entry) => entry.key), ["scan", "review"]);
-			assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: projectDir, encoding: "utf-8" }), "");
-		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	it("keeps foreground workflow state in unique owned artifact files and cleans no-artifact state", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const before = new Set(fs.existsSync(TEMP_ARTIFACTS_DIR) ? fs.readdirSync(TEMP_ARTIFACTS_DIR).filter((name) => name.startsWith(".workflow-state-")) : []);
+		for (let index = 0; index < 2; index += 1) {
+			const result = await executor.execute("repeated-workflow-id", { async: false, workflowScript: `state.set("count", ${index}); return await state.get("count");` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+			assert.equal(result.details.workflow?.value, index);
+			assert.equal(result.details.missionId, undefined);
 		}
+		const after = (fs.existsSync(TEMP_ARTIFACTS_DIR) ? fs.readdirSync(TEMP_ARTIFACTS_DIR) : []).filter((name) => name.startsWith(".workflow-state-") && !before.has(name));
+		assert.equal(after.length, 2);
+		assert.equal(new Set(after).size, 2);
+		const noArtifacts = await executor.execute("repeated-workflow-id", { async: false, artifacts: false, workflowScript: `state.set("temporary", true); return await state.get("temporary");` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.equal(noArtifacts.details.workflow?.value, true);
+		const final = (fs.existsSync(TEMP_ARTIFACTS_DIR) ? fs.readdirSync(TEMP_ARTIFACTS_DIR) : []).filter((name) => name.startsWith(".workflow-state-") && !before.has(name));
+		assert.deepEqual(new Set(final), new Set(after));
 	});
 
-	it("keeps workflow children mission-detached when automatic mission persistence fails", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ output: "scanned auth" });
-		mockPi.onCall({ output: "reviewed auth" });
-		const blockedIndex = path.join(tempDir, "blocked-mission-index");
-		fs.writeFileSync(blockedIndex, "not a directory", "utf-8");
-		const executor = makeExecutor([makeAgent("echo")], { missions: { directory: ".pi/subagents/missions", globalIndexDir: blockedIndex } });
-
-		const result = await executor.execute(
-			"scripted-workflow-mission-warning",
-			{
-				async: false,
-				workflowScript: `
-					const scan = await runs.run("scan", { agent: "echo", task: "Scan auth" });
-					const review = await runs.run("review", { agent: "echo", task: "Review: " + scan.output });
-					return review.output;
-				`,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, undefined);
+	it("preserves running async workflow state and removes only that file after terminal settlement", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "done", delay: 500 });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const result = await executor.execute("async-state", { async: true, workflowScript: `state.set("ready", true); const child = await runs.run("child", { agent: "echo", task: "wait" }); return child.output;` }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.ok(result.details.asyncId);
+		const asyncDir = path.join(DIRS.async, result.details.asyncId!);
+		const statePath = path.join(asyncDir, "workflow-state.json");
+		const statusPath = path.join(asyncDir, "status.json");
+		const deadline = Date.now() + 5_000;
+		while (!fs.existsSync(statePath) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.deepEqual(JSON.parse(fs.readFileSync(statePath, "utf-8")), { ready: true });
+		assert.equal((JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus).state, "running");
+		while ((JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus).state === "running" && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal((JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus).state, "complete");
+		assert.equal(fs.existsSync(statePath), false);
+		assert.equal(fs.existsSync(statusPath), true);
+		assert.equal(fs.existsSync(path.join(asyncDir, "events.jsonl")), true);
+		assert.equal(fs.existsSync(path.join(asyncDir, "mission.json")), false);
 		assert.equal(result.details.missionId, undefined);
-		assert.match(result.details.missionWarning ?? "", /Mission tracking unavailable/);
-		assert.equal(result.details.results.length, 2);
-		const missionDir = path.join(tempDir, ".pi/subagents", "missions");
-		const missionFiles = fs.existsSync(missionDir) ? fs.readdirSync(missionDir).filter((entry) => entry.endsWith(".json")) : [];
-		assert.equal(missionFiles.length, 1);
-	});
-
-	it("shares durable workflow state across a mission and omits it for mission:false", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-		const projectDir = path.join(tempDir, "project");
-		const agentDir = path.join(tempDir, "agent");
-		fs.mkdirSync(projectDir);
-		process.env.PI_CODING_AGENT_DIR = agentDir;
-		try {
-			const executor = makeExecutor([makeAgent("echo")], { missions: { globalIndex: false } });
-			const first = await executor.execute(
-				"mission-state-first",
-				{
-					async: false,
-					mission: { title: "Stateful workflow" },
-					workflowScript: `await state.set("review.stage", { count: 1 }); return await state.get("review.stage");`,
-				},
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(projectDir),
-			);
-			assert.equal(first.isError, undefined, first.content[0]?.text ?? "first workflow failed");
-			assert.ok(first.details.missionId);
-			assert.deepEqual(first.details.workflow?.value, { count: 1 });
-			const location = resolveMissionStoreLocation({ projectRoot: projectDir, agentDir });
-			const statePath = missionStatePath(location, first.details.missionId);
-			assert.equal(fs.existsSync(statePath), true);
-			assert.equal(path.relative(projectDir, statePath).startsWith(".."), true);
-
-			const second = await executor.execute(
-				"mission-state-second",
-				{ async: false, missionId: first.details.missionId, workflowScript: `return await state.get("review.stage");` },
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(projectDir),
-			);
-			assert.equal(second.isError, undefined, second.content[0]?.text ?? "second workflow failed");
-			assert.deepEqual(second.details.workflow?.value, { count: 1 });
-
-			const ephemeral = await executor.execute(
-				"mission-state-off",
-				{ async: false, mission: false, workflowScript: `return typeof state;` },
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(projectDir),
-			);
-			assert.equal(ephemeral.isError, undefined, ephemeral.content[0]?.text ?? "ephemeral workflow failed");
-			assert.equal(ephemeral.details.workflow?.value, "undefined");
-			assert.equal(ephemeral.details.missionId, undefined);
-		} finally {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		}
 	});
 
 	it("runs a direct single child in a managed worktree", { skip: !createSubagentExecutor || process.platform === "win32" ? "executor unavailable or worktree paths differ on Windows" : undefined }, async () => {

@@ -17,6 +17,7 @@ import { resolveAsyncResumeTarget } from "../background/async-resume.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { outputPathMappingFromTask } from "../shared/single-output.ts";
 import { readWorkflowReceipt, workflowReceiptPath, writeWorkflowReceipt, type WorkflowReceipt } from "../../workflows/workflow-receipt.ts";
+import { removeSettledWorkflowState } from "../../workflows/workflow-state.ts";
 import {
 	applyDetachedChildSettlement,
 	classifyWorkflowSettlement,
@@ -295,5 +296,6 @@ export function reconcileDetachedWorkflowChildCompletion(input: {
 			triggerTurn: true,
 		});
 	}
+	removeSettledWorkflowState(path.join(asyncDir, "workflow-state.json"), plan.status.state);
 	return true;
 }

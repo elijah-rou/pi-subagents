@@ -7,12 +7,18 @@ import {
 import { SUBAGENT_ACTIONS, SUBAGENT_INTERNAL_ACTIONS } from "../../src/shared/types.ts";
 
 describe("public subagent execution normalization", () => {
+	it("rejects removed mission fields on public and trusted surfaces", () => {
+		for (const params of [{ missionId: "old" }, { mission: false }, { missionUpdate: {} }]) {
+			assert.equal(normalizePublicSubagentExecution(params).ok, false);
+			assert.equal(normalizeTrustedHostSubagentExecution(params).ok, false);
+		}
+	});
 	it("publishes exactly the retained model action surface while retaining internal dispatch", () => {
 		assert.deepEqual(SUBAGENT_ACTIONS, [
 			"list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status",
 			"status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor",
 		]);
-		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 56);
+		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 49);
 		assert.ok(SUBAGENT_INTERNAL_ACTIONS.includes("schedule.create"));
 		assert.ok(!SUBAGENT_INTERNAL_ACTIONS.includes("append-step"));
 	});
@@ -77,7 +83,6 @@ describe("public subagent execution normalization", () => {
 		for (const params of [
 			{ action: "create" },
 			{ action: "schedule.create", every: "1h", workflowScript: "return 1" },
-			{ action: "mission.list" },
 			{ action: "watchdog.status" },
 			{ action: "worktree.cleanup", mode: "plan" },
 			{ action: "lane.recordMerge" },

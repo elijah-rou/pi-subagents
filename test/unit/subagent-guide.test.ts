@@ -23,6 +23,16 @@ describe("subagent guide", () => {
 		assert.ok(SUBAGENT_GUIDE_TOPICS.includes("migration-v059"));
 	});
 
+	it("keeps Package 2a mission guidance and Package 2b schedule guidance consistent", () => {
+		for (const topic of ["workflows", "missions", "tool-reference"] as const) {
+			const guide = readSubagentGuide(topic);
+			assert.doesNotMatch(guide, /(?:automatically creates?|may create|create one enclosing|ordinary coordinated workflow has) (?:one |an? )?mission/i);
+		}
+		const missions = readSubagentGuide("missions");
+		assert.match(missions, /Package 2a removed mission and goal management/);
+		assert.match(missions, /one published release/);
+	});
+
 	it("documents external CLI runner limits in packaged guide topics", () => {
 		assert.match(readSubagentGuide("tool-reference"), /External CLI agent profiles[\s\S]*native Pi child options[\s\S]*model override[\s\S]*native Pi tools/);
 		assert.match(readSubagentGuide("agents"), /External CLI agents use their own fail-closed capability contract[\s\S]*native Pi child options[\s\S]*one-shot and non-resumable/);
@@ -30,7 +40,7 @@ describe("subagent guide", () => {
 
 	it("documents broad cleanup as removed from the model surface", () => {
 		const guide = readSubagentGuide("tool-reference");
-		assert.match(guide, /broad worktree cleanup[\s\S]*no supported human replacement[\s\S]*primary access is removed pending Packages 2 and 3/i);
+		assert.match(guide, /broad worktree cleanup[\s\S]*no model-facing access/i);
 		assert.doesNotMatch(guide, /\{\s*action:\s*["']worktree\.cleanup/i);
 	});
 
