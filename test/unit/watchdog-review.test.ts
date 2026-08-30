@@ -188,6 +188,26 @@ describe("main watchdog review adapter", () => {
 		}
 	});
 
+	it("rejects symlinked automatic watchdog guidance", { skip: process.platform === "win32" }, async () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-watchdog-guidance-symlink-"));
+		try {
+			const current = model("openai", "gpt-guidance-symlink");
+			const target = path.join(cwd, "guidance-target.md");
+			fs.writeFileSync(target, "Secret-adjacent guidance", "utf-8");
+			fs.symlinkSync(target, path.join(cwd, "WATCHDOG.md"));
+			let streamed = false;
+			const streamFn: StreamFn = () => {
+				streamed = true;
+				return responseStream(fauxAssistantMessage("clean", { stopReason: "stop" }));
+			};
+
+			await assert.rejects(() => createMainWatchdogReview(createCtx({ current, cwd }), { streamFn })(request(enabledConfig(), [])), /regular non-symlink file/i);
+			assert.equal(streamed, false);
+		} finally {
+			fs.rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
 	it("records watchdog_warn emissions through the runtime seam", async () => {
 		const current = model("openai", "gpt-warning");
 		const ctx = createCtx({ current });

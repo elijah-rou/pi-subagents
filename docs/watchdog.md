@@ -63,7 +63,7 @@ Default strong-reviewer profile:
 
 ## Project review guidance
 
-The watchdog can append project-specific review focus without replacing its read-only tools, warning schema, or severity rules. By default, `guidance.watchdogMd` is `true`: a `WATCHDOG.md` regular file at the review `cwd` is loaded when present and ignored when absent. Set `guidance.systemPromptPath` for an explicit additional file; relative paths resolve from the review `cwd`, `~/` expands to the user home, and a missing or unreadable explicit path fails the review loudly.
+The watchdog can append project-specific review focus without replacing its read-only tools, warning schema, or severity rules. By default, `guidance.watchdogMd` is `true`: a UTF-8 `WATCHDOG.md` regular, non-symlink file at the review `cwd` is loaded when present and ignored when absent. Set `guidance.systemPromptPath` for an explicit additional file; relative paths resolve from the review `cwd`, `~/` expands to the user home, and a missing or unreadable explicit path fails the review loudly.
 
 ```json
 {
