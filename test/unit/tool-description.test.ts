@@ -70,6 +70,15 @@ describe("registered subagent tool description", () => {
 		assert.match(metadata.promptGuidelines!.join("\n"), /watchdog\.configure' and is ignored on dispatch/i);
 	});
 
+	it("advertises worktree cleanup as plan-only without speculative inputs", () => {
+		for (const description of [FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
+			const cleanupGuidance = description.match(/worktree\.cleanup[^\n]*/gi) ?? [];
+			assert.ok(cleanupGuidance.length > 0, "cleanup guidance should be present");
+			assert.ok(cleanupGuidance.some((line) => /plan-only|mode:'plan' only/i.test(line)));
+			assert.doesNotMatch(cleanupGuidance.join("\n"), /planId|apply/i);
+		}
+	});
+
 	it("keeps the full description when configured", () => {
 		const description = buildSubagentToolDescription({ toolDescriptionMode: "full" });
 		assert.equal(buildSubagentToolPromptMetadata({ toolDescriptionMode: "full" }).promptSnippet, undefined);

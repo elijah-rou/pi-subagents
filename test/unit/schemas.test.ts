@@ -236,6 +236,14 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(properties?.output?.description ?? ""), /outputReference.*outputPathMapping.*artifactPaths/i);
 	});
 
+	it("advertises worktree cleanup as plan-only", () => {
+		const properties = SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined;
+		assert.equal(properties?.planId, undefined, "caller-supplied cleanup plan ids should not be public");
+		assert.deepEqual(properties?.mode?.enum, ["steer", "follow_up", "auto", "plan"]);
+		assert.doesNotMatch(String(properties?.mode?.description ?? ""), /apply/i);
+		assert.match(String(properties?.mode?.description ?? ""), /worktree\.cleanup.*plan only/i);
+	});
+
 	it("omits removed legacy and workflow-child-only fields", () => {
 		for (const name of ["tasks", "chain", "concurrency", "chainDir", "step", "schedule", "scheduleName", "resume"]) {
 			assert.equal((SubagentParams?.properties as Record<string, unknown> | undefined)?.[name], undefined, `${name} should not be public`);
