@@ -390,28 +390,7 @@ subagent({ action: "project.close", cwd: "/path/to/repo" })
 
 A project pane runs its own Pi session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority, but it does not own or control the subagents inside the peer pane. Existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi/subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
 
-Other Pi extensions should use the versioned public TypeScript surface instead of invoking the model-facing tool or importing inspector internals:
-
-```ts
-import {
-  PROJECT_PANES_API_VERSION,
-  openProjectPane,
-  getProjectPaneStatus,
-  focusProjectPane,
-  closeProjectPane,
-} from "pi-subagents/project-panes";
-
-const opened = await openProjectPane({ cwd: "/path/to/repo", focus: false });
-const status = await getProjectPaneStatus({ cwd: "/path/to/repo" });
-const focused = await focusProjectPane({ cwd: "/path/to/repo" });
-const closed = await closeProjectPane({ cwd: "/path/to/repo", requireIdle: true });
-```
-
-The API returns discriminated structured results with canonical project root, binding path, pane identity, bounded Herdr runtime fields, stable error codes, and `PROJECT_PANES_API_VERSION: 1`.
-
-- Close fails closed unless the saved pane id is still verified for that project and Herdr explicitly reports `agent_status: "idle"`. `requireIdle` is retained for callers that already pass it, but it cannot weaken that rule.
-- Focus uses the saved pane id, asks Herdr for its `tab_id` or `workspace_id`, and then calls the matching Herdr focus command.
-- The API reports `trust: "human-verification-required"`. It never bypasses or claims to attest Pi's project-trust prompt.
+Project panes are available only through the operator-selected `project.open/status/close` actions and Herdr itself; there is no extension-to-extension package API. Close fails closed unless the saved pane id is still verified for that project and Herdr explicitly reports `agent_status: "idle"`. The actions never bypass or claim to attest Pi's project-trust prompt.
 
 ## Host session lifetime and completion wakes
 

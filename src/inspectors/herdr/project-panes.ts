@@ -13,7 +13,7 @@ import { invalidateFleetViews } from "../../shared/fleet-invalidation.ts";
 export const HERDR_PROJECT_PANE_ACTIONS = ["project.open", "project.status", "project.close"] as const;
 export type HerdrProjectPaneAction = typeof HERDR_PROJECT_PANE_ACTIONS[number];
 
-/** Versioned public contract exported through `pi-subagents/project-panes`. */
+/** Versioned structured result contract used by the internal Herdr lifecycle. */
 export const PROJECT_PANES_API_VERSION = 1 as const;
 export const PROJECT_PANE_TRUST_STATUS = "human-verification-required" as const;
 

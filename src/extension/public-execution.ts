@@ -2,7 +2,6 @@ export interface PublicSubagentExecutionParams {
 	action?: unknown;
 	mode?: unknown;
 	repo?: unknown;
-	planId?: unknown;
 	agent?: unknown;
 	task?: unknown;
 	handoffPath?: unknown;
