@@ -271,7 +271,7 @@ interface StepResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
-	acceptanceInput?: AcceptanceInput;
+	acceptanceInput?: import("../shared/acceptance.ts").EffectiveAcceptanceInput;
 	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 	writerProcesses?: PiWriterProcessInstanceExitV1[];
 	writerAttemptCount?: number;
@@ -1472,7 +1472,7 @@ async function runSingleStepInner(
 	// instructions never leak into the display name.
 	const childSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task, label: step.label });
 	if (step.effectiveAcceptance) {
-		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract), structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath) });
+		const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance, { reportOptional: isAgentContractV1(step.agentContract) && step.effectiveAcceptance.explicit, structuredOutput: Boolean(step.structuredOutput?.acceptanceReportPath) });
 		if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
 	}
 	const sessionEnabled = Boolean(step.sessionFile) || ctx.sessionEnabled;
@@ -2180,7 +2180,7 @@ async function runSingleStepInner(
 			cwd: step.cwd ?? ctx.cwd,
 			signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
 			abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",
-			reportOptional: isAgentContractV1(step.agentContract),
+			reportOptional: isAgentContractV1(step.agentContract) && step.effectiveAcceptance.explicit,
 			artifactsDir: ctx.artifactsDir,
 			runId: ctx.id,
 		}))
@@ -4062,7 +4062,7 @@ async function runSubagentInner(
 					placeholder.durationMs = 0;
 				}
 				previousOutput = "Dynamic fanout produced 0 results.";
-				const groupAcceptance = effectiveDynamicGroupAcceptance.explicit && !timedOut && !stopped
+				const groupAcceptance = effectiveDynamicGroupAcceptance.level !== "none" && !timedOut && !stopped
 					? await evaluateAcceptance(omitUndefinedProperties({
 						acceptance: effectiveDynamicGroupAcceptance,
 						output: "",
@@ -4074,7 +4074,7 @@ async function runSubagentInner(
 						cwd,
 						signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
 						abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? "Subagent timed out.",
-						reportOptional: isAgentContractV1(step.agentContract),
+						reportOptional: isAgentContractV1(step.agentContract) && effectiveDynamicGroupAcceptance.explicit,
 					}))
 					: undefined;
 				const groupStopped = stopped || stopAbortController.signal.aborted;
@@ -4167,7 +4167,7 @@ async function runSubagentInner(
 						task: materializedTask,
 						mode: config.mode,
 						async: true,
-						dynamic: step.parallel.acceptanceInput === undefined,
+						dynamic: true,
 						agentContract: step.parallel.agentContract ?? step.agentContract,
 					})),
 					systemPrompt: step.parallel.namespaceOutputPath ? injectOutputPathSystemPrompt(step.parallel.systemPrompt ?? "", outputPath, step.parallel) : step.parallel.systemPrompt,
@@ -4198,6 +4198,7 @@ async function runSubagentInner(
 					...(task.label ? { label: task.label } : {}),
 					structured: Boolean(task.structuredOutputSchema),
 					...(task.agentContract ? { agentContract: task.agentContract } : {}),
+					acceptanceInput: persistResolvedAcceptance(task.effectiveAcceptance),
 					...(task.childProfile ? { childProfile: task.childProfile } : {}),
 					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
 					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
@@ -4408,7 +4409,7 @@ async function runSubagentInner(
 			for (const entry of dynamicOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
 
 			flatIndex += dynamicSteps.length;
-			for (const pr of parallelResults) {
+			for (const [itemIndex, pr] of parallelResults.entries()) {
 				results.push(omitUndefinedProperties({
 					agent: pr.agent,
 					...(pr.sessionName ? { sessionName: pr.sessionName } : {}),
@@ -4449,6 +4450,7 @@ async function runSubagentInner(
 					structuredOutputPath: pr.structuredOutputPath,
 					structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 					acceptance: pr.acceptance,
+					acceptanceInput: pr.acceptanceInput ?? persistResolvedAcceptance(dynamicSteps[itemIndex]!.effectiveAcceptance),
 					watchdog: pr.watchdog,
 					capabilityCeiling: pr.capabilityCeiling,
 					capabilityAudit: pr.capabilityAudit,
@@ -4491,14 +4493,13 @@ async function runSubagentInner(
 							cwd,
 							signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
 							abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? "Subagent timed out.",
-							reportOptional: isAgentContractV1(step.agentContract),
+							reportOptional: isAgentContractV1(step.agentContract) && effectiveDynamicGroupAcceptance.explicit,
 						}))
 						: undefined;
 					const groupStopped = stopped || stopAbortController.signal.aborted;
 					const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
 					const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
-					const groupAcceptanceFailure = effectiveDynamicGroupAcceptance.explicit
-						&& effectiveGroupAcceptance
+					const groupAcceptanceFailure = effectiveGroupAcceptance
 						&& acceptanceBlocksRun(effectiveGroupAcceptance)
 						&& (!isAgentContractV1(step.agentContract) || step.gateOn === "acceptance")
 						? acceptanceFailureMessage(effectiveGroupAcceptance)
@@ -4899,6 +4900,7 @@ async function runSubagentInner(
 						structuredOutputPath: pr.structuredOutputPath,
 						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 						acceptance: pr.acceptance,
+						acceptanceInput: pr.acceptanceInput,
 						watchdog: pr.watchdog,
 					}));
 				}
@@ -5153,6 +5155,7 @@ async function runSubagentInner(
 				structuredOutputPath: singleResult.structuredOutputPath,
 				structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
 				acceptance: singleResult.acceptance,
+				acceptanceInput: singleResult.acceptanceInput,
 				watchdog: singleResult.watchdog,
 				capabilityCeiling: singleResult.capabilityCeiling,
 				capabilityAudit: singleResult.capabilityAudit,
@@ -5534,7 +5537,7 @@ async function runSubagentInner(
 				structuredOutputPath: r.structuredOutputPath,
 				structuredOutputSchemaPath: r.structuredOutputSchemaPath,
 				acceptance: r.acceptance,
-				acceptanceInput: r.acceptanceInput ?? flattenSteps(config.steps)[resultIndex]?.acceptanceInput,
+				acceptanceInput: r.acceptanceInput,
 				watchdog: r.watchdog,
 				timeoutRecovery: r.timeoutRecovery,
 				capabilityCeiling: r.capabilityCeiling,

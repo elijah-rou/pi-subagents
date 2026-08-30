@@ -2019,7 +2019,7 @@ async function resumeAsyncRun(input: {
 	const recoveredAcceptance = "acceptance" in target && target.acceptance !== undefined
 		? target.acceptance
 		: recoveryDescriptor?.acceptance ?? foregroundContract?.acceptance;
-	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance) as AcceptanceInput | undefined;
+	const acceptance = mergeAcceptanceInputs(recoveredAcceptance, input.params.acceptance);
 	const outputSchema = input.params.outputSchema ?? foregroundContract?.outputSchema ?? recoveryDescriptor?.structuredOutputSchema;
 	const agentContract = input.params.agentContract ?? foregroundContract?.agentContract ?? recoveryDescriptor?.agentContract;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? omitUndefinedProperties({ ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir });
@@ -2089,7 +2089,7 @@ async function resumeAsyncRun(input: {
 		...(agentContract ? { agentContract } : {}),
 		...(outputSchema ? { structuredOutputSchema: outputSchema } : {}),
 		...(recoveryDescriptor?.skills ? { skills: [...recoveryDescriptor.skills] } : {}),
-		...(acceptance !== undefined ? { acceptance } : {}),
+		...(acceptance !== undefined ? { acceptance, acceptanceIsPersisted: true } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
 		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
@@ -2162,6 +2162,7 @@ async function resumeAsyncRun(input: {
 			...(completed.structuredOutputPath ? { structuredOutputPath: completed.structuredOutputPath } : {}),
 			...(completed.structuredOutputSchemaPath ? { structuredOutputSchemaPath: completed.structuredOutputSchemaPath } : {}),
 			...(completed.acceptance ? { acceptance: completed.acceptance } : {}),
+			...(completed.acceptanceInput !== undefined ? { acceptanceInput: completed.acceptanceInput } : {}),
 			...(completed.artifactPaths ? { artifactPaths: completed.artifactPaths } : {}),
 			...(completed.outputSaveError ? { outputSaveError: completed.outputSaveError } : {}),
 			...(completed.transcriptPath ? { transcriptPath: completed.transcriptPath } : {}),

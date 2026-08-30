@@ -459,10 +459,12 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const first = firstResult.details.workflow?.value as { runId?: string };
 			assert.ok(first.runId);
 			assert.deepEqual(firstResult.details.results[0]?.childProfile, childProfile);
+			assert.equal(firstResult.details.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
 
 			const resumedResult = await executor.execute("profile-retained-resume", { workflowScript: `return runs.run('resumed', { resume: ${JSON.stringify(first.runId)}, task: 'Continue' })`, async: false }, new AbortController().signal, undefined, ctx);
 			assert.equal(resumedResult.isError, undefined, resumedResult.content[0]?.text ?? "resume failed");
 			assert.deepEqual(resumedResult.details.results[0]?.childProfile, childProfile);
+			assert.equal(resumedResult.details.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
 		} finally {
 			handle.dispose();
 		}
@@ -493,9 +495,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			const firstRunId = first.details.asyncId;
 			assert.ok(firstRunId);
 			await waitForTerminal(firstRunId);
-			const sourceDescriptor = JSON.parse(fs.readFileSync(path.join(DIRS.async, firstRunId, "recovery-descriptor.json"), "utf-8")) as { managedOutput?: boolean; outputPath?: string };
+			const sourceDescriptor = JSON.parse(fs.readFileSync(path.join(DIRS.async, firstRunId, "recovery-descriptor.json"), "utf-8")) as { managedOutput?: boolean; outputPath?: string; acceptance?: { kind?: string } };
 			assert.equal(sourceDescriptor.managedOutput, true);
 			assert.equal(path.isAbsolute(sourceDescriptor.outputPath ?? ""), true);
+			assert.equal(sourceDescriptor.acceptance?.kind, "resolved-acceptance");
 			assert.deepEqual(resolveAsyncResumeTarget({ id: firstRunId }, { asyncDirRoot: DIRS.async, resultsDir: DIRS.results }).childProfile, childProfile);
 
 			const revived = await executor.execute("profile-async-resume", { action: "resume", id: firstRunId, message: "Continue" }, new AbortController().signal, undefined, ctx);
@@ -503,8 +506,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.ok(revivedRunId);
 			const revivedStatus = await waitForTerminal(revivedRunId);
 			assert.deepEqual(revivedStatus.steps?.[0]?.childProfile, childProfile);
-			const revivedDescriptor = JSON.parse(fs.readFileSync(path.join(DIRS.async, revivedRunId, "recovery-descriptor.json"), "utf-8")) as { managedOutput?: boolean; outputPath?: string };
+			const revivedDescriptor = JSON.parse(fs.readFileSync(path.join(DIRS.async, revivedRunId, "recovery-descriptor.json"), "utf-8")) as { managedOutput?: boolean; outputPath?: string; acceptance?: { kind?: string } };
 			assert.equal(revivedDescriptor.managedOutput, true);
+			assert.equal(revivedDescriptor.acceptance?.kind, "resolved-acceptance");
 			assert.notEqual(revivedDescriptor.outputPath, sourceDescriptor.outputPath);
 			assert.match(revivedDescriptor.outputPath ?? "", new RegExp(`${revivedRunId}.*report\\.md`));
 		} finally {
@@ -4995,7 +4999,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 1);
 	});
 
-	it("agent contract v1 reports omitted acceptance separately without injecting a prompt", async () => {
+	it("agent contract v1 enforces omitted acceptance while preserving separate projections", async () => {
 		mockPi.onCall({ output: "Plan only" });
 		const agents = [makeAgent("worker", { tools: ["read", "write"] })];
 
@@ -5008,10 +5012,39 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.exitCode, 0);
 		assert.equal(result.agentContract?.version, 1);
 		assert.deepEqual(result.execution, { status: "completed", success: true, exitCode: 0 });
-		assert.equal(result.acceptance?.status, "not-required");
+		assert.equal(result.acceptance?.status, "checked");
 		assert.equal(result.review?.status, "not-requested");
 		assert.deepEqual(result.effects, {});
-		assert.doesNotMatch(call.args.join("\n"), /## Acceptance Contract/);
+		assert.match(call.args.join("\n"), /## Acceptance Contract/);
+	});
+
+	it("treats omitted and auto foreground mutating acceptance equivalently", async () => {
+		const report = [
+			"Implemented",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "review complete" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({ output: report });
+		mockPi.onCall({ output: report });
+		const agents = [makeAgent("worker", { completionGuard: false })];
+
+		const omitted = await runSync(tempDir, agents, "worker", "Implement the approved fix", { runId: "acceptance-omitted-mutating" });
+		const auto = await runSync(tempDir, agents, "worker", "Implement the approved fix", { runId: "acceptance-auto-mutating", acceptance: "auto" });
+
+		assert.equal(omitted.acceptance?.effectiveAcceptance.level, "checked");
+		assert.equal(auto.acceptance?.effectiveAcceptance.level, "checked");
+		assert.equal(omitted.acceptance?.status, "checked");
+		assert.equal(auto.acceptance?.status, "checked");
+		assert.equal(omitted.acceptanceInput?.kind, "resolved-acceptance");
+		assert.equal(auto.acceptanceInput?.kind, "resolved-acceptance");
 	});
 
 	it("agent contract v1 keeps acceptance rejection out of execution status", async () => {
@@ -6598,6 +6631,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const result = await runSync(tempDir, agents, "echo", "Task", {
 			runId: "resume-provider-after-tool",
 			sessionFile,
+			acceptance: false,
 		});
 
 		assert.equal(result.exitCode, 0);
@@ -7911,7 +7945,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const agents = makeAgentConfigs(["echo"]);
 
 		const start = Date.now();
-		const result = await runSync(tempDir, agents, "echo", "Task", {});
+		const result = await runSync(tempDir, agents, "echo", "Task", { acceptance: false });
 		const elapsed = Date.now() - start;
 
 		assert.ok(elapsed < 4000, `should clean up shortly after empty terminal stop, took ${elapsed}ms`);

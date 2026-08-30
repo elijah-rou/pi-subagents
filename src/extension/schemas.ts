@@ -152,7 +152,7 @@ const AcceptanceOverride = Type.Unsafe({
 			additionalProperties: false,
 		},
 	],
-	description: `Optional acceptance policy. Omitted or auto inherits a parent contract, with advisory inference only at final resolution; false disables. Canonical child objects merge only present dimensions. Legacy levels replace the inherited contract; none disables with a warning, verified requires a runtime command, and review supports only required:false. Supported evidence kinds: ${acceptanceEvidenceKinds.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`,
+	description: `Optional acceptance policy. Omitted or auto inherits a parent contract and otherwise infers an enforced evidence report: checked writer evidence for mutating work or lightweight attestation for read-only work. Use false or a reasoned none contract to opt out. Canonical child objects merge only present dimensions. Legacy levels replace the inherited contract; none disables with a warning, verified requires a runtime command, and review supports only required:false. Supported evidence kinds: ${acceptanceEvidenceKinds.join(", ")}. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }.`,
 });
 
 const AgentContractOverride = Type.Object({

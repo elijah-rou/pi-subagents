@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
-import type { AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, ModelAttempt, Usage } from "../../shared/types.ts";
+import type { AcceptanceInput, AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, ModelAttempt, PersistedResolvedAcceptanceInput, Usage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
@@ -33,6 +33,7 @@ export interface ImportedAsyncRootResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
+	acceptanceInput?: AcceptanceInput | PersistedResolvedAcceptanceInput;
 	artifactPaths?: ArtifactPaths;
 	outputSaveError?: string;
 	transcriptPath?: string;
@@ -73,6 +74,7 @@ interface AsyncResultFile {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
+		acceptanceInput?: AcceptanceInput | PersistedResolvedAcceptanceInput;
 		artifactPaths?: ArtifactPaths;
 		outputSaveError?: string;
 		transcriptPath?: string;
@@ -171,6 +173,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		...(step?.structuredOutputPath ? { structuredOutputPath: step.structuredOutputPath } : {}),
 		...(step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: step.structuredOutputSchemaPath } : {}),
 		...(step?.acceptance ? { acceptance: step.acceptance } : {}),
+		...(step?.acceptanceInput !== undefined ? { acceptanceInput: step.acceptanceInput } : {}),
 		...(execution ? { execution } : {}),
 		...(step?.effects ? { effects: step.effects } : {}),
 		...(step?.transcriptPath ? { transcriptPath: step.transcriptPath } : {}),
@@ -237,6 +240,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.structuredOutputPath ?? step?.structuredOutputPath ? { structuredOutputPath: child?.structuredOutputPath ?? step?.structuredOutputPath } : {}),
 		...(child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath } : {}),
 		...(child?.acceptance ?? step?.acceptance ? { acceptance: child?.acceptance ?? step?.acceptance } : {}),
+		...(child?.acceptanceInput !== undefined || step?.acceptanceInput !== undefined ? { acceptanceInput: child?.acceptanceInput ?? step?.acceptanceInput } : {}),
 		...(child?.artifactPaths ? { artifactPaths: child.artifactPaths } : {}),
 		...(child?.outputSaveError ? { outputSaveError: child.outputSaveError } : {}),
 		...(child?.transcriptPath ?? step?.transcriptPath ? { transcriptPath: child?.transcriptPath ?? step?.transcriptPath } : {}),

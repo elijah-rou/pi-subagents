@@ -12,6 +12,7 @@
 - Add bounded project watchdog guidance from `WATCHDOG.md` and an explicit configured path.
 
 ### Changed
+- Enforce inferred acceptance evidence for omitted and `auto` contracts: mutating work requires checked writer evidence, read-only work uses lightweight attestation, and explicit opt-out remains available through `false` or a reasoned `none` contract.
 - Preserve acceptance contracts and routed child provenance through workflow lanes, async status, recovery, receipts, and nested revival.
 - Show `runs.lanes(...)` workflows with active-stage focus and planned-stage progress in async status widgets (#1699).
 - Align foreground subagent result labels with async widget labels and disambiguate duplicate rows (#1697).

@@ -25,7 +25,6 @@ import type {
 	ResolvedAcceptanceGate,
 	SubagentRunMode,
 } from "../../shared/types.ts";
-import { isAgentContractV1 } from "./agent-contract.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
 const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified", "reviewed"]);
@@ -98,11 +97,10 @@ function inferLevel(input: {
 		|| (input.acceptanceRole === "writer" && !readOnlyTask)
 		|| (input.acceptanceRole === undefined && /\bworker\b/.test(agent) && !readOnlyTask);
 	const inferredReadOnly = readOnlyTask || (input.acceptanceRole === "read-only" && !taskMayWrite);
-	const roleResolvesReadOnly = input.acceptanceRole !== undefined && inferredReadOnly;
 	const keywordRiskReadOnly = input.acceptanceRole === undefined ? intent.kind === "read-only" : inferredReadOnly;
 	const risky = Boolean(input.async && writeTask)
-		|| (Boolean(input.dynamic) && !roleResolvesReadOnly)
-		|| (Boolean(input.dynamicGroup) && !roleResolvesReadOnly)
+		|| (Boolean(input.dynamic) && !inferredReadOnly)
+		|| (Boolean(input.dynamicGroup) && !inferredReadOnly)
 		|| (!keywordRiskReadOnly && /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task));
 
 	if (risky) {
@@ -269,7 +267,7 @@ function isMergedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): i
 	return isPersistedMergedAcceptanceInput(input);
 }
 
-function isPersistedResolvedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): input is PersistedResolvedAcceptanceInput {
+export function isPersistedResolvedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): input is PersistedResolvedAcceptanceInput {
 	return typeof input === "object" && input !== null && !Array.isArray(input)
 		&& (input as Record<string, unknown>).kind === RESOLVED_ACCEPTANCE_KIND
 		&& validatePersistedAcceptanceInput(input).length === 0;
@@ -647,7 +645,6 @@ export function resolveEffectiveAcceptance(input: {
 	dynamicGroup?: boolean;
 	agentContract?: AgentContract;
 }): ResolvedAcceptanceConfig {
-	const agentContractV1 = isAgentContractV1(input.agentContract);
 	const persisted = isPersistedResolvedAcceptanceInput(input.explicit) ? input.explicit : undefined;
 	const explicitObjectForContract = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit) && !isMergedAcceptanceInput(input.explicit) && !persisted
 		? input.explicit as Record<string, unknown>
@@ -658,11 +655,7 @@ export function resolveEffectiveAcceptance(input: {
 		report: { criteria: inferred.criteria, evidence: inferred.evidence },
 		onFailure: "fail",
 	};
-	const effectiveInput = agentContractV1 && inheritedByContract
-		? false
-		: inheritedByContract
-			? inferredContract
-			: input.explicit;
+	const effectiveInput = inheritedByContract ? inferredContract : input.explicit;
 	const adapted = adaptLegacyAcceptance(effectiveInput);
 	if (inheritedByContract && explicitObjectForContract) {
 		adapted.stopRules = Array.isArray(explicitObjectForContract.stopRules) ? explicitObjectForContract.stopRules as string[] : [];
@@ -670,7 +663,7 @@ export function resolveEffectiveAcceptance(input: {
 	}
 	const advisory = persisted
 		? { recommendations: [], inferredReason: persisted.inferredReason }
-		: agentContractV1 ? { recommendations: [], inferredReason: [] } : inferAcceptanceRecommendations(input);
+		: inferAcceptanceRecommendations(input);
 	const contract = adapted.contract;
 	const report = contract === false ? false : contract.report ?? false;
 	const reportCriteria = report === false ? undefined : report.criteria;
@@ -680,7 +673,7 @@ export function resolveEffectiveAcceptance(input: {
 	const review = contract === false ? false : contract.review ?? false;
 	const level: ResolvedAcceptanceConfig["level"] = persisted
 		? persisted.level
-		: inheritedByContract && !agentContractV1
+		: inheritedByContract
 		? inferred.level
 		: review !== false
 			? "reviewed"

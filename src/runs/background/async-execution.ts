@@ -254,7 +254,9 @@ interface AsyncSingleParams {
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
 	nestedRoute?: NestedRouteInfo;
-	acceptance?: AcceptanceInput;
+	acceptance?: import("../shared/acceptance.ts").EffectiveAcceptanceInput;
+	/** Internal revival seam: acceptance was read and validated from trusted run artifacts. */
+	acceptanceIsPersisted?: boolean;
 	timeoutMs?: number;
 	absoluteDeadlineAt?: number;
 	checkpointAfterMs?: number;
@@ -1535,7 +1537,7 @@ export function executeAsyncSingle(
 	} catch (error) {
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 	}
-	const acceptanceErrors = isPersistedMergedAcceptanceInput(params.acceptance)
+	const acceptanceErrors = params.acceptanceIsPersisted || isPersistedMergedAcceptanceInput(params.acceptance)
 		? validatePersistedAcceptanceInput(params.acceptance)
 		: validateAcceptanceInput(params.acceptance);
 	if (acceptanceErrors.length > 0) return formatAsyncStartError("single", acceptanceErrors.join(" "));

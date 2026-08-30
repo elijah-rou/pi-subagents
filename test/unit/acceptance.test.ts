@@ -340,18 +340,17 @@ describe("acceptance gates", () => {
 		assert.equal(resolved.verify[0]?.id, "ok");
 	});
 
-	it("agent contract v1 disables inferred acceptance without changing current defaults", () => {
-		const current = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true });
-		assert.equal(current.level, "checked");
-		assert.equal(current.review, false);
-		assert.deepEqual(current.inferredReason, ["async write-capable or risky run"]);
-
-		for (const explicit of [undefined, "auto" as const, false] as const) {
+	it("agent contract v1 enforces omitted and auto inference while preserving explicit opt-out", () => {
+		for (const explicit of [undefined, "auto" as const] as const) {
 			const resolved = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true, explicit, agentContract: { version: 1 } });
-			assert.equal(resolved.level, "none");
-			assert.deepEqual(resolved.inferredReason, []);
-			assert.equal(resolved.explicit, explicit === false);
+			assert.equal(resolved.level, "checked");
+			assert.equal(resolved.explicit, false);
+			assert.deepEqual(resolved.inferredReason, ["async write-capable or risky run"]);
 		}
+
+		const disabled = resolveEffectiveAcceptance({ agentName: "worker", acceptanceRole: "writer", task: "Implement the fix", mode: "single", async: true, explicit: false, agentContract: { version: 1 } });
+		assert.equal(disabled.level, "none");
+		assert.equal(disabled.explicit, true);
 	});
 
 	it("agent contract v1 keeps explicit acceptance report-optional and verify-only", async () => {
@@ -1304,7 +1303,11 @@ describe("acceptance gates", () => {
 	it("keeps read-only inference lightweight while enforcing writer evidence", () => {
 		const readOnly = resolveEffectiveAcceptance({ agentName: "worker", task: "Review only; do not edit", async: true });
 		const writer = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement the fix", async: true });
+		const dynamicOmitted = resolveEffectiveAcceptance({ agentName: "worker", task: "Review only; do not edit", async: true, dynamic: true });
+		const dynamicAuto = resolveEffectiveAcceptance({ agentName: "worker", task: "Review only; do not edit", async: true, dynamic: true, explicit: "auto" });
 		assert.equal(readOnly.level, "attested");
+		assert.equal(dynamicOmitted.level, "attested");
+		assert.deepEqual(dynamicAuto, dynamicOmitted);
 		assert.deepEqual(readOnly.evidence, ["review-findings", "residual-risks"]);
 		assert.equal(readOnly.evidence.includes("changed-files"), false);
 		assert.equal(writer.level, "checked");

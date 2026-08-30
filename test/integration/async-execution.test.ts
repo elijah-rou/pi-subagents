@@ -2143,13 +2143,27 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const payload = await readAsyncPayload(asyncId);
 		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance.level, "attested");
 		assert.equal(payload.results[0]?.acceptance?.status, "attested");
+
+		mockPi.onCall({ output: "auto exploration complete" });
+		const auto = await executor.execute(
+			"async-agent-acceptance-role-auto",
+			{ agent: "worker", task: "Explore the authentication flow", async: true, clarify: false, acceptance: "auto" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		const autoId = auto.details?.asyncId;
+		assert.ok(autoId, "expected auto asyncId");
+		const autoPayload = await readAsyncPayload(autoId);
+		assert.equal(autoPayload.results[0]?.acceptance?.effectiveAcceptance.level, "attested");
+		assert.equal(autoPayload.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
 	});
 
 
 
 	it("enforces expanded async chain acceptance inference", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "patched" });
-		mockPi.onCall({ output: "reviewed" });
+		mockPi.onCall({ output: "implemented second fix" });
 
 		const patchId = `async-role-task-template-patch-${Date.now().toString(36)}`;
 		executeAsyncChain(patchId, {
@@ -2167,8 +2181,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const reviewId = `async-role-task-template-review-${Date.now().toString(36)}`;
 		executeAsyncChain(reviewId, {
-			task: "Review only; do not edit files",
-			chain: [{ agent: "implementer", task: "{task}" }],
+			task: "Implement the second fix",
+			chain: [{ agent: "implementer", task: "{task}", acceptance: "auto" }],
 			agents: [makeAgent("implementer", { acceptanceRole: "writer" })],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-role-task-review" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
@@ -2176,8 +2190,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 		});
 		const reviewPayload = await readAsyncPayload(reviewId);
-		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
-		assert.equal(reviewPayload.results[0]?.acceptance?.status, "attested");
+		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "checked");
+		assert.equal(reviewPayload.results[0]?.acceptance?.status, "checked");
 	});
 
 
@@ -2269,12 +2283,53 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(result.results[0]?.acceptance?.evidenceStatus, "checked");
 		assert.ok(result.results[0]?.acceptance?.childReport);
 		assert.equal(result.results[0]?.acceptance?.reviewResult, undefined);
-		assert.deepEqual(result.results[0]?.acceptanceInput, { report: { criteria: ["Patch bug"], evidence: ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files"] } });
+		assert.equal(result.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
+		assert.deepEqual(result.results[0]?.acceptanceInput?.contract, { report: { criteria: ["Patch bug"], evidence: ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files"] }, onFailure: "fail" });
 		assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
 		assert.deepEqual(status.steps?.[0]?.acceptanceInput, result.results[0]?.acceptanceInput);
 	});
 
 
+
+	it("async single enforces omitted and auto mutating acceptance equivalently", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const output = [
+			"implemented",
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [
+					{ id: "criterion-1", status: "satisfied", evidence: "implemented" },
+					{ id: "criterion-2", status: "satisfied", evidence: "evidence returned" },
+				],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [{ command: "npm test", result: "passed", summary: "passed" }],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({ output });
+		mockPi.onCall({ output });
+		const launch = (id: string, acceptance?: "auto") => executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Implement the approved fix",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-auto-acceptance" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+			...(acceptance ? { acceptance } : {}),
+		});
+		const omittedId = `async-omitted-acceptance-${Date.now().toString(36)}`;
+		const autoId = `async-auto-acceptance-${Date.now().toString(36)}`;
+		launch(omittedId);
+		launch(autoId, "auto");
+		const [omitted, auto] = await Promise.all([readAsyncPayload(omittedId), readAsyncPayload(autoId)]);
+		assert.equal(omitted.results[0]?.acceptance?.status, "checked");
+		assert.equal(auto.results[0]?.acceptance?.status, "checked");
+		assert.equal(omitted.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
+		assert.equal(auto.results[0]?.acceptanceInput?.kind, "resolved-acceptance");
+	});
 
 	it("async chains reject malformed named output references before spawning", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const id = `async-malformed-output-ref-${Date.now().toString(36)}`;
@@ -2318,6 +2373,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
 			maxSubagentDepth: 2,
+			acceptance: false,
 		});
 
 		assert.ok(!result.isError);
@@ -3061,10 +3117,12 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.deepEqual(descriptor.fallbackModels, ["anthropic/claude-sonnet-4:low"]);
 		assert.equal(descriptor.cwd, tempDir);
 		assert.equal(descriptor.sessionDir, path.join(sessionRoot, `async-${id}`));
-		assert.deepEqual(descriptor.acceptance, { level: "none", reason: "descriptor persistence coverage" });
+		assert.equal(descriptor.acceptance.kind, "resolved-acceptance");
+		assert.equal(descriptor.acceptance.contract, false);
+		assert.equal(descriptor.acceptance.level, "none");
+		assert.equal(descriptor.acceptance.explicit, true);
+		assert.equal(descriptor.acceptance.reason, "descriptor persistence coverage");
 		assert.equal(descriptor.initialTurnBudget, undefined);
-		assert.equal(Object.hasOwn(descriptor.acceptance, "explicit"), false);
-		assert.equal(Object.hasOwn(descriptor.acceptance, "inferredReason"), false);
 		assert.equal(Object.hasOwn(descriptor, "task"), false);
 		if (process.platform !== "win32") assert.equal(fs.statSync(descriptorPath).mode & 0o777, 0o600);
 
@@ -3413,6 +3471,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			},
 			shareEnabled: false,
 			maxSubagentDepth: 2,
+			acceptance: false,
 		});
 
 		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"));
@@ -5693,6 +5752,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "scout",
 			task: "Inspect something",
 			agentConfig: makeAgent("scout"),
+			acceptance: false,
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,

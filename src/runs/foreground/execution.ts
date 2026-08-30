@@ -1853,7 +1853,7 @@ async function runSyncCompletionInner(
 		agentContract: options.agentContract,
 	});
 	const persistedAcceptance = persistResolvedAcceptance(effectiveAcceptance);
-	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract), structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath) });
+	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) && effectiveAcceptance.explicit, structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	options.onEffectivePrompt?.(taskWithAcceptance);
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
@@ -2263,7 +2263,7 @@ async function runSyncCompletionInner(
 				cwd: options.cwd ?? runtimeCwd,
 				deadlineAt: options.deadlineAt,
 				abortMessage: "Acceptance verification timed out because the subagent run deadline was exhausted.",
-				reportOptional: isAgentContractV1(options.agentContract),
+				reportOptional: isAgentContractV1(options.agentContract) && effectiveAcceptance.explicit,
 				artifactsDir: options.artifactsDir,
 				runId: options.runId,
 			});
