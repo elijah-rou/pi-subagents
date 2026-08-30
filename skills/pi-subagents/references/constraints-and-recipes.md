@@ -46,7 +46,7 @@ This reference keeps cross-cutting policy and failure handling. Load the matchin
 
 | Need | Read |
 | --- | --- |
-| Execution syntax, lifecycle, async/wait, workflow state, controls, watchdog, or worktrees | [`references/execution-controls.md`](execution-controls.md) |
+| Execution syntax, lifecycle, async/wait, workflow state, controls, or worktrees | [`references/execution-controls.md`](execution-controls.md) |
 | Role choice, prompt contracts, review/research/cleanup techniques, or model tiering | [`references/prompting-and-roles.md`](prompting-and-roles.md) |
 | Fresh review, validation, gate failures, finding disposition, and final delivery checks | [`references/review-and-validation.md`](review-and-validation.md) |
 | Independent lanes, repositories, worktrees, and handoffs | [`references/multi-lane-orchestration.md`](multi-lane-orchestration.md) |

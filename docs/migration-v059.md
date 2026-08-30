@@ -80,3 +80,7 @@ See [Models](models.md), [Tool and extension selection](agents.md#tool-and-exten
 ## Package 1 cleanup and pane access
 
 Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API pending Packages 2 and 3. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet` and passive Herdr/Fleet observation where available. Do not replace removed exports with internal source imports.
+
+## Package 3a watchdog removal
+
+The built-in watchdog, `/subagents-watchdog`, and all `watchdog.*` actions are removed. Replace automatic review with an explicit reviewer child or `workflowScript` review lane. Child permission rules must now use explicit `allow` or `deny`; `ask` deterministically denies. Existing watchdog settings and persisted watchdog status fields/events are inert for one published Package 3a release and may be removed after that release.

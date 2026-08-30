@@ -21,9 +21,7 @@ import {
 	MCP_DIRECT_CHILD_TOOLS_ENV,
 	REQUIRED_CHILD_TOOLS_ENV,
 } from "../../src/runs/shared/tool-availability.ts";
-import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
 import {
-	PERMISSION_AUDIT_PATH_ENV,
 	PERMISSION_POLICY_ENV,
 } from "../../src/runs/shared/permissions.ts";
 import {
@@ -399,55 +397,7 @@ describe("buildPiArgs session wiring", () => {
 		);
 	});
 
-	it("passes child watchdog config only when explicitly provided", () => {
-		const withoutWatchdog = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-		});
-		assert.equal(withoutWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV], undefined);
 
-		const withWatchdog = buildPiArgs({
-			baseArgs: ["-p"],
-			task: "hello",
-			sessionEnabled: false,
-			inheritProjectContext: false,
-			inheritSkills: false,
-			childWatchdog: {
-				enabled: true,
-				runId: "run-1",
-				agent: "worker",
-				childIndex: 2,
-				watchdogTailTimeoutMs: 1234,
-				agentEndTimeoutMs: 500,
-				maxWarnings: 1,
-				lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
-				autoFollowBlockers: true,
-				autoFollowMaxAttempts: 3,
-				stalemateRepeats: 2,
-			},
-		});
-		const encoded = withWatchdog.env[CHILD_WATCHDOG_CONFIG_ENV];
-		assert.equal(typeof encoded, "string");
-		assert.deepEqual(JSON.parse(encoded ?? "{}"), {
-			enabled: true,
-			runId: "run-1",
-			agent: "worker",
-			childIndex: 2,
-			watchdogTailTimeoutMs: 1234,
-			agentEndTimeoutMs: 500,
-			maxWarnings: 1,
-			lsp: { enabled: false, timeoutMs: 50, maxFiles: 2, maxDiagnostics: 3 },
-			autoFollowBlockers: true,
-			autoFollowMaxAttempts: 3,
-			stalemateRepeats: 2,
-		});
-	});
-});
-
-describe("buildPiArgs model wiring", () => {
 	it("uses --model for provider-qualified model ids", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],
@@ -860,8 +810,8 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env[PI_INTERCOM_SESSION_ID_ENV], undefined);
 	});
 
-	it("creates a private permission audit path without enabling the supervisor channel", () => {
-		const { env, tempDir } = buildPiArgs({
+	it("encodes permission policy without enabling the supervisor channel", () => {
+		const { env } = buildPiArgs({
 			baseArgs: ["-p"],
 			task: "hello",
 			sessionEnabled: false,
@@ -877,10 +827,6 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		assert.equal(env.PI_SUBAGENT_ORCHESTRATOR_TARGET, undefined);
 		assert.equal(env[PERMISSION_POLICY_ENV], JSON.stringify({ write: "ask" }));
 		assert.equal(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV], undefined);
-		assert.equal(
-			env[PERMISSION_AUDIT_PATH_ENV],
-			path.join(tempDir!, "permission-audit.jsonl"),
-		);
 	});
 
 	it("does not create a supervisor channel without an exact parent session id", () => {

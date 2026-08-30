@@ -42,11 +42,9 @@ import { getActiveAsyncCapacitySnapshot, inspectActiveAsyncCapacityOwner } from 
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
-import { CHILD_WATCHDOG_STATUS_EVENT } from "../../src/watchdog/child-status.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { createRunFanoutBudget, encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "../../src/runs/shared/run-fanout-budget.ts";
-import { MainWatchdogRuntime } from "../../src/watchdog/runtime.ts";
 import { MAX_CHILD_PENDING_LINE_BYTES, MAX_CHILD_STDERR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 import {
 	SUBAGENT_CHILD_ENV,
@@ -168,56 +166,6 @@ interface MockPiCallRecord {
 	args?: string[];
 	cwd?: string;
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
-}
-
-function writeWatchdogSettings(projectDir: string, tailMs = 120_000): void {
-	const settingsPath = path.join(projectDir, ".pi", "settings.json");
-	fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-	fs.writeFileSync(settingsPath, JSON.stringify({
-		subagents: {
-			watchdog: {
-				enabled: true,
-				children: {
-					enabled: true,
-					watchdogTailTimeoutMs: tailMs,
-				},
-			},
-		},
-	}, null, 2), "utf-8");
-}
-
-async function withIsolatedWatchdogSettings<T>(projectDir: string, run: () => Promise<T>): Promise<T> {
-	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-	const previousHome = process.env.HOME;
-	const previousUserProfile = process.env.USERPROFILE;
-	const isolatedHome = path.join(projectDir, "isolated-home");
-	process.env.PI_CODING_AGENT_DIR = path.join(isolatedHome, ".pi", "agent");
-	process.env.HOME = isolatedHome;
-	process.env.USERPROFILE = isolatedHome;
-	try {
-		return await run();
-	} finally {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		if (previousHome === undefined) delete process.env.HOME;
-		else process.env.HOME = previousHome;
-		if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-		else process.env.USERPROFILE = previousUserProfile;
-	}
-}
-
-function childWatchdogStatus(phase: "idle" | "reviewing" | "autofollow" | "settling" | "stale" | "failed", seq: number, followUpPending = false) {
-	return {
-		type: CHILD_WATCHDOG_STATUS_EVENT,
-		runId: "watchdog-child-run",
-		agent: "echo",
-		childIndex: 0,
-		stepIndex: 0,
-		seq,
-		phase,
-		ts: Date.now() + seq,
-		followUpPending,
-	};
 }
 
 function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "stop") {
@@ -4189,45 +4137,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(invalid.content[0]?.text ?? "", /merge must be an object/);
 	});
 
-	it("routes watchdog.configure through the management action path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const gpt = { provider: "openai-codex", id: "gpt-5.5", reasoning: true };
-		const opus = { provider: "anthropic", id: "claude-opus-4-8", reasoning: true };
-		const models = [gpt, opus];
-		const watchdog = new MainWatchdogRuntime({ cwd: tempDir });
-		const executor = createSubagentExecutor!({
-			pi: { events: createEventBus(), getSessionName: () => undefined },
-			state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
-			config: {},
-			asyncByDefault: false,
-			watchdog,
-			tempArtifactsDir: tempDir,
-			getSubagentSessionRoot: () => tempDir,
-			expandTilde: (value: string) => value,
-			discoverAgents: () => ({ agents: [makeAgent("echo")] }),
-		});
-		const ctx = {
-			...makeMinimalCtx(tempDir),
-			model: gpt,
-			modelRegistry: {
-				getAvailable: () => models,
-				find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
-				hasConfiguredAuth: (model: unknown) => Boolean(model),
-			},
-		};
-
-		const result = await executor.execute(
-			"watchdog-configure",
-			{ action: "watchdog.configure", model: "recommended" },
-			new AbortController().signal,
-			undefined,
-			ctx,
-		);
-
-		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /session model configured: anthropic\/claude-opus-4-8:high/);
-		assert.equal(watchdog.getSnapshot(tempDir).config.main.model, "anthropic/claude-opus-4-8");
-	});
-
 	it("rejects duplicate concurrent subagent execution calls", async () => {
 		mockPi.onCall({ output: "first call completed", delay: 100 });
 		const executor = makeExecutor([makeAgent("echo")]);
@@ -7975,71 +7884,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(extensionArgs.some((arg) => arg.replace(/\\/g, "/").endsWith("child-only-tool.ts")));
 	});
 
-	it("ignores child watchdog status when foreground child watchdogs are not configured", async () => {
-		await withIsolatedWatchdogSettings(tempDir, async () => {
-			mockPi.onCall({
-				jsonl: [events.assistantMessage("done-without-watchdog-config"), childWatchdogStatus("reviewing", 1)],
-				keepAliveAfterFinalMessageMs: 10000,
-			});
-			const agents = makeAgentConfigs(["echo"]);
-
-			const start = Date.now();
-			const result = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run" });
-			const elapsed = Date.now() - start;
-
-			assert.ok(elapsed < 5000, `unconfigured watchdog status should not delay final drain, took ${elapsed}ms`);
-			assert.equal(result.exitCode, 0);
-			assert.equal(result.finalOutput, "done-without-watchdog-config");
-			assert.equal((result as RunSyncResult & { watchdog?: unknown }).watchdog, undefined);
-		});
-	});
-
-	it("waits for child watchdog settlement before foreground final-drain cleanup", async () => {
-		await withIsolatedWatchdogSettings(tempDir, async () => {
-			writeWatchdogSettings(tempDir);
-			mockPi.onCall({
-				steps: [
-					{ jsonl: [events.assistantMessage("done-before-watchdog"), childWatchdogStatus("reviewing", 1)] },
-					{ delay: 1400, jsonl: [childWatchdogStatus("idle", 2)] },
-				],
-				keepAliveAfterFinalMessageMs: 10000,
-			});
-			const agents = makeAgentConfigs(["echo"]);
-
-			const start = Date.now();
-			const result = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run" });
-			const elapsed = Date.now() - start;
-
-			assert.ok(elapsed >= 1200, `watchdog settlement should delay final drain, took ${elapsed}ms`);
-			assert.ok(elapsed < 6000, `settled watchdog should still allow cleanup, took ${elapsed}ms`);
-			assert.equal(result.exitCode, 0);
-			assert.equal(result.finalOutput, "done-before-watchdog");
-			assert.equal((result as RunSyncResult & { watchdog?: { phase?: string } }).watchdog?.phase, "idle");
-		});
-	});
-
-	it("falls back after child watchdog tail timeout without failing successful foreground output", async () => {
-		await withIsolatedWatchdogSettings(tempDir, async () => {
-			writeWatchdogSettings(tempDir, 150);
-			mockPi.onCall({
-				jsonl: [events.assistantMessage("done-before-watchdog-timeout"), childWatchdogStatus("reviewing", 1)],
-				keepAliveAfterFinalMessageMs: 10000,
-			});
-			const agents = makeAgentConfigs(["echo"]);
-
-			const start = Date.now();
-			const result = await runSync(tempDir, agents, "echo", "Task", { runId: "watchdog-child-run" });
-			const elapsed = Date.now() - start;
-
-			assert.ok(elapsed < 5000, `watchdog tail fallback should not hang, took ${elapsed}ms`);
-			assert.equal(result.exitCode, 0);
-			assert.equal(result.finalOutput, "done-before-watchdog-timeout");
-			const watchdog = (result as RunSyncResult & { watchdog?: { phase?: string; timedOut?: boolean } }).watchdog;
-			assert.equal(watchdog?.phase, "stale");
-			assert.equal(watchdog?.timedOut, true);
-		});
-	});
-
 	it("treats forced drain after final assistant output as cleanup success", async () => {
 		mockPi.onCall({
 			jsonl: [events.assistantMessage("done-before-drain")],
@@ -8057,6 +7901,20 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.error, undefined);
 		assert.equal(result.finalOutput, "done-before-drain");
 		assert.ok(!(result.progress?.recentOutput ?? []).some((line) => line.includes("Forcing termination")));
+	});
+
+	it("ignores a static pre-Package-3a watchdog event during foreground finalization", async () => {
+		const legacyEvent = JSON.parse(fs.readFileSync(path.join(process.cwd(), "test", "fixtures", "pre-package-3a-watchdog-event.json"), "utf-8"));
+		mockPi.onCall({
+			jsonl: [events.assistantMessage("done-with-legacy-event"), legacyEvent],
+			keepAliveAfterFinalMessageMs: 10_000,
+		});
+		const start = Date.now();
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { acceptance: false });
+		assert.ok(Date.now() - start < 5_000);
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.finalOutput, "done-with-legacy-event");
+		assert.equal("watchdog" in result, false);
 	});
 
 	it("keeps forced drain after empty terminal assistant output eligible for missing-output recovery", async () => {

@@ -1,0 +1,10 @@
+{
+  "type": "subagent.watchdog.status",
+  "runId": "pre-3a-run",
+  "agent": "worker",
+  "childIndex": 0,
+  "seq": 3,
+  "phase": "reviewing",
+  "followUpPending": true,
+  "ts": 1700000000000
+}

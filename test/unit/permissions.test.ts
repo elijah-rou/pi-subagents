@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 import {
 	decodePermissionRules,
 	encodePermissionRules,
-	permissionArgsPreview,
 	permissionDecision,
 	resolvePermissionRules,
 	validatePermissionConfig,
@@ -31,16 +30,8 @@ describe("native child permissions", () => {
 		assert.throws(() => validatePermissionConfig({ rules: { write: "sometimes" } }), /allow, ask, or deny/);
 	});
 
-	it("round-trips only explicit non-allow rules and redacts bounded previews", () => {
+	it("round-trips explicit non-allow rules", () => {
 		const encoded = encodePermissionRules({ write: "ask" });
 		assert.deepEqual(decodePermissionRules(encoded), { write: "ask" });
-		const preview = permissionArgsPreview({ token: "secret-value", content: `Bearer abcdefghijklmnop ${"x".repeat(3000)}` });
-		assert.doesNotMatch(preview, /secret-value|abcdefghijklmnop/);
-		assert.ok(Buffer.byteLength(preview) <= 2048);
-
-		const multibytePreview = permissionArgsPreview({ content: Array.from({ length: 10 }, () => "😀".repeat(300)) });
-		assert.ok(Buffer.byteLength(multibytePreview, "utf-8") <= 2048);
-		assert.doesNotMatch(multibytePreview, /�/);
-		assert.match(multibytePreview, /…$/);
 	});
 });

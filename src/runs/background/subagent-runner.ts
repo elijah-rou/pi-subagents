@@ -144,7 +144,6 @@ import { checkpointCanReachSteerableStep, checkpointSteeringTargetIndexes, sched
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
-import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
@@ -155,15 +154,6 @@ import { resolveExternalCliRunnerStatus } from "../shared/external-cli-contract.
 import { runExternalJob } from "../shared/external-job-runner.ts";
 import { createOrcaProgressTab, type OrcaProgressTab } from "../shared/orca-progress-tabs.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
-import {
-	CHILD_WATCHDOG_CONFIG_ENV,
-	acceptChildWatchdogEvent,
-	childWatchdogIsActive,
-	decodeChildWatchdogConfig,
-	isChildWatchdogStatusEvent,
-	resolveChildWatchdogConfig,
-	type ChildWatchdogStateSnapshot,
-} from "../../watchdog/child-status.ts";
 
 const INTERCOM_DETACH_RECEIPT = "Detached for intercom coordination before task completion.";
 
@@ -272,7 +262,6 @@ interface StepResult {
 	structuredOutputSchemaPath?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 	acceptanceInput?: import("../shared/acceptance.ts").EffectiveAcceptanceInput;
-	watchdog?: import("../../shared/types.ts").ChildWatchdogProgress;
 	writerProcesses?: PiWriterProcessInstanceExitV1[];
 	writerAttemptCount?: number;
 	runner?: ExternalCliRunnerStatus | ExternalJobRunnerStatus;
@@ -565,7 +554,6 @@ interface RunPiStreamingResult {
 	structuredOutputToolInvoked?: boolean;
 	structuredOutputMessageStartIndex?: number;
 	structuredOutput?: unknown;
-	watchdog?: ChildWatchdogStateSnapshot;
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	processInstanceId: string;
 	processCloseObservedAt?: number;
@@ -723,13 +711,8 @@ function runPiStreaming(
 			else activeToolKeysByName.delete(active.tool);
 			refreshCurrentTool();
 		};
-		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
-		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
 		const childLifecycleState: ChildLifecycleState = { compactionRetryActive: false };
 		let applyChildLifecycle = (_action: ChildLifecycleAction): void => {};
-		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
-			childWatchdogState = snapshot;
-		};
 
 		const writeOutputLine = (line: string) => {
 			if (!line.trim()) return;
@@ -792,36 +775,6 @@ function runPiStreaming(
 			}
 			applyChildLifecycle(lifecycleAction);
 
-			if (isChildWatchdogStatusEvent(event)) {
-				if (!childWatchdogConfig) return;
-				const next = acceptChildWatchdogEvent({
-					current: childWatchdogState,
-					event,
-					...(childEventContext ? {
-						runId: childEventContext.runId,
-						agent: childEventContext.agent,
-						childIndex: childEventContext.stepIndex,
-					} : {}),
-				});
-				if (!next) return;
-				updateChildWatchdogState(next);
-				onChildEvent?.(event);
-				if (childWatchdogIsActive(next)) {
-					if (finalDrainTimer) {
-						clearTimeout(finalDrainTimer);
-						finalDrainTimer = undefined;
-					}
-					if (finalHardKillTimer) {
-						clearTimeout(finalHardKillTimer);
-						finalHardKillTimer = undefined;
-					}
-					armWatchdogTail();
-				} else {
-					clearWatchdogTailTimer();
-					if (cleanTerminalAssistantStopReceived || agentSettledReceived) startFinalDrain();
-				}
-				return;
-			}
 
 			onChildEvent?.(event);
 
@@ -900,7 +853,6 @@ function runPiStreaming(
 		let afterCompactionSettlement = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
-		let watchdogTailTimer: NodeJS.Timeout | undefined;
 		let protocolHardKillTimer: NodeJS.Timeout | undefined;
 		let protocolError: ProtocolOutputLimit | undefined;
 		let settled = false;
@@ -914,8 +866,7 @@ function runPiStreaming(
 					clearTimeout(finalHardKillTimer);
 					finalHardKillTimer = undefined;
 				}
-				clearWatchdogTailTimer();
-				return;
+					return;
 			}
 			if (action === "start-drain") startFinalDrain();
 		};
@@ -1031,17 +982,12 @@ function runPiStreaming(
 				clearTimeout(finalHardKillTimer);
 				finalHardKillTimer = undefined;
 			}
-			clearWatchdogTailTimer();
 			if (protocolHardKillTimer) {
 				clearTimeout(protocolHardKillTimer);
 				protocolHardKillTimer = undefined;
 			}
 		};
 		function startFinalDrain(): void {
-			if (childWatchdogIsActive(childWatchdogState)) {
-				armWatchdogTail();
-				return;
-			}
 			if (childExited || finalDrainTimer || settled) return;
 			finalDrainTimer = setTimeout(() => {
 				if (settled) return;
@@ -1058,28 +1004,6 @@ function runPiStreaming(
 				finalHardKillTimer.unref?.();
 			}, FINAL_STOP_GRACE_MS);
 			finalDrainTimer.unref?.();
-		}
-		function clearWatchdogTailTimer(): void {
-			if (watchdogTailTimer) {
-				clearTimeout(watchdogTailTimer);
-				watchdogTailTimer = undefined;
-			}
-		}
-		function armWatchdogTail(): void {
-			if ((!cleanTerminalAssistantStopReceived && !agentSettledReceived) || watchdogTailTimer || settled) return;
-			watchdogTailTimer = setTimeout(() => {
-				watchdogTailTimer = undefined;
-				updateChildWatchdogState({
-					phase: "stale",
-					seq: (childWatchdogState?.seq ?? 0) + 1,
-					lastUpdate: Date.now(),
-					followUpPending: false,
-					reason: "child watchdog tail timeout",
-					timedOut: true,
-				});
-				startFinalDrain();
-			}, childWatchdogConfig?.watchdogTailTimeoutMs ?? 120_000);
-			watchdogTailTimer.unref?.();
 		}
 		child.on("exit", () => {
 			childExited = true;
@@ -1137,7 +1061,6 @@ function runPiStreaming(
 				observedMutationAttempt,
 				structuredOutputToolInvoked,
 				structuredOutputMessageStartIndex,
-				watchdog: childWatchdogState,
 				processInstanceId,
 				processCloseObservedAt,
 				processSignal: signal,
@@ -1167,7 +1090,7 @@ function runPiStreaming(
 			const stderr = stderrTail.text();
 			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
 			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve(omitUndefinedProperties({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, outputState: finalOutput.trim() ? "present" : "absent", timedOut, stopped, observedMutationAttempt, structuredOutputToolInvoked, structuredOutputMessageStartIndex, watchdog: childWatchdogState, processInstanceId, processTree: { state: "unknown", reason: "verification-failed", diagnostic: spawnErrorMessage } }));
+			resolve(omitUndefinedProperties({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, outputState: finalOutput.trim() ? "present" : "absent", timedOut, stopped, observedMutationAttempt, structuredOutputToolInvoked, structuredOutputMessageStartIndex, processInstanceId, processTree: { state: "unknown", reason: "verification-failed", diagnostic: spawnErrorMessage } }));
 		});
 	});
 }
@@ -1713,16 +1636,7 @@ async function runSingleStepInner(
 				// Missing/stale structured-output files are handled after the child exits.
 			}
 		}
-		const watchdogConfig = resolveWatchdogConfig(step.cwd ?? ctx.cwd);
 		const extensionBindings = normalizeExtensionBindings(step.extensionBindings)?.value;
-		const childWatchdog = watchdogConfig.ok
-			? resolveChildWatchdogConfig({
-				config: watchdogConfig.config,
-				agent: step.agent,
-				runId: ctx.id,
-				childIndex: ctx.flatIndex,
-			})
-			: undefined;
 		const { args, env, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit: attemptCapabilityAudit, warnings } = buildPiArgs(omitUndefinedProperties({
 			parentSessionId: step.parentSessionId,
 			forkCacheKey: step.context === "fork" ? deriveForkPromptCacheKey(step.parentSessionId) : undefined,
@@ -1771,10 +1685,6 @@ async function runSingleStepInner(
 			structuredOutput: effectiveStructuredOutput,
 			toolBudget: step.toolBudget,
 			permissionRules: step.permissionRules,
-			permissionAuditPath: step.permissionRules && ctx.artifactsDir
-				? path.join(ctx.artifactsDir, "permission-audit", `${ctx.id}-${ctx.flatIndex}.jsonl`)
-				: undefined,
-			childWatchdog,
 			waitToolEnabled: step.waitToolEnabled,
 			waitToolDefaultTimeoutMs: step.waitToolDefaultTimeoutMs,
 			thinkingCeiling: step.thinkingCeiling,
@@ -2286,7 +2196,6 @@ async function runSingleStepInner(
 		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.schemaPath,
 		acceptance: effectiveAcceptance,
 		...(step.effectiveAcceptance ? { acceptanceInput: persistResolvedAcceptance(step.effectiveAcceptance) } : step.acceptanceInput !== undefined ? { acceptanceInput: step.acceptanceInput } : {}),
-		watchdog: finalResult?.watchdog,
 		...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
 		launchResolvedExtensions,
 		...((finalResult as (RunPiStreamingResult & { runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1 }) | undefined)?.runtimeAcknowledgedExtensions ? { runtimeAcknowledgedExtensions: (finalResult as RunPiStreamingResult & { runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1 }).runtimeAcknowledgedExtensions } : {}),
@@ -3625,22 +3534,6 @@ async function runSubagentInner(
 		if (!step) return;
 		const now = Date.now();
 		statusPayload.currentStep = flatIndex;
-		if (isChildWatchdogStatusEvent(event)) {
-			const next = acceptChildWatchdogEvent({
-				current: step.watchdog,
-				event,
-				runId: id,
-				agent: step.agent,
-				childIndex: flatIndex,
-			});
-			if (!next) return;
-			step.watchdog = next;
-			step.lastActivityAt = now;
-			statusPayload.lastActivityAt = now;
-			statusPayload.lastUpdate = now;
-			writeStatusPayload(false);
-			return;
-		}
 		if (event.type === "tool_execution_start" && event.toolName) {
 			const mutates = isMutatingTool(event.toolName, event.args, flatSteps[flatIndex]?.mutationTools);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
@@ -4421,7 +4314,6 @@ async function runSubagentInner(
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
 				if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "watchdog", singleResult.watchdog);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityAudit", singleResult.capabilityAudit);
 				if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
@@ -4483,7 +4375,6 @@ async function runSubagentInner(
 					structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 					acceptance: pr.acceptance,
 					acceptanceInput: pr.acceptanceInput ?? persistResolvedAcceptance(dynamicSteps[itemIndex]!.effectiveAcceptance),
-					watchdog: pr.watchdog,
 					capabilityCeiling: pr.capabilityCeiling,
 					capabilityAudit: pr.capabilityAudit,
 				}));
@@ -4830,7 +4721,6 @@ async function runSubagentInner(
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
 				if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "watchdog", singleResult.watchdog);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityAudit", singleResult.capabilityAudit);
 						if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
@@ -4933,7 +4823,6 @@ async function runSubagentInner(
 						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
 						acceptance: pr.acceptance,
 						acceptanceInput: pr.acceptanceInput,
-						watchdog: pr.watchdog,
 					}));
 				}
 				pendingParallelUsageCost = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
@@ -5188,7 +5077,6 @@ async function runSubagentInner(
 				structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
 				acceptance: singleResult.acceptance,
 				acceptanceInput: singleResult.acceptanceInput,
-				watchdog: singleResult.watchdog,
 				capabilityCeiling: singleResult.capabilityCeiling,
 				capabilityAudit: singleResult.capabilityAudit,
 				interrupted: singleResult.interrupted,
@@ -5275,7 +5163,6 @@ async function runSubagentInner(
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptance", singleResult.acceptance);
 			if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptanceInput", singleResult.acceptanceInput);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timeoutRecovery", singleResult.timeoutRecovery);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "watchdog", singleResult.watchdog);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityCeiling", singleResult.capabilityCeiling);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityAudit", singleResult.capabilityAudit);
 			if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
@@ -5567,7 +5454,6 @@ async function runSubagentInner(
 				structuredOutputSchemaPath: r.structuredOutputSchemaPath,
 				acceptance: r.acceptance,
 				acceptanceInput: r.acceptanceInput,
-				watchdog: r.watchdog,
 				timeoutRecovery: r.timeoutRecovery,
 				capabilityCeiling: r.capabilityCeiling,
 				capabilityAudit: r.capabilityAudit,

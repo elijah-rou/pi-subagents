@@ -1102,7 +1102,7 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("registers the main watchdog command and renderer in parent mode", () => {
+	it("does not register the retired watchdog command or renderer in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -1123,8 +1123,8 @@ describe("subagent extension child mode", () => {
 				},
 			});
 			registerSubagentExtension(fakePi);
-			if (!commands.includes("subagents-watchdog")) throw new Error("watchdog command not registered: " + commands.join(", "));
-			if (!renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer not registered: " + renderers.join(", "));
+			if (commands.includes("subagents-watchdog")) throw new Error("retired watchdog command registered: " + commands.join(", "));
+			if (renderers.includes("subagent_watchdog_warning")) throw new Error("retired watchdog renderer registered: " + renderers.join(", "));
 		`;
 
 		execFileSync(

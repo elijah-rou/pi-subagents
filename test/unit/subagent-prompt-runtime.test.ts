@@ -22,8 +22,6 @@ import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { getAgentDir } from "../../src/shared/utils.ts";
 import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
 import { CHILD_TOOL_DIAGNOSTIC_PATH_ENV, formatChildToolDiagnostic, MCP_DIRECT_CHILD_TOOLS_ENV, readChildToolDiagnostic, REQUIRED_CHILD_TOOLS_ENV } from "../../src/runs/shared/tool-availability.ts";
-import { CHILD_WATCHDOG_CONFIG_ENV } from "../../src/watchdog/child-status.ts";
-import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 import registerSubagentPromptRuntime, {
 	CHILD_FANOUT_BOUNDARY_INSTRUCTIONS,
 	CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -128,8 +126,8 @@ afterEach(() => {
 	else process.env[SUBAGENT_CHILD_AGENT_ENV] = envSnapshot.PI_SUBAGENT_CHILD_AGENT;
 	if (envSnapshot.PI_SUBAGENT_CHILD_INDEX === undefined) delete process.env[SUBAGENT_CHILD_INDEX_ENV];
 	else process.env[SUBAGENT_CHILD_INDEX_ENV] = envSnapshot.PI_SUBAGENT_CHILD_INDEX;
-	if (envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
-	else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
+	if (envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env["PI_SUBAGENT_WATCHDOG_CHILD_CONFIG"];
+	else process.env["PI_SUBAGENT_WATCHDOG_CHILD_CONFIG"] = envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
 });
 
 function setSupervisorEnv(): void {
@@ -142,7 +140,7 @@ function setSupervisorEnv(): void {
 }
 
 describe("subagent prompt runtime", () => {
-	it("registers no permission hook by default and routes ask only to the watchdog arbiter", async () => {
+	it("registers no permission hook by default and fails closed for ask rules", async () => {
 		const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown> = [];
 		const pi = { on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx?: unknown) => unknown) { if (event === "tool_call") handlers.push(handler); } };
 		delete process.env[PERMISSION_POLICY_ENV];
@@ -161,47 +159,11 @@ describe("subagent prompt runtime", () => {
 
 		process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "ask" });
 		const askHandlers: Array<(event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown> = [];
-		const requests: Array<{ toolName: string; args: unknown }> = [];
-		registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown) { if (event === "tool_call") askHandlers.push(handler); } } as never, async (request) => {
-			requests.push({ toolName: request.toolName, args: request.args });
-			return { approved: true, reason: "approved by watchdog", source: "watchdog" };
+		registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: unknown) => unknown) { if (event === "tool_call") askHandlers.push(handler); } } as never);
+		assert.deepEqual(await askHandlers[0]!({ toolName: "write", input: { path: "out.txt" } }, {}), {
+			block: true,
+			reason: "Blocked by pi-subagents permission rule: 'write' requires approval, but delegated child approval is unavailable. Change the rule to 'allow' or 'deny'.",
 		});
-		assert.equal(await askHandlers[0]!({ toolName: "write", input: { path: "out.txt" } }, { signal: undefined }), undefined);
-		assert.deepEqual(requests, [{ toolName: "write", args: { path: "out.txt" } }]);
-	});
-
-	it("fails closed when an ask permission decision stalls", async () => {
-		try {
-			process.env[PERMISSION_POLICY_ENV] = JSON.stringify({ write: "ask" });
-			process.env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify({
-				enabled: true,
-				watchdogTailTimeoutMs: 1_000,
-				agentEndTimeoutMs: 5,
-				maxWarnings: null,
-				lsp: { enabled: false, timeoutMs: 100, maxFiles: 1, maxDiagnostics: 1 },
-				autoFollowBlockers: false,
-				autoFollowMaxAttempts: null,
-				stalemateRepeats: 2,
-			});
-			const handlers: Array<(event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown> = [];
-			registerPermissionGate({ on(event: string, handler: (event: { toolName?: string; input?: unknown }, ctx: { signal?: AbortSignal }) => unknown) { if (event === "tool_call") handlers.push(handler); } } as never, async () => new Promise(() => undefined));
-
-			const result = await Promise.race([
-				handlers[0]!({ toolName: "write", input: { path: "out.txt" } }, { signal: undefined }),
-				new Promise((resolve) => setTimeout(() => resolve("hung"), 100)),
-			]);
-
-			assert.notEqual(result, "hung");
-			assert.deepEqual(result, {
-				block: true,
-				reason: "Blocked by pi-subagents permission rule: Watchdog permission arbiter failed closed: Watchdog permission decision timed out after 5ms.",
-			});
-		} finally {
-			if (envSnapshot.PI_SUBAGENT_PERMISSION_POLICY === undefined) delete process.env[PERMISSION_POLICY_ENV];
-			else process.env[PERMISSION_POLICY_ENV] = envSnapshot.PI_SUBAGENT_PERMISSION_POLICY;
-			if (envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG === undefined) delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
-			else process.env[CHILD_WATCHDOG_CONFIG_ENV] = envSnapshot.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG;
-		}
 	});
 	it("collects runtime extension acknowledgements until terminal serialization", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-runtime-ack-"));
@@ -668,49 +630,16 @@ describe("subagent prompt runtime", () => {
 		}
 	});
 
-	it("registers child watchdog lifecycle handlers only when enabled by env", () => {
-		delete process.env[CHILD_WATCHDOG_CONFIG_ENV];
-		// Clear the ack capture env explicitly: when this test suite itself runs inside a
-		// pi-subagents child, the runner sets it and an extra agent_end handler registers.
+	it("ignores the retired child watchdog environment without registering lifecycle hooks", () => {
+		process.env.PI_SUBAGENT_WATCHDOG_CHILD_CONFIG = JSON.stringify({ enabled: true });
 		delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
 		delete process.env[SUBAGENT_STEER_INBOX_ENV];
-		delete process.env[SUBAGENT_STEER_CAPABILITY_ENV];
-		delete process.env[SUBAGENT_STEER_ACK_DIR_ENV];
-		const handlersWithout = new Map<string, unknown[]>();
+		const handlers = new Map<string, unknown[]>();
 		registerSubagentPromptRuntime({
-			on(event: string, handler: unknown) {
-				handlersWithout.set(event, [...(handlersWithout.get(event) ?? []), handler]);
-			},
+			on(event: string, handler: unknown) { handlers.set(event, [...(handlers.get(event) ?? []), handler]); },
 		} as { on(event: string, handler: unknown): void });
-		assert.equal(handlersWithout.get("agent_end")?.length ?? 0, 1, "headless auto-drain is always registered");
-
-		process.env[CHILD_WATCHDOG_CONFIG_ENV] = JSON.stringify({
-			enabled: true,
-			runId: "run-1",
-			agent: "worker",
-			childIndex: 0,
-			watchdogTailTimeoutMs: 1000,
-			agentEndTimeoutMs: 500,
-			maxWarnings: null,
-			lsp: { enabled: false, timeoutMs: 3000, maxFiles: 20, maxDiagnostics: 50 },
-			autoFollowBlockers: false,
-			autoFollowMaxAttempts: 3,
-			stalemateRepeats: 2,
-		});
-		const handlersWith = new Map<string, unknown[]>();
-		registerSubagentPromptRuntime({
-			on(event: string, handler: unknown) {
-				handlersWith.set(event, [...(handlersWith.get(event) ?? []), handler]);
-			},
-			getThinkingLevel() {
-				return "off";
-			},
-			sendMessage() {},
-		} as { on(event: string, handler: unknown): void; getThinkingLevel(): string; sendMessage(): void });
-
-		assert.ok((handlersWith.get("before_agent_start")?.length ?? 0) >= 2);
-		assert.ok((handlersWith.get("turn_end")?.length ?? 0) >= 1);
-		assert.ok((handlersWith.get("agent_end")?.length ?? 0) >= 2, "watchdog and auto-drain both observe agent_end");
+		assert.equal(handlers.get("agent_end")?.length ?? 0, 1, "only headless auto-drain observes agent_end");
+		assert.equal(handlers.get("turn_end")?.length ?? 0, 0);
 	});
 
 	it("registered structured_output tool accepts valid schema output and writes the capture file", async () => {
@@ -1032,8 +961,8 @@ describe("subagent prompt runtime", () => {
 		const slashTextResult = { role: "custom", customType: "subagent-slash-text-result", content: "Subagent profiles" };
 		const notify = { role: "custom", customType: "subagent-notify", content: "Background task completed" };
 		const control = { role: "custom", customType: "subagent_control_notice", content: "needs attention" };
-		const watchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
-		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
+		const watchdogWarning = { role: "custom", customType: "subagent_watchdog_warning", content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
+		const childWatchdogWarning = { role: "custom", customType: "subagent_watchdog_warning", content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
 		assert.deepEqual(stripParentOnlySubagentMessages([user, instruction, slashResult, slashTextResult, notify, control, watchdogWarning, childWatchdogWarning, otherCustom]), [user, otherCustom]);
@@ -1416,8 +1345,8 @@ describe("subagent prompt runtime", () => {
 		const slashResult = { role: "custom", customType: "subagent-slash-result", content: "## Orchestration" };
 		const subagentResult = { role: "toolResult", toolName: "subagent", content: "subagent results" };
 		const subagentCall = { role: "assistant", content: [{ type: "toolCall", name: "subagent", input: { agent: "worker" } }] };
-		const watchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
-		const childWatchdogWarning = { role: "custom", customType: SUBAGENT_WATCHDOG_WARNING_TYPE, content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
+		const watchdogWarning = { role: "custom", customType: "subagent_watchdog_warning", content: "<subagent_watchdog>parent-only</subagent_watchdog>" };
+		const childWatchdogWarning = { role: "custom", customType: "subagent_watchdog_warning", content: "<subagent_watchdog>child-visible</subagent_watchdog>", details: { source: "child" } };
 		const otherCustom = { role: "custom", customType: "other", content: "keep" };
 
 		assert.deepEqual(contextHandler?.({ messages: [priorParentTurn, instruction, slashResult, subagentCall, subagentResult, watchdogWarning, childWatchdogWarning, otherCustom, currentTask] }), {

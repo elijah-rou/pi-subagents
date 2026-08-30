@@ -350,7 +350,6 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 			...(step.execution ? { execution: step.execution } : {}),
 			...(step.review ? { review: step.review } : {}),
 			...(step.effects ? { effects: step.effects } : {}),
-			...(step.watchdog ? { watchdog: step.watchdog } : {}),
 			...(step.processTerminal ? { processTerminal: sanitizeProcessTerminal(step.processTerminal, { runId: status.runId, runnerProcessInstanceId: step.processTerminal.runnerProcessInstanceId }, `${path.join(asyncDir, "status.json")} step ${index}`) } : {}),
 			...(timeoutRecovery ? { timeoutRecovery } : {}),
 			...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),

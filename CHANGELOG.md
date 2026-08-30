@@ -9,9 +9,9 @@
 - Add bounded soft runtime checkpoints that request a safe child handoff before the hard execution deadline.
 - Add locked, append-only bounded mission journals for durable decisions and evidence.
 - Add a parent-only `/candidate-panel` recipe for independent structured proposals and advisory comparison.
-- Add bounded project watchdog guidance from `WATCHDOG.md` and an explicit configured path.
 
 ### Changed
+- Remove the optional main and child model-review watchdog from core, including startup hooks, child tail delays, model/configuration actions, slash UI, LSP review coupling, and settings writers. Explicit reviewer workflows remain. Child permission `ask` now deterministically denies rather than delegating authority to a model. Old watchdog settings, result fields, and status events are accepted inert for one published Package 3a release.
 - Remove core schedule execution, timers, writers, completion observation, retention coupling, and slash control. Trusted RPC retains bounded passive `schedule.list`, `schedule.show`, and `schedule.history` readers for one published-release compatibility horizon.
 - Add one packaged [pre-v0.59 fork migration guide](docs/migration-v059.md) covering required configuration, profile, workflow, storage, validation, and restart changes.
 - Keep `worktree.cleanup` public guidance plan-only by rejecting caller-supplied `planId` and removed `apply` mode, and remove the `pi-subagents/project-panes` package export while retaining host-selected Herdr project actions and passive observation.

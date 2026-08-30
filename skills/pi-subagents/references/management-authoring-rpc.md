@@ -2,13 +2,12 @@
 
 Models may use only the Package 1 actions listed in the main skill. For discovery, use `list`, `get`, `models`, and `children.list`. For lifecycle work, use the retained status/control actions.
 
-Do not call agent authoring, refinement, profile, schedule, watchdog, mission, pane, lane-policy, broad-cleanup, or spawn-budget administration through the model-facing `subagent` tool.
+Do not call agent authoring, refinement, profile, schedule, mission, pane, lane-policy, broad-cleanup, or spawn-budget administration through the model-facing `subagent` tool.
 
 ## Named human interfaces
 
 - Agent authoring and enable/disable/reset operations: `/subagents`
 - Refinement overlays: `/subagents-refine`
-- Watchdog configuration and checks: `/subagents-watchdog`
 - Profiles and provider catalogs: `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`
 - Fleet inspection: `/subagents-fleet`
 - Diagnostics and guides: `/subagents-doctor`, `/subagents-guide`

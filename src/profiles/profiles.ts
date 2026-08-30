@@ -488,7 +488,7 @@ export function applySubagentProfile(name: string): { filePath: string; settings
 		? settings.subagents as Record<string, unknown>
 		: {};
 	// A profile owns the complete agent mapping, but unrelated subagent settings
-	// (notably disableBuiltins, modelScope, watchdog, etc.) survive profile switches.
+	// Settings outside the profile schema survive profile switches.
 	settings.subagents = {
 		...existing,
 		...profile.subagents,

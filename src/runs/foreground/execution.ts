@@ -111,17 +111,9 @@ import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLe
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
-import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.ts";
 import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, PI_AGGREGATE_EVENT_PROJECTOR, projectChildLifecycle, type ChildLifecycleAction, type ChildLifecycleState, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
-import {
-	acceptChildWatchdogEvent,
-	childWatchdogIsActive,
-	isChildWatchdogStatusEvent,
-	resolveChildWatchdogConfig,
-	type ChildWatchdogStateSnapshot,
-} from "../../watchdog/child-status.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -336,19 +328,7 @@ async function runSingleAttempt(
 	// PI_SUBAGENT_SESSION_NAME and echoed back on the result payload so hosts
 	// can label this run without reading the child's session file.
 	const childSessionName = deriveChildSessionName({ agent: agent.name, task: shared.originalTask ?? task });
-	const watchdogConfig = resolveWatchdogConfig(options.cwd ?? runtimeCwd);
-	const childWatchdog = watchdogConfig.ok
-		? resolveChildWatchdogConfig({
-			config: watchdogConfig.config,
-			agent: agent.name,
-			runId: options.runId,
-			childIndex: options.index ?? 0,
-		})
-		: undefined;
 	const permissionRules = resolvePermissionRules(options.permissions, agent.permissions);
-	const permissionAuditPath = permissionRules && options.artifactsDir
-		? path.join(options.artifactsDir, "permission-audit", `${options.runId}-${options.index ?? 0}.jsonl`)
-		: undefined;
 	const { args, env: sharedEnv, tempDir, toolDiagnosticPath, runtimeAcknowledgedExtensionsPath, capabilityAudit, warnings } = buildPiArgs({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
@@ -393,8 +373,6 @@ async function runSingleAttempt(
 		toolBudget: options.toolBudget,
 		allowZeroToolBudget: options.allowZeroToolBudget,
 		permissionRules,
-		permissionAuditPath,
-		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
 		waitToolDefaultTimeoutMs: options.waitToolDefaultTimeoutMs,
 		capabilityCeiling: options.capabilityCeiling,
@@ -747,19 +725,6 @@ async function runSingleAttempt(
 		let compactionStartedReceived = false;
 		let finalDrainTimer: NodeJS.Timeout | undefined;
 		let finalHardKillTimer: NodeJS.Timeout | undefined;
-		let watchdogTailTimer: NodeJS.Timeout | undefined;
-		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
-		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
-			childWatchdogState = snapshot;
-			result.watchdog = snapshot;
-			progress.watchdog = snapshot;
-		};
-		const clearWatchdogTailTimer = () => {
-			if (watchdogTailTimer) {
-				clearTimeout(watchdogTailTimer);
-				watchdogTailTimer = undefined;
-			}
-		};
 		const clearFinalDrainTimers = () => {
 			if (finalDrainTimer) {
 				clearTimeout(finalDrainTimer);
@@ -771,10 +736,6 @@ async function runSingleAttempt(
 			}
 		};
 		const startFinalDrain = () => {
-			if (childWatchdogIsActive(childWatchdogState)) {
-				armWatchdogTail();
-				return;
-			}
 			if (childExited || finalDrainTimer || lifecycleFinished || processClosed) return;
 			finalDrainTimer = setTimeout(() => {
 				if (lifecycleFinished || processClosed) return;
@@ -792,27 +753,9 @@ async function runSingleAttempt(
 			}, FINAL_STOP_GRACE_MS);
 			finalDrainTimer.unref?.();
 		};
-		function armWatchdogTail(): void {
-			if ((!cleanTerminalAssistantStopReceived && !agentSettledReceived) || watchdogTailTimer || lifecycleFinished || processClosed) return;
-			watchdogTailTimer = setTimeout(() => {
-				watchdogTailTimer = undefined;
-				updateChildWatchdogState({
-					phase: "stale",
-					seq: (childWatchdogState?.seq ?? 0) + 1,
-					lastUpdate: Date.now(),
-					followUpPending: false,
-					reason: "child watchdog tail timeout",
-					timedOut: true,
-				});
-				startFinalDrain();
-				fireUpdate();
-			}, childWatchdog?.watchdogTailTimeoutMs ?? 120_000);
-			watchdogTailTimer.unref?.();
-		}
 		const applyChildLifecycle = (action: ChildLifecycleAction): void => {
 			if (action === "cancel-drain") {
 				clearFinalDrainTimers();
-				clearWatchdogTailTimer();
 				return;
 			}
 			if (action === "start-drain") startFinalDrain();
@@ -839,7 +782,6 @@ async function runSingleAttempt(
 			if (lifecycleFinished) return;
 			lifecycleFinished = true;
 			clearFinalDrainTimers();
-			clearWatchdogTailTimer();
 			clearStdioGuard();
 			clearTimeoutTimers();
 			disposeRuntimeMonitors();
@@ -1070,27 +1012,6 @@ async function runSingleAttempt(
 			}
 			applyChildLifecycle(lifecycleAction);
 
-			if (isChildWatchdogStatusEvent(evt)) {
-				if (!childWatchdog) return;
-				const next = acceptChildWatchdogEvent({
-					current: childWatchdogState,
-					event: evt,
-					runId: options.runId,
-					agent: agent.name,
-					childIndex: options.index ?? 0,
-				});
-				if (!next) return;
-				updateChildWatchdogState(next);
-				if (childWatchdogIsActive(next)) {
-					clearFinalDrainTimers();
-					armWatchdogTail();
-				} else {
-					clearWatchdogTailTimer();
-					if (cleanTerminalAssistantStopReceived || agentSettledReceived) startFinalDrain();
-				}
-				fireUpdate();
-				return;
-			}
 
 			const now = Date.now();
 			progress.durationMs = now - startTime;

@@ -1,0 +1,17 @@
+{
+  "runId": "pre-3a-run",
+  "mode": "single",
+  "state": "running",
+  "startedAt": 100,
+  "lastUpdate": 200,
+  "cwd": "/legacy-repo",
+  "watchdog": { "phase": "reviewing", "seq": 4, "lastUpdate": 200, "followUpPending": true },
+  "steps": [
+    {
+      "agent": "worker",
+      "status": "running",
+      "durationMs": 20,
+      "watchdog": { "phase": "stale", "seq": 3, "lastUpdate": 190, "followUpPending": false }
+    }
+  ]
+}

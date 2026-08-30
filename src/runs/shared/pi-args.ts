@@ -43,11 +43,6 @@ import {
 	MCP_DIRECT_CHILD_TOOLS_ENV,
 	REQUIRED_CHILD_TOOLS_ENV,
 } from "./tool-availability.ts";
-import {
-	CHILD_WATCHDOG_CONFIG_ENV,
-	encodeChildWatchdogConfig,
-	type ChildWatchdogConfig,
-} from "../../watchdog/child-status.ts";
 import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../background/wait-config.ts";
 import {
 	PI_CODING_AGENT_PACKAGE_ROOT_ENV,
@@ -55,7 +50,6 @@ import {
 } from "../../shared/utils.ts";
 import {
 	encodePermissionRules,
-	PERMISSION_AUDIT_PATH_ENV,
 	PERMISSION_POLICY_ENV,
 	type PermissionRules,
 } from "./permissions.ts";
@@ -212,8 +206,6 @@ export interface BuildPiArgsInput {
 	toolBudget?: ResolvedToolBudget;
 	allowZeroToolBudget?: boolean;
 	permissionRules?: PermissionRules;
-	permissionAuditPath?: string;
-	childWatchdog?: ChildWatchdogConfig;
 	/**
 	 * Per-launch override of the task delivery mode. Startup-retry paths set
 	 * this to "file" after an unexplained zero-activity SIGKILL so the retry
@@ -964,9 +956,6 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		fs.mkdirSync(path.join(channelDir, "replies"), { recursive: true });
 		env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
 	}
-	if (encodedPermissionRules)
-		env[PERMISSION_AUDIT_PATH_ENV] =
-			input.permissionAuditPath ?? path.join(tempDir, "permission-audit.jsonl");
 	if (input.runId) {
 		env[SUBAGENT_RUN_ID_ENV] = input.runId;
 	}
@@ -1013,10 +1002,6 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
 	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 	env[TOOL_BUDGET_ZERO_AUTH_ENV] = input.allowZeroToolBudget ? "1" : undefined;
-	const encodedChildWatchdog = encodeChildWatchdogConfig(input.childWatchdog);
-	if (encodedChildWatchdog)
-		env[CHILD_WATCHDOG_CONFIG_ENV] = encodedChildWatchdog;
-
 	env[SUBAGENT_PARENT_SESSION_ENV] =
 		input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
 	env[SUBAGENT_FORK_CACHE_KEY_ENV] = input.forkCacheKey?.trim() || undefined;

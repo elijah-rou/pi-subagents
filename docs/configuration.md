@@ -4,7 +4,7 @@ Upgrading from the fork before v0.59? Review the [changed defaults, exact compat
 
 `pi-subagents` reads optional JSON config from `~/.pi/agent/extensions/subagent/config.json`. This page lists every key, plus the environment variables and the settings-file keys that affect config resolution.
 
-Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `modelScope`, `disableThinking`, `disableBuiltins`, watchdog settings) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. Agent inheritance fields use the same frontmatter/settings precedence as other agent fields; when `inheritGlobalContext` is omitted, it follows the resolved `inheritProjectContext` value. See [models.md](models.md), [agents.md](agents.md#prompt-assembly), and [watchdog.md](watchdog.md).
+Settings-level keys (`subagents.defaultModel`, `defaultProvider`, `defaultThinking`, `defaultExtensions`, `agentOverrides`, `modelScope`, `disableThinking`, `disableBuiltins`) live in Pi settings files, not this config file. `modelScope.agents.<name>` adds per-agent restrictions, and `allow: ["inherit"]` permits the current parent model. Agent inheritance fields use the same frontmatter/settings precedence as other agent fields; when `inheritGlobalContext` is omitted, it follows the resolved `inheritProjectContext` value. See [models.md](models.md), [agents.md](agents.md#prompt-assembly), and [watchdog.md](watchdog.md).
 
 ## Project root resolution (settings)
 
@@ -486,7 +486,7 @@ Controls smart batching of async-completion notifications. When several backgrou
 
 ## `permissions`
 
-Native child tool permission rules. See [watchdog.md](watchdog.md#native-child-tool-permissions).
+Native child tool permission rules. `allow` and `deny` retain their native behavior. `ask` fails closed in delegated children with an actionable deterministic error because core has no interactive or model permission arbiter. Historical `subagents.watchdog` settings are inert for one Package 3a release; do not configure them. See the [watchdog removal and migration stub](watchdog.md).
 
 ## `PI_SUBAGENT_FS_RETRY_MAX_TOTAL_MS`
 

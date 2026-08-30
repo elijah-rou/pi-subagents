@@ -8,7 +8,6 @@ Actions are exactly `list`, `get`, `models`, `children.list`, `guide`, `validate
 
 Omit `action` for execution. Use one direct `{ agent, task? }` call for one child. Use one `workflowScript` call for multi-step or parallel orchestration. Never call removed administration actions or pass removed administration fields.
 
-Agent authoring is human-only through `/subagents`. Refinement uses `/subagents-refine`. Watchdog administration uses `/subagents-watchdog`. Profile administration uses `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, and `/subagents-check-profile`. Fleet inspection uses `/subagents-fleet`. Trusted RPC clients retain only one-release passive `schedule.list`, `schedule.show`, and `schedule.history` readers.
 
 Package 2a removed mission/goal administration and all new mission writes. One-release legacy readers and completion synchronization are not a callable workflow surface. Lane merge/supersession policy, broad worktree cleanup, and optional pane administration remain unavailable to models. Do not invent a mission slash command.
 

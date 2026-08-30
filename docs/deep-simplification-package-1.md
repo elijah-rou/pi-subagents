@@ -54,3 +54,7 @@ The baseline harness was written to a temporary file and removed. The committed 
 The fresh isolated run showed lower startup, direct-preparation, and refresh percentiles than Package 0. Empty session-start p95 varied upward by 0.165 ms while its p50 improved. Idle filesystem work remained unchanged. These local timings are regression anchors, not service-level objectives.
 
 Validation passed TypeScript typecheck and `npm run test:all`: 2,789 unit tests passed with 5 skipped, and 899 integration tests passed with 6 skipped. The real Pi-session E2E suite registered no tests because the Pi runtime packages were unavailable. Focused tests additionally cover every model-readable guide topic, schema shape, public/trusted normalization, trusted slash administration, passive RPC schedule-reader administration, schedule mutator rejection, and public spawn rejection, model descriptions, and root/child registration.
+
+## Package 3a follow-up
+
+Package 3a subsequently removed watchdog administration, runtime review behavior, child launch coupling, and its four trusted actions. The Package 1 counts above remain historical evidence for that package.

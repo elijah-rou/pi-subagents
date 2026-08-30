@@ -27,8 +27,6 @@ import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { normalizePublicSubagentExecution, normalizeTrustedHostSubagentExecution } from "../../extension/public-execution.ts";
 import { runSync } from "./execution.ts";
-import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
-import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
 import { buildModelCandidates, inheritsParentModel, normalizeParentModel, resolveEffectiveSubagentModel, resolveSubagentModelOverride, type ParentModel } from "../shared/model-fallback.ts";
 import { formatRetainedChildren, listRetainedChildren } from "../background/retained-children.ts";
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
@@ -185,7 +183,7 @@ import {
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "watchdog.configure", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "inspector.open", "inspector.close", "project.open", "project.close", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "worktree.discard", "refine.rollback", "inspector.close", "project.close", "stop", "interrupt"]);
 
 function resolveSteerDeliveryMode(mode: SubagentParamsLike["mode"]): SteerDeliveryMode | undefined {
@@ -410,7 +408,6 @@ interface ExecutorDeps {
 	asyncByDefault: boolean;
 	waitToolEnabled?: boolean;
 	waitToolDefaultTimeoutMs?: number;
-	watchdog?: MainWatchdogRuntime;
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
@@ -5523,16 +5520,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					if (!confirmed) return { content: [{ type: "text", text: `Action '${action}' canceled; authority was not granted.` }], details: { mode: "management", results: [] } };
 				}
 			}
-			if ((WATCHDOG_TOOL_ACTIONS as readonly string[]).includes(action)) {
-				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
-					return {
-						content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
-						isError: true,
-						details: { mode: "management" as const, results: [] },
-					};
-				}
-				return handleWatchdogToolAction(action, paramsWithResolvedCwd, ctx, deps.watchdog);
-			}
+
 			if (action === "refine" || action === "refine.show" || action === "refine.rollback") {
 				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
 					return {

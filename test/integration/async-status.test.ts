@@ -41,6 +41,22 @@ function stagedLaneStatusGraph(runId: string): Record<string, unknown> {
 }
 
 describe("async status helpers", () => {
+	it("ignores pre-Package-3a watchdog fields during recovery", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-pre-3a-"));
+		try {
+			const fixturePath = path.join(process.cwd(), "test", "fixtures", "pre-package-3a-watchdog-status.json");
+			const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf-8")) as Record<string, unknown>;
+			createAsyncDir(root, "pre-3a-run", fixture);
+			const [run] = listAsyncRuns(root, { states: ["running"] });
+			assert.ok(run);
+			assert.equal("watchdog" in run, false);
+			assert.equal("watchdog" in (run.steps[0] ?? {}), false);
+			assert.equal(run.state, "running");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("lists only requested states and includes flattened step summaries", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-"));
 		let budgetDirectory: string | undefined;
@@ -85,7 +101,7 @@ describe("async status helpers", () => {
 			assert.equal(runs[0]?.steps[1]?.description, "Patch billing only");
 			assert.equal(runs[0]?.steps[1]?.contextLimit, 128_000);
 			assert.equal(runs[0]?.steps[1]?.toolBudgetBlocked, true);
-			assert.equal(runs[0]?.steps[1]?.watchdog?.phase, "stale");
+			assert.equal("watchdog" in (runs[0]?.steps[1] ?? {}), false);
 			const text = formatAsyncRunList(runs);
 			assert.match(text, /Run fan-out: 3\/64 used, 61 remaining/);
 			assert.match(text, /output: .*output-1\.log/);

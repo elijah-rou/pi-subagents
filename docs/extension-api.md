@@ -409,3 +409,7 @@ The main runtime files in this repository:
 | `src/intercom/intercom-bridge.ts` | Runtime intercom bridge instructions and diagnostics. |
 | `src/extension/schemas.ts` / `src/shared/types.ts` | Tool schemas, shared types, and event constants. |
 | `test/unit/` / `test/integration/` / `test/e2e/` | Unit, loader-based integration, and real-session E2E tests. |
+
+## Package 3a review boundary
+
+Core exposes no watchdog lifecycle, model-arbitration, warning-renderer, or settings-writer API. Extensions that need review should launch explicit reviewer children through the supported delegation/workflow contracts. Legacy watchdog properties and `subagent.watchdog.status` events are passive input compatibility only for one published Package 3a release; consumers must ignore them.

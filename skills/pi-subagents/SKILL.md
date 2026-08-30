@@ -60,7 +60,7 @@ that runner explicitly supports the option.
 | Branch | Read |
 | --- | --- |
 | Delegate or choose roles, prompts, models, or slash commands | `references/prompting-and-roles.md` |
-| Execute single, scripted, async, stateful, forked, watchdog, oracle, or intercom workflows | `references/execution-controls.md` |
+| Execute single, scripted, async, stateful, forked, oracle, or intercom workflows | `references/execution-controls.md` |
 | Review, validate, triage gate failures, or prepare delivery | `references/review-and-validation.md` |
 | Coordinate lanes, worktrees, repositories, or writer waves | `references/multi-lane-orchestration.md` |
 | List, create, edit, disable, eject, or expose agents/RPC | `references/management-authoring-rpc.md` |

@@ -365,19 +365,7 @@ describe("subagent async widget rendering", () => {
 		assert.deepEqual(attention?.chips, ["attention"]);
 	});
 
-	it("surfaces stale and tool/turn budget blocked states", () => {
-		const staleJob = {
-			asyncId: "stale-run",
-			asyncDir: "/tmp/stale-run",
-			status: "running",
-			mode: "single",
-			agents: ["worker"],
-			steps: [{ agent: "worker", status: "running", label: "Stale work", watchdog: { phase: "stale" } }],
-		};
-		const stale = projectAsyncLane(staleJob);
-		assert.equal(stale?.next, "inspect stale state");
-		assert.deepEqual(stale?.chips, ["stale"]);
-
+	it("surfaces tool and turn budget blocked states", () => {
 		const blockedJobs: Array<Record<string, unknown>> = [];
 		for (const [index, field] of (["toolBudgetBlocked", "turnBudgetExceeded"] as const).entries()) {
 			const blockedJob = {
@@ -394,25 +382,15 @@ describe("subagent async widget rendering", () => {
 			assert.deepEqual(blocked?.chips, ["blocked"]);
 		}
 
-		const text = buildWidgetLines([staleJob, ...blockedJobs], theme, 180).join("\n");
-		assert.match(text, /next:inspect stale state/);
-		assert.match(text, /\[stale\]/);
+		const text = buildWidgetLines(blockedJobs, theme, 180).join("\n");
 		assert.match(text, /next:inspect blocked state/);
 		assert.match(text, /\[blocked\]/);
 	});
 
-	it("keeps stale and blocked lane signals in crowded progressive rows", () => {
+	it("keeps blocked lane signals in crowded progressive rows", () => {
 		resetWidgetLayout();
 		withStdoutSize(22, 120, () => {
 			const jobs = [
-				{
-					asyncId: "progressive-stale",
-					asyncDir: "/tmp/progressive-stale",
-					status: "running",
-					mode: "single",
-					agents: ["watcher"],
-					steps: [{ agent: "watcher", status: "running", label: "Stale lane", watchdog: { phase: "stale" } }],
-				},
 				{
 					asyncId: "progressive-blocked",
 					asyncDir: "/tmp/progressive-blocked",
@@ -427,8 +405,6 @@ describe("subagent async widget rendering", () => {
 			const lines = renderWidgetLines(ui.widgets.at(-1));
 			assert.equal(lines.length, 3, "22 terminal rows should select the collapsed progressive tier");
 			const text = lines.join("\n");
-			assert.match(text, /next:inspect stale state/);
-			assert.match(text, /\[stale\]/);
 			assert.match(text, /next:inspect blocked state/);
 			assert.match(text, /\[blocked\]/);
 		});

@@ -43,7 +43,6 @@ import { createResultDeliveryOwnership } from "../runs/background/result-deliver
 import { createLegacyScheduleReader } from "../runs/background/scheduled-runs.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
-import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
@@ -477,7 +476,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const waitSubscriptionManager = createWaitSubscriptionManager(pi, state);
-	const mainWatchdog = registerMainWatchdog(pi);
 	const resultDeliveryOwnership = createResultDeliveryOwnership(state);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch, ownership: resultDeliveryOwnership });
 	const fleetStatus = fleetViewEnabled
@@ -565,7 +563,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		asyncByDefault,
 		waitToolEnabled: waitToolConfig.enabled,
 		waitToolDefaultTimeoutMs: waitToolConfig.defaultTimeoutMs,
-		watchdog: mainWatchdog,
 		tempArtifactsDir,
 		getSubagentSessionRoot,
 		expandTilde,
@@ -930,7 +927,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			stopResultWatcher();
 			resultDeliveryOwnership.clear();
 			completionNotifier.dispose();
-			mainWatchdog.dispose();
 			supervisorChannel.dispose();
 			waitSubscriptionManager.dispose();
 			fleetStatus?.dispose();
