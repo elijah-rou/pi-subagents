@@ -672,19 +672,23 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
 		return executor.executePublic(id, params, signal, onUpdate, ctx);
 	};
+	const executeTrustedHostCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
+		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
+		return executor.executeTrustedHost(id, params, signal, onUpdate, ctx);
+	};
 
 	const slashBridge = registerSlashSubagentBridge({
 		events: pi.events,
 		getContext: () => state.lastUiContext,
 		execute: (id, params, signal, onUpdate, ctx) =>
-			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),
+			executeTrustedHostCollapsed(id, params, signal, onUpdate, ctx),
 	});
 
 	const promptTemplateBridge = registerPromptTemplateDelegationBridge({
 		events: pi.events,
 		getContext: () => state.lastUiContext,
 		execute: (requestId, params, signal, ctx, onUpdate) =>
-			executeSubagentCollapsed(requestId, params, signal, onUpdate, ctx),
+			executeTrustedHostCollapsed(requestId, params, signal, onUpdate, ctx),
 		executeStructured: (requestId, params, signal, ctx, onUpdate) => {
 			if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
 			return executor.executeDelegated(requestId, params, signal, onUpdate, ctx);
@@ -694,7 +698,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const rpcBridge = registerSubagentRpcBridge({
 		events: pi.events,
 		getContext: () => state.lastUiContext,
-		execute: (id, params, signal, onUpdate, ctx) => executor.executePublic(id, params, signal, onUpdate, ctx),
+		execute: (id, params, signal, onUpdate, ctx) => executor.executeTrustedHost(id, params, signal, onUpdate, ctx),
 		state,
 	});
 

@@ -180,8 +180,8 @@ export default function registerFanoutChildSubagentExtension(pi: ExtensionAPI): 
 		label: "Subagent",
 		description: [
 			"Delegate to subagents from child-safe fanout mode.",
-			"Allowed management/control actions: list, get, status, lane.status, interrupt, resume, steer, doctor.",
-			"Mutating management actions (create, update, delete, eject, disable, enable, reset, grant-spawn-budget, lane.recordMerge, lane.recordSupersession) are blocked in this mode.",
+			"The root model vocabulary has 15 actions. Child-safe fanout supports the same vocabulary except worktree.discard.",
+			"worktree.discard is rejected here; all administration removed from the root model surface is also unavailable.",
 		].join("\n"),
 		parameters: params,
 		async execute(id, params, signal, onUpdate, ctx) {

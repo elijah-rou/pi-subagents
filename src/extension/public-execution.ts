@@ -1,3 +1,5 @@
+import { SUBAGENT_ACTIONS, SUBAGENT_INTERNAL_ACTIONS } from "../shared/types.ts";
+
 export interface PublicSubagentExecutionParams {
 	action?: unknown;
 	mode?: unknown;
@@ -48,6 +50,15 @@ export type PublicSubagentExecutionNormalization<T> =
  * Internal runs.run children and structured owned delegation bypass this boundary.
  */
 export function normalizePublicSubagentExecution<T extends PublicSubagentExecutionParams>(params: T): PublicSubagentExecutionNormalization<T> {
+	return normalizeSubagentExecution(params, false);
+}
+
+/** Normalize administration requested by trusted slash-command and RPC hosts. Never expose this through model tools. */
+export function normalizeTrustedHostSubagentExecution<T extends PublicSubagentExecutionParams>(params: T): PublicSubagentExecutionNormalization<T> {
+	return normalizeSubagentExecution(params, true);
+}
+
+function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(params: T, trustedHost: boolean): PublicSubagentExecutionNormalization<T> {
 	if (params.workflowScript !== undefined && params.workflowScriptPath !== undefined) {
 		return { ok: false, error: "workflowScript and workflowScriptPath are mutually exclusive.", mode: "workflow" };
 	}
@@ -79,6 +90,21 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 		return { ok: false, error: "action must be a non-empty management/control action, or omit action and use workflowScript.", mode: "management" };
 	}
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
+	if (normalizedAction !== undefined) {
+		if (normalizedAction.toLowerCase() === "append-step") {
+			return { ok: false, error: "Legacy append-step control is internal executor compatibility and is unavailable through model, slash, or RPC surfaces; use current workflowScript orchestration.", mode: "management" };
+		}
+		const allowedActions = trustedHost ? SUBAGENT_INTERNAL_ACTIONS : SUBAGENT_ACTIONS;
+		if (!(allowedActions as readonly string[]).includes(normalizedAction)) {
+			return {
+				ok: false,
+				error: trustedHost
+					? `Unknown trusted host action '${normalizedAction}'.`
+					: `Action '${normalizedAction}' was removed from the model surface. Use trusted human administration through slash commands or an existing RPC bridge.`,
+				mode: "management",
+			};
+		}
+	}
 	if (params.clarify !== undefined) {
 		return { ok: false, error: "Public workflowScript execution does not support clarify UI.", mode: "workflow" };
 	}
@@ -97,9 +123,6 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 	}
 	if (normalizedAction !== undefined) {
 		const legacyAction = normalizedAction.toLowerCase();
-		if (legacyAction === "append-step") {
-			return { ok: false, error: "Legacy append-step control was removed from the public subagent tool; use current workflowScript orchestration.", mode: "management" };
-		}
 		if (legacyAction === "approve-checkpoint" || legacyAction === "reject-checkpoint") {
 			return { ok: false, error: "Legacy checkpoint approval controls were removed from the public subagent tool; use current workflowScript orchestration.", mode: "management" };
 		}
@@ -118,7 +141,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			}
 			return { ok: true, params: { ...params, action: normalizedAction } };
 		}
-		if (normalizedAction === "schedule.create") {
+		if (trustedHost && normalizedAction === "schedule.create") {
 			if (params.agent !== undefined || params.task !== undefined || params.step !== undefined) {
 				return { ok: false, error: "schedule.create requires workflowScript or workflowScriptPath and does not accept direct agent, task, or step execution fields.", mode: "management" };
 			}
@@ -128,7 +151,7 @@ export function normalizePublicSubagentExecution<T extends PublicSubagentExecuti
 			return { ok: true, params: { ...params, action: normalizedAction } };
 		}
 		if (hasWorkflowInput) {
-			return { ok: false, error: "Workflow execution must omit action; only validate and schedule.create accept action with workflowScript or workflowScriptPath.", mode: "management" };
+			return { ok: false, error: `Workflow execution must omit action; only validate${trustedHost ? " and schedule.create" : ""} accepts action with workflowScript or workflowScriptPath.`, mode: "management" };
 		}
 		if (params.task !== undefined) {
 			return { ok: false, error: "Structured single-child task cannot be combined with a management/control action.", mode: "management" };

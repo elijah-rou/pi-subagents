@@ -133,17 +133,9 @@ For child subagent watchdogs, use `subagents.watchdog.children.model` as the def
 
 Child watchdogs are opt-in and follow the same edit-gated rule: read-only children do not trigger watchdog reviews, while writer children are reviewed at their own `agent_end` if their worktree changed.
 
-## Agent-driven configuration
+## Human configuration
 
-Agents can configure the same values through the tool when you ask them to set up the watchdog:
-
-```ts
-subagent({ action: "watchdog.recommend-model" })
-subagent({ action: "watchdog.configure", model: "recommended", scope: "session" })
-subagent({ action: "watchdog.configure", model: "recommended", scope: "project" })
-```
-
-Persistent scopes (`user` or `project`) should only be used when you ask for a lasting default. Otherwise the agent should use `scope: "session"`.
+Watchdog actions are not model-facing in Package 1. Configure, inspect, recommend a model, enable, disable, or check the watchdog through `/subagents-watchdog`. Persistent user/project settings should be changed only when the operator requests a lasting default; otherwise use the command's session-scoped behavior.
 
 ## Native child tool permissions
 

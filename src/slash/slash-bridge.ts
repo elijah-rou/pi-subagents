@@ -1,6 +1,6 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { normalizePublicSubagentExecution } from "../extension/public-execution.ts";
+import { normalizeTrustedHostSubagentExecution } from "../extension/public-execution.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import {
 	SLASH_SUBAGENT_CANCEL_EVENT,
@@ -79,7 +79,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 		const request = data as Partial<SlashSubagentRequest>;
 		if (typeof request.requestId !== "string" || !request.params) return;
 		const { requestId } = request as SlashSubagentRequest;
-		const normalized = normalizePublicSubagentExecution((request as SlashSubagentRequest).params);
+		const normalized = normalizeTrustedHostSubagentExecution((request as SlashSubagentRequest).params);
 		if (!normalized.ok) {
 			options.events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, {
 				requestId,

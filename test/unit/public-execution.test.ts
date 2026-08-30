@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizePublicSubagentExecution } from "../../src/extension/public-execution.ts";
+import {
+	normalizePublicSubagentExecution,
+	normalizeTrustedHostSubagentExecution,
+} from "../../src/extension/public-execution.ts";
+import { SUBAGENT_ACTIONS, SUBAGENT_INTERNAL_ACTIONS } from "../../src/shared/types.ts";
 
 describe("public subagent execution normalization", () => {
-	it("accepts structured single-child, workflow, management, and schedules", () => {
+	it("publishes exactly the retained model action surface while retaining internal dispatch", () => {
+		assert.deepEqual(SUBAGENT_ACTIONS, [
+			"list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status",
+			"status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor",
+		]);
+		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 56);
+		assert.ok(SUBAGENT_INTERNAL_ACTIONS.includes("schedule.create"));
+		assert.ok(!SUBAGENT_INTERNAL_ACTIONS.includes("append-step"));
+	});
+
+	it("accepts structured single-child, workflow, and retained management", () => {
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
 		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js" }), { ok: true, params: { workflowScriptPath: "workflows/review.js" } });
@@ -57,14 +71,33 @@ describe("public subagent execution normalization", () => {
 			normalizePublicSubagentExecution({ action: " validate ", workflowScriptPath: "workflow.js" }),
 			{ ok: true, params: { action: "validate", workflowScriptPath: "workflow.js" } },
 		);
-		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScript: "return 1" }),
-			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScript: "return 1" } },
-		);
-		assert.deepEqual(
-			normalizePublicSubagentExecution({ action: " schedule.create ", every: "1h", workflowScriptPath: "/tmp/workflow.js" }),
-			{ ok: true, params: { action: "schedule.create", every: "1h", workflowScriptPath: "/tmp/workflow.js" } },
-		);
+	});
+
+	it("rejects administration removed from the model surface but accepts it for trusted hosts", () => {
+		for (const params of [
+			{ action: "create" },
+			{ action: "schedule.create", every: "1h", workflowScript: "return 1" },
+			{ action: "mission.list" },
+			{ action: "watchdog.status" },
+			{ action: "worktree.cleanup", mode: "plan" },
+			{ action: "lane.recordMerge" },
+		]) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false);
+			if (!result.ok) assert.match(result.error, /human administration|removed from the model surface/i);
+			assert.equal(normalizeTrustedHostSubagentExecution(params).ok, true, params.action);
+		}
+		for (const normalize of [normalizePublicSubagentExecution, normalizeTrustedHostSubagentExecution]) {
+			const appendStep = normalize({ action: "append-step", id: "run", step: { agent: "worker" } });
+			assert.equal(appendStep.ok, false);
+			if (!appendStep.ok) assert.match(appendStep.error, /internal executor compatibility.*unavailable through model, slash, or RPC/i);
+		}
+		const unknownPublic = normalizePublicSubagentExecution({ action: "not-a-real-action" });
+		assert.equal(unknownPublic.ok, false);
+		if (!unknownPublic.ok) assert.match(unknownPublic.error, /removed from the model surface.*trusted human administration/i);
+		const unknownTrusted = normalizeTrustedHostSubagentExecution({ action: "not-a-real-action" });
+		assert.equal(unknownTrusted.ok, false);
+		if (!unknownTrusted.ok) assert.match(unknownTrusted.error, /Unknown trusted host action/);
 	});
 
 	it("rejects workflowScript with workflowScriptPath", () => {

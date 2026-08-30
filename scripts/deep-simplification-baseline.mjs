@@ -286,7 +286,7 @@ async function main() {
 
 	try {
 		const startup = runStartupSamples(agentDir, isolatedRoot);
-		const [{ SubagentParams, SubagentWaitParams }, { SUBAGENT_ACTIONS }, packageJson, { resolveSubagentLaunchContract }, { listAsyncRuns }, { updateActiveRunIndex }, { createResultWatcher }] = await Promise.all([
+		const [{ SubagentParams, SubagentWaitParams }, { SUBAGENT_ACTIONS, SUBAGENT_INTERNAL_ACTIONS }, packageJson, { resolveSubagentLaunchContract }, { listAsyncRuns }, { updateActiveRunIndex }, { createResultWatcher }] = await Promise.all([
 			import("../src/extension/schemas.ts"),
 			import("../src/shared/types.ts"),
 			Promise.resolve(JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"))),
@@ -436,10 +436,17 @@ async function main() {
 					...registeredParameterCounts,
 					combined: Object.values(registeredParameterCounts).reduce((total, count) => total + count, 0),
 				},
+				modelActionNames: [...SUBAGENT_ACTIONS],
+				modelActionNameCount: SUBAGENT_ACTIONS.length,
+				trustedInternalActionNames: [...SUBAGENT_INTERNAL_ACTIONS],
+				trustedInternalActionNameCount: SUBAGENT_INTERNAL_ACTIONS.length,
+				internalCompatibilityActionNames: ["append-step"],
+				recognizedDispatchActionNameCount: SUBAGENT_INTERNAL_ACTIONS.length + 1,
+				// Compatibility keys retained with explicit model/dispatch meanings.
 				actionNames: [...SUBAGENT_ACTIONS],
 				actionNameCount: SUBAGENT_ACTIONS.length,
 				compatibilityActionNames: ["append-step"],
-				recognizedActionNameCount: SUBAGENT_ACTIONS.length + 1,
+				recognizedActionNameCount: SUBAGENT_INTERNAL_ACTIONS.length + 1,
 				slashCommands: startupRegistration.commands,
 				slashCommandCount: startupRegistration.commands.length,
 				rootRuntimeTools: startupRegistration.tools.map((tool) => tool.name),

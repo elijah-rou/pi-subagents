@@ -1254,7 +1254,7 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("lets fanout children call read-only list but blocks mutating management actions", () => {
+	it("lets fanout children call retained read-only actions but rejects removed model administration", () => {
 		const script = String.raw`
 			import assert from "node:assert/strict";
 			import registerFanoutChildSubagentExtension from "./src/extension/fanout-child.ts";
@@ -1279,15 +1279,15 @@ describe("subagent extension child mode", () => {
 			if (list.isError) throw new Error("list should be allowed: " + JSON.stringify(list.content));
 			await assert.rejects(
 				registeredTool.execute("create-check", { action: "create", config: { name: "x" } }, new AbortController().signal, undefined, ctx),
-				/not available from child-safe subagent fanout mode/,
+				/removed from the model surface/,
 			);
 			await assert.rejects(
 				registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx),
-				/not available from child-safe subagent fanout mode/,
+				/removed from the model surface/,
 			);
 			await assert.rejects(
 				registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true }),
-				/root interactive parent session/,
+				/removed from the model surface/,
 			);
 		`;
 

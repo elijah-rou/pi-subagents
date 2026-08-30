@@ -28,12 +28,10 @@ describe("subagent guide", () => {
 		assert.match(readSubagentGuide("agents"), /External CLI agents use their own fail-closed capability contract[\s\S]*native Pi child options[\s\S]*one-shot and non-resumable/);
 	});
 
-	it("documents worktree cleanup as requiring explicit plan mode", () => {
+	it("documents broad cleanup as removed from the model surface", () => {
 		const guide = readSubagentGuide("tool-reference");
-		assert.match(guide, /worktree\.cleanup`? rejects an omitted mode[\s\S]*only builds and persists a read-only plan[\s\S]*never removes worktrees or branches/i);
-		assert.match(guide, /worktree\.cleanup`? requires explicit `mode: "plan"`/i);
-		assert.match(guide, /future removal\/apply behavior[\s\S]*requires a separate owner-approved design/i);
-		assert.doesNotMatch(guide, /cleanup planning\/apply|apply-time Git\/ownership revalidation belong|mode may be omitted|or omit it/i);
+		assert.match(guide, /broad worktree cleanup[\s\S]*no supported human replacement[\s\S]*primary access is removed pending Packages 2 and 3/i);
+		assert.doesNotMatch(guide, /\{\s*action:\s*["']worktree\.cleanup/i);
 	});
 
 	it("packages the complete pre-v0.59 migration inventory", () => {
@@ -51,17 +49,17 @@ describe("subagent guide", () => {
 			/\.pi-subagents\/[\s\S]*\.pi\/subagents\//,
 			/reviewer` has only `read`, `grep`, `find`, and `ls`/,
 			/Explicit or configured native model selections must resolve[\s\S]*already-running parent session model is intentionally trusted[\s\S]*gateway and proxy sessions[\s\S]*final filtered registry[\s\S]*External CLI profile metadata/,
-			/worktree\.cleanup` is plan-only[\s\S]*must include `mode: "plan"`[\s\S]*omitting `mode` is rejected[\s\S]*caller-supplied `planId`[\s\S]*no cleanup `apply` mode/,
-			/package export `pi-subagents\/project-panes` was removed/,
+			/Package 1 removed broad worktree cleanup and project\/inspector pane actions from the model surface[\s\S]*Neither area has a supported replacement command or package API pending Packages 2 and 3/,
 			/reload Pi[\s\S]*restart/,
 		]) assert.match(guide, required);
 	});
 
-	it("keeps the tool reference aligned with packaged topics and profile context", () => {
+	it("keeps the tool reference aligned with the contracted fields", () => {
 		const guide = readSubagentGuide("tool-reference");
-		assert.ok(guide.includes("| `topic` | `overview \\| workflows \\| agents \\| missions \\| observability \\| tool-reference \\| configuration \\| models \\| watchdog \\| extension-api \\| migration-v059` |"));
-		assert.ok(guide.includes("| `context` | `fresh \\| fork \\| profile` |"));
-		assert.match(guide, /`profile` requires the selected agent's declared `defaultContext`/);
+		assert.match(guide, /primary schema has exactly these 47 top-level fields/i);
+		assert.ok(guide.includes("| `topic` |"));
+		assert.ok(guide.includes("| `context` |"));
+		assert.match(guide, /`fresh`, `fork`, or `profile`/);
 	});
 
 	it("uses current direct and workflowScript launch terminology in the extension API", () => {

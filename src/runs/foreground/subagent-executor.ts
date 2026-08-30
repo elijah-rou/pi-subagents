@@ -25,7 +25,7 @@ import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
-import { normalizePublicSubagentExecution } from "../../extension/public-execution.ts";
+import { normalizePublicSubagentExecution, normalizeTrustedHostSubagentExecution } from "../../extension/public-execution.ts";
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
 import type { MainWatchdogRuntime } from "../../watchdog/runtime.ts";
@@ -178,6 +178,7 @@ import {
 	DEFAULT_ARTIFACT_CONFIG,
 	DEFAULT_FORK_PREAMBLE,
 	SUBAGENT_ACTIONS,
+	SUBAGENT_INTERNAL_ACTIONS,
 	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
@@ -4651,6 +4652,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
+	/** Trusted slash/RPC administration boundary. Never register as a model tool executor. */
+	executeTrustedHost: (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>;
 	/**
 	 * Correlated extension-to-extension delegation owns its request IDs and
 	 * cancellation controllers, so independent requests may execute concurrently.
@@ -6187,7 +6190,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "management", results: [] },
 				};
 			}
-			if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
+			if (!(SUBAGENT_INTERNAL_ACTIONS as readonly string[]).includes(action)) {
 				return {
 					content: [{ type: "text", text: unknownSubagentActionMessage(action) }],
 					isError: true,
@@ -6894,6 +6897,18 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		return executeWithSingleDispatchGuard(id, loaded.params!, signal, onUpdate, ctx);
 	};
 
+	const executeTrustedHost = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext): Promise<AgentToolResult<Details>> => {
+		const normalized = normalizeTrustedHostSubagentExecution(params);
+		if (!normalized.ok) {
+			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
+		}
+		const loaded = loadWorkflowScriptPath(normalized.params, ctx.cwd);
+		if (loaded.error) {
+			return Promise.resolve({ content: [{ type: "text", text: loaded.error }], isError: true, details: { mode: normalized.params.action ? "management" : "workflow", results: [] } });
+		}
+		return executeWithSingleDispatchGuard(id, loaded.params!, signal, onUpdate, ctx);
+	};
+
 	const executeDelegated = async (
 		id: string,
 		params: SubagentParamsLike,
@@ -6938,5 +6953,5 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		return ownerExecutor.execute(id, params, signal, undefined, ctx);
 	};
 
-	return { execute: executeWithSingleDispatchGuard, executePublic, executeDelegated, executeScheduled };
+	return { execute: executeWithSingleDispatchGuard, executePublic, executeTrustedHost, executeDelegated, executeScheduled };
 }

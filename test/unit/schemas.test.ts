@@ -166,6 +166,19 @@ try {
 }
 
 describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
+	it("exposes exactly 47 primary fields and omits administration-only fields", () => {
+		const properties = Object.keys(SubagentParams?.properties ?? {});
+		assert.equal(properties.length, 47);
+		for (const removed of [
+			"name", "repo", "merge", "supersession", "additional", "scope", "target", "focus", "thinking",
+			"at", "every", "on", "timezone", "overlap", "catchUp", "missionId", "mission", "missionUpdate",
+			"missionStatus", "missionScope", "runMode", "runStatus", "summary", "config", "share",
+		]) assert.ok(!properties.includes(removed), removed);
+		assert.ok(properties.includes("lane"));
+		assert.ok(properties.includes("handoffPath"));
+		assert.ok(properties.includes("laneId"));
+		assert.deepEqual((SubagentParams?.properties as Record<string, { enum?: string[] }> | undefined)?.mode?.enum, ["steer", "follow_up", "auto"]);
+	});
 	it("includes context field and default precedence for fresh/fork execution mode", () => {
 		const contextSchema = SubagentParams?.properties?.context;
 		assert.ok(contextSchema, "context schema should exist");
@@ -236,12 +249,10 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(properties?.output?.description ?? ""), /outputReference.*outputPathMapping.*artifactPaths/i);
 	});
 
-	it("advertises worktree cleanup as plan-only", () => {
+	it("limits steering delivery modes", () => {
 		const properties = SubagentParams?.properties as Record<string, JsonSchemaNode> | undefined;
-		assert.equal(properties?.planId, undefined, "caller-supplied cleanup plan ids should not be public");
-		assert.deepEqual(properties?.mode?.enum, ["steer", "follow_up", "auto", "plan"]);
-		assert.doesNotMatch(String(properties?.mode?.description ?? ""), /apply/i);
-		assert.match(String(properties?.mode?.description ?? ""), /worktree\.cleanup.*plan only/i);
+		assert.deepEqual(properties?.mode?.enum, ["steer", "follow_up", "auto"]);
+		assert.doesNotMatch(String(properties?.mode?.description ?? ""), /cleanup|plan|apply/i);
 	});
 
 	it("omits removed legacy and workflow-child-only fields", () => {
@@ -338,11 +349,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(linesSchema.maximum, 500);
 		assert.match(String(linesSchema.description ?? ""), /transcript/i);
 
-		const additionalSchema = SubagentParams?.properties?.additional;
-		assert.ok(additionalSchema, "additional schema should exist");
-		assert.equal(additionalSchema.minimum, 1);
-		assert.match(String(additionalSchema.description ?? ""), /grant-spawn-budget/);
-		assert.match(String(additionalSchema.description ?? ""), /root interactive parent/i);
 
 		const controlSchema = SubagentParams?.properties?.control;
 		assert.ok(controlSchema, "control schema should exist");
@@ -426,8 +432,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.ok(SubagentParams, "SubagentParams schema should exist");
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const serialized = JSON.stringify(schema);
-		// Mission, inspector, inline workflow, guide, and toolTimeoutMs fields intentionally expanded the public tool surface.
-		assert.ok(serialized.length < 21_000, `expected compact schema under 21k chars, got ${serialized.length}`);
+		assert.ok(serialized.length < 18_000, `expected contracted schema under 18k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
 		assert.equal(serialized.split("Optional acceptance policy.").length - 1, 1);
@@ -439,11 +444,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(acceptanceDescription, /changed-files/);
 		assert.match(acceptanceDescription, /manual-notes/);
 		assert.match(acceptanceDescription, /\{ level: "checked", evidence: \["commands-run", "changed-files"\] \}/);
-		const missionDescription = String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.mission?.description ?? "");
-		assert.match(missionDescription, /exactly one non-empty title or summary/);
-		assert.match(missionDescription, /goal may only be true/);
-		assert.match(missionDescription, /requires budget\.tokens/);
-
 		const nestedDescriptionPaths: string[] = [];
 		const stack: Array<{ path: string; value: unknown }> = [{ path: "SubagentParams", value: schema }];
 		while (stack.length > 0) {
@@ -524,12 +524,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(hasAnyOfType(outputSchema, "string"), true);
 		assert.equal(hasAnyOfType(outputSchema, "boolean"), true);
 
-		const configSchema = SubagentParams?.properties?.config;
-		assert.ok(configSchema, "config schema should exist");
-		assert.equal(configSchema.type, undefined);
-		assert.equal(anyOfBranches(configSchema).some((branch) => branch.type === "object" && branch.additionalProperties === true), true);
-		assert.equal(hasAnyOfType(configSchema, "string"), true);
-
 		const acceptanceSchema = SubagentParams?.properties?.acceptance;
 		assert.ok(acceptanceSchema, "acceptance schema should exist");
 		assert.equal(acceptanceSchema.type, undefined);
@@ -558,8 +552,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ action: "steer", id: "run-1", message: "focus on tests" },
 			{ action: "steer", id: "run-1", index: 0, message: "focus on tests" },
 			{ action: "not-a-real-action" },
-			{ config: { name: "reviewer", description: "Review things" } },
-			{ config: JSON.stringify({ name: "reviewer", description: "Review things" }) },
 			{ agent: "worker", task: "Fix", acceptance: "verified" },
 			{ agent: "worker", task: "Fix", acceptance: { report: { evidence: ["commands-run"] }, onFailure: "warn" } },
 		];
@@ -570,8 +562,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 			{ timeoutMs: 0 },
 			{ maxRuntimeMs: -1 },
 			{ agent: "worker", task: "Fix", acceptance: true },
-			{ config: [] },
-			{ config: null },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 0 } },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, soft: 0 } },
 			{ agent: "worker", task: "Fix", toolBudget: { hard: 3, block: [123] } },

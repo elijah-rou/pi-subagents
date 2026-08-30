@@ -323,7 +323,7 @@ const task = [
 return runs.run("test", { agent: "worker", task });
 ````
 
-A plain workflow creates one enclosing mission by default. Its children do not create separate missions. The result exposes the id as `details.missionId`, and human-readable output ends with `Mission: <id> (<status>)`. Pass `mission:false` for an ephemeral workflow with no mission or durable `state` global.
+The retained runtime may create one enclosing mission automatically. Its children do not create separate missions. Package 1 removed mission launch fields from the model schema; mission access and migration status are documented in [Missions](missions.md).
 
 ### Repeatable workflows
 

@@ -77,10 +77,6 @@ External CLI profile metadata must declare a supported runner shape and a non-em
 
 See [Models](models.md), [Tool and extension selection](agents.md#tool-and-extension-selection), and [External CLI agent profiles](tool-reference.md#external-cli-agent-profiles).
 
-## Cleanup and project-pane API changes
+## Package 1 cleanup and pane access
 
-`worktree.cleanup` is plan-only. Every public call must include `mode: "plan"`; omitting `mode` is rejected. Calls no longer accept a caller-supplied `planId`, and there is no cleanup `apply` mode. The action records a read-only plan after current Git and ownership checks and never removes a worktree or branch.
-
-The package export `pi-subagents/project-panes` was removed. Host-selected Herdr UI and the model-facing `project.open`, `project.status`, and `project.close` actions remain available; passive Herdr observation remains separate from parent ownership of peer-session children. Do not replace the removed export with an internal source import.
-
-See [Lane merge evidence and cleanup eligibility](tool-reference.md#lane-merge-evidence-and-cleanup-eligibility) and [Herdr project panes](tool-reference.md#herdr-project-panes).
+Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API pending Packages 2 and 3. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet` and passive Herdr/Fleet observation where available. Do not replace removed exports with internal source imports.

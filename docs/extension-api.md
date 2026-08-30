@@ -364,33 +364,11 @@ rows = [
 ]
 ```
 
-### Inspector panes
+### Inspector and project panes
 
-Herdr 0.7.5+ can open an on-demand inspector for an existing async run:
+Inspector and project-pane actions are not model-facing in Package 1 and have no supported replacement command or package API pending Packages 2 and 3. Do not call their former action names or invent a human interface.
 
-```ts
-subagent({ action: "inspector.open", id: "<run-id>", index: 0, focus: true })
-subagent({ action: "inspector.status", id: "<run-id>", index: 0 })
-subagent({ action: "inspector.close", id: "<run-id>", index: 0 })
-```
-
-The inspector is a raw dashboard pane, not the child process and not a literal attach. It reads lifecycle/status/output/mission artifacts and sends `steer` or `stop` through pi-subagents' existing control inbox. Closing it never stops the run.
-
-Herdr remains optional. Ordinary launches stay headless, and missing/older Herdr versions affect only Herdr-specific inspector and project-pane actions. FleetView opens the selected active async child with `H`. Use `focus` only with `inspector.open`; Herdr 0.7.5 cannot focus an arbitrary existing raw pane id.
-
-### Project panes
-
-For substantial work in another codebase, Herdr 0.7.5+ can open a project-owned Pi pane rooted in that repository:
-
-```ts
-subagent({ action: "project.open", cwd: "/path/to/repo", message: "Own the auth refresh mission for this project." })
-subagent({ action: "project.status", cwd: "/path/to/repo" })
-subagent({ action: "project.close", cwd: "/path/to/repo" })
-```
-
-A project pane runs its own Pi session in the target directory, so subagents launched from that pane use that project's config, agents, skills, files, git state, and missions. The parent session keeps coordination authority, but it does not own or control the subagents inside the peer pane. Existing headless runs are not moved into the pane. Pane bindings live under `<projectRoot>/.pi/subagents/project-panes/herdr.json` and are only a local pointer to the Herdr pane.
-
-Project panes are available only through the operator-selected `project.open/status/close` actions and Herdr itself; there is no extension-to-extension package API. Close fails closed unless the saved pane id is still verified for that project and Herdr explicitly reports `agent_status: "idle"`. The actions never bypass or claim to attest Pi's project-trust prompt.
+Use `/subagents-fleet` and the passive Fleet/Herdr status projection for supported observation. FleetView can open a selected active async child through its existing inspector keybinding when the optional host integration supports it. Ordinary launches remain headless, existing runs are not moved into peer panes, and passive observation never transfers lifecycle ownership.
 
 ## Host session lifetime and completion wakes
 

@@ -230,15 +230,7 @@ Supported override fields: `description`, `output`, `outputMode`, `defaultReads`
 - Project overrides beat user overrides.
 - Matching user and project agents also receive override fields that their frontmatter leaves unset, so a shared project config agent can keep the persona while local settings choose the model.
 
-Disable and restore:
-
-- `disabled: true` hides a builtin from runtime discovery and agent-facing `subagent({ action: "list" })` output.
-- `subagents.disableBuiltins: true` disables all builtins at once.
-- `subagent({ action: "disable", agent: "reviewer" })` writes the override without editing settings by hand; `subagent({ action: "enable", agent: "reviewer" })` removes it.
-- `subagent({ action: "eject", agent: "reviewer" })` copies a bundled builtin or package agent verbatim into the user or project agent dir (default `user`) as an editable custom file that shadows the original.
-- `subagent({ action: "reset", agent: "reviewer" })` deletes the scope's custom agent file and/or settings override entry, restoring the bundled default. It refuses if no bundled default exists (use `delete` for purely custom agents).
-
-`eject`, `disable`, `enable`, and `reset` accept `agentScope: "user" | "project"` and operate in one scope at a time. Project overrides still win over user ones, so a project-scope disable survives a user-scope `enable` until you target the project scope.
+Disable, restore, eject, create, update, and delete agent definitions through the human `/subagents` interface. `disabled: true` hides a builtin from runtime discovery and model-facing `subagent({ action: "list" })` output, while `subagents.disableBuiltins: true` disables all builtins at once. The `/subagents` interface selects user or project scope explicitly; project overrides still win over user overrides.
 
 ## Prompt assembly
 
@@ -370,14 +362,10 @@ Scopes:
 
 A refinement overlay is bounded, project-local guidance layered on top of one agent's system prompt without editing the agent file. Use it when an agent repeatedly stumbles on the same project-specific issue and recent run evidence shows what to correct.
 
+Use the human interface:
+
 ```text
 /subagents-refine reviewer
-```
-
-```ts
-subagent({ action: "refine", agent: "reviewer" })
-subagent({ action: "refine.show", agent: "reviewer" })
-subagent({ action: "refine.rollback", agent: "reviewer" })
 ```
 
 How it works:
@@ -387,7 +375,7 @@ How it works:
 - The accepted overlay is stored at `.pi/subagents/refinements/<agent>.md` with revision metadata and snapshots. Each `refine` or `refine.rollback` adds a snapshot, and `refine.rollback` restores the previous revision.
 - At launch, the current overlay is injected into that agent's child system prompt as a `<pi-subagents-refinement>` block scoped to this project. The base agent definition is never modified.
 
-`refine.show` prints the current overlay and revision history. Delete the overlay file to remove the refinement entirely.
+The human refinement interface shows the current overlay and revision history and supports its existing rollback flow. Delete the overlay file to remove the refinement entirely.
 
 ## Tool and extension selection
 

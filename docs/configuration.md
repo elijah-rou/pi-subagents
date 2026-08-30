@@ -253,7 +253,7 @@ Caps simultaneously running children inside each top-level run, including durabl
 
 Optionally caps the total number of child subagent launches during one parent session, including completed and failed children, parallel task counts, static chain steps, and bounded dynamic fanout children. Sessions are unlimited by default. Set this value to `0` to disable a configured cap. `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` overrides the config for a process and follows the same positive-cap/zero-unlimited semantics.
 
-`subagent({ action: "status" })`, fleet status, and the `subagent({ action: "doctor" })` doctor action expose used, effective limit, remaining capacity, grants, and the remaining grant allowance for this budget. A user may explicitly call `subagent({ action: "grant-spawn-budget", additional: 10 })` from the root interactive parent after all children settle and confirm the native prompt. Grants are additive: they never erase cumulative usage, are rejected for unlimited sessions and child/headless callers, and total granted capacity cannot exceed the original configured cap. Compaction remains part of the same logical parent session and does not reset usage or grants; starting a new parent session does.
+`subagent({ action: "status" })`, Fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, remaining capacity, and retained grant state. Package 1 removed spawn-budget grants from the model surface and provides no replacement command. Configure the session cap before launch and start a new parent session when a different cap is required. Compaction remains part of the same logical parent session and does not reset usage.
 
 ## `maxSubagentSpawnsPerRun`
 
@@ -431,7 +431,7 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 }
 ```
 
-Automatic missions are enabled by default for ordinary launches with a task. Use per-launch `mission: false` for intentionally ephemeral work, or set `enabled: false` to disable automatic creation globally; explicit mission actions and `missionId`/`mission` launch fields still work.
+Automatic mission runtime remains enabled by default for ordinary launches with a task. Package 1 removed per-launch mission fields and mission actions from the model surface. Set `enabled: false` in configuration to disable automatic creation globally; see [Missions](missions.md) for the temporary access and migration status.
 
 - Mission records default to a project-keyed directory under pi's agent directory (`~/.pi/agent/missions/projects/<project-hash>/`). This keeps the project worktree clean.
 - `directory` may be absolute, `~/...`, or project-relative. Set it to `.pi/subagents/missions` to opt in to project-scoped records.

@@ -54,12 +54,13 @@ describe("subagent action recovery", () => {
 		assert.match(message, /Valid: .*status/);
 	});
 
-	it("does not suggest a destructive near-miss", () => {
+	it("does not suggest removed administration", () => {
 		const message = unknownSubagentActionMessage("del");
 
 		assert.match(message, /Unknown action: del\./);
 		assert.doesNotMatch(message, /Did you mean delete\?/);
-		assert.match(message, /Valid: .*delete/);
+		assert.doesNotMatch(message, /Valid: .*delete/);
+		assert.match(message, /Valid: .*doctor/);
 	});
 
 	it("returns a concise recovery error for an invalid action", async () => {
@@ -76,10 +77,10 @@ describe("subagent action recovery", () => {
 		assert.equal(result.content[0]?.text, unknownSubagentActionMessage("schedule.lsit"));
 	});
 
-	it("lists and suggests mission decision resolution", () => {
+	it("does not list or suggest removed mission administration", () => {
 		const message = unknownSubagentActionMessage("mission.resolve-decison");
 
-		assert.match(message, /Did you mean mission\.resolve-decision\?/);
-		assert.match(message, /Valid: .*mission\.resolve-decision/);
+		assert.doesNotMatch(message, /Did you mean mission\.resolve-decision\?/);
+		assert.doesNotMatch(message, /Valid: .*mission\.resolve-decision/);
 	});
 });

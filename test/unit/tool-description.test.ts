@@ -48,7 +48,7 @@ describe("registered subagent tool description", () => {
 		assert.doesNotMatch(description, /codex-exec|claude-code|cursor-agent/);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3298);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3589);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
@@ -67,15 +67,16 @@ describe("registered subagent tool description", () => {
 		assert.match(metadata.promptGuidelines!.join("\n"), /External CLI agents.*model override.*native Pi tools/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /suffix wins over the agent's thinking default/i);
-		assert.match(metadata.promptGuidelines!.join("\n"), /watchdog\.configure' and is ignored on dispatch/i);
+		assert.match(metadata.promptGuidelines!.join("\n"), /Model actions are exactly list, get, models, children\.list, guide, validate, worktree\.discard, lane\.status, status, debug\.run, interrupt, resume, steer, stop, and doctor/i);
+		assert.doesNotMatch(metadata.promptGuidelines!.join("\n"), /schedule\.create|mission\.create|watchdog\.configure|lane\.recordMerge|worktree\.cleanup/i);
 	});
 
-	it("advertises worktree cleanup as plan-only without speculative inputs", () => {
+	it("advertises only retained model actions", () => {
 		for (const description of [FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
-			const cleanupGuidance = description.match(/worktree\.cleanup[^\n]*/gi) ?? [];
-			assert.ok(cleanupGuidance.length > 0, "cleanup guidance should be present");
-			assert.ok(cleanupGuidance.some((line) => /plan-only|mode:'plan' only/i.test(line)));
-			assert.doesNotMatch(cleanupGuidance.join("\n"), /planId|apply/i);
+			assert.match(description, /Model actions are exactly list, get, models, children\.list, guide, validate, worktree\.discard, lane\.status, status, debug\.run, interrupt, resume, steer, stop, and doctor/i);
+			assert.doesNotMatch(description, /schedule\.create|mission\.create|watchdog\.configure|lane\.recordMerge|lane\.recordSupersession|worktree\.cleanup|grant-spawn-budget/i);
+			assert.match(description, /\/subagents for agent authoring.*\/subagents-refine.*\/subagents-watchdog.*profile slash commands.*\/subagents-fleet.*RPC schedule management/i);
+			assert.match(description, /Missions, lane merge\/supersession, broad cleanup, and panes have no supported replacement pending Packages 2 and 3/i);
 		}
 	});
 
@@ -85,7 +86,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /^Run one child with \{ agent, task\? \}; use \{ workflowScript \} for inline orchestration or \{ workflowScriptPath \}/i);
 		assert.match(description, /workflowScriptPath:"workflows\/review\.js".*host reads the file.*sandbox/i);
 		assert.match(description, /SINGLE CHILD:.*starts exactly one direct child/i);
-		assert.match(description, /lane\.status.*lane\.recordMerge.*lane\.recordSupersession/i);
+		assert.match(description, /worktree\.discard, lane\.status, status, debug\.run/i);
 		assert.match(description, /Do not combine agent\/task with action, workflowScript, or workflowScriptPath/i);
 		assert.match(description, /runs\.run for one child and await runs\.all.*ordinary parallel children/i);
 		assert.match(description, /runs\.lanes\(\[\{key,stages:.*later stages sequence per lane/i);
@@ -100,8 +101,7 @@ describe("registered subagent tool description", () => {
 		assert.doesNotMatch(description, /Compatibility tasks\[\]|CHAIN EXAMPLES|PARALLEL \(compatibility\)/i);
 		assert.doesNotMatch(description, /append-step|approve-checkpoint|reject-checkpoint/);
 		assert.match(description, /cannot access filesystem, shell, arbitrary Pi tools, or host globals/i);
-		assert.match(description, /exactly one non-empty title or summary/i);
-		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
+		assert.doesNotMatch(description, /missionId|mission:\{|schedule\.create|watchdog\.configure|worktree\.cleanup/i);
 		assert.match(description, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);
 		assert.match(description, /continue independent work only until its next dependency barrier; consume the result before work that depends on it/i);
 		assert.match(description, /children\.list.*resumable\/not-resumable reasons/i);
@@ -116,7 +116,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
-		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
+		assert.match(description, /\/subagents for agent authoring.*\/subagents-refine.*\/subagents-watchdog.*profile slash commands.*\/subagents-fleet.*RPC schedule management/i);
 	});
 
 	it("offers a compact mode that keeps the two-tier contract and safety guidance", () => {
@@ -141,12 +141,11 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /resume keeps the stored agent\/model\/tool contract/i);
 		assert.match(description, /Oracle\/advisor consultations use available supervisor dialogue/i);
 		assert.match(description, /same-role fallback challenge and label it as fallback/i);
-		assert.match(description, /exactly one non-empty title or summary/i);
-		assert.match(description, /goal may only be true and requires budget:\{tokens\}/i);
+		assert.doesNotMatch(description, /missionId|mission:\{|schedule\.create|watchdog\.configure|worktree\.cleanup/i);
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /Per-run thinking is a suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
-		assert.match(description, /watchdog\.configure' and is ignored on dispatch/i);
+		assert.match(description, /\/subagents for agent authoring.*\/subagents-refine.*\/subagents-watchdog.*profile slash commands.*\/subagents-fleet.*RPC schedule management/i);
 		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length);
 	});
 

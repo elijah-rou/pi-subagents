@@ -965,7 +965,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const executor = makeExecutor([makeAgent("echo")]);
 		const result = await executor.executePublic("single-alias", { action: "single", agent: "echo", task: "work" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /action='single' is not supported/);
+		assert.match(result.content[0]?.text ?? "", /Action 'single' was removed from the model surface/);
 	});
 
 	it("rejects internal fan-out fields from public workflows", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -1016,7 +1016,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 		fs.writeFileSync(path.join(tempDir, "scheduled.js"), "return runs.run('main', { agent: 'echo' })");
 
-		const result = await executor.executePublic(
+		const publicResult = await executor.executePublic(
+			"schedule-create-public",
+			{ action: "schedule.create", id: "nightly", every: "1h", workflowScriptPath: "scheduled.js" },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(publicResult.isError, true);
+		assert.match(publicResult.content[0]?.text ?? "", /removed from the model surface/i);
+
+		const result = await executor.executeTrustedHost(
 			"schedule-create",
 			{ action: "schedule.create", id: "nightly", every: "1h", workflowScriptPath: "scheduled.js" },
 			new AbortController().signal,
@@ -4899,7 +4909,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		fs.writeFileSync(path.join(repo, ".pi", "subagents", "artifacts", "status.json"), JSON.stringify({ runId: "cleanup-action-run", state: "complete" }), "utf-8");
 		try {
 			const executor = makeExecutor([makeAgent("echo")], { worktreeBaseDir: baseDir });
-			const result = await executor.executePublic("cleanup-plan", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "plan" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const publicResult = await executor.executePublic("cleanup-plan-public", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "plan" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(publicResult.isError, true);
+			assert.match(publicResult.content[0]?.text ?? "", /removed from the model surface/i);
+			const result = await executor.executeTrustedHost("cleanup-plan", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "plan" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(result.isError, undefined, result.content[0]?.text ?? "cleanup plan failed");
 			const text = result.content[0]?.text ?? "";
 			assert.match(text, /Will remove/);
@@ -4908,10 +4921,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			assert.equal(planFiles.length, 1);
 			const planId = planFiles[0]!.replace(/\.json$/, "");
 			const childSafe = makeExecutor([makeAgent("echo")], { worktreeBaseDir: baseDir }, false, undefined, false);
-			const childSafeResult = await childSafe.executePublic("cleanup-child-safe", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "plan" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const childSafeResult = await childSafe.executeTrustedHost("cleanup-child-safe", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "plan" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(childSafeResult.isError, true);
 			assert.match(childSafeResult.content[0]?.text ?? "", /child-safe subagent fanout mode/i);
-			const apply = await executor.executePublic("cleanup-apply", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "apply", planId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			const apply = await executor.executeTrustedHost("cleanup-apply", { action: "worktree.cleanup", repo: "cleanup-repo", mode: "apply", planId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(apply.isError, true);
 			assert.match(apply.content[0]?.text ?? "", /plan.*only|apply\/removal is not available/i);
 			assert.ok(fs.existsSync(worktree.path));
