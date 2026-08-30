@@ -11,6 +11,7 @@ interface PromptWorkflow {
 	body: string;
 	filePath: string;
 	agent: string;
+	parentOnly: boolean;
 	context?: "fresh" | "fork";
 	model?: string;
 	skill?: string | string[] | false;
@@ -91,6 +92,7 @@ function loadPromptWorkflow(filePath: string): PromptWorkflow | undefined {
 		body,
 		filePath,
 		agent: parseAgent(frontmatter),
+		parentOnly: booleanField(frontmatter, "parent-only") === true,
 		...(booleanField(frontmatter, "inheritContext") === true || booleanField(frontmatter, "fork") === true ? { context: "fork" as const } : {}),
 		...(booleanField(frontmatter, "fresh") === true ? { context: "fresh" as const } : {}),
 		...(model ? { model } : {}),
@@ -268,10 +270,12 @@ export function registerPromptWorkflowCommands(input: {
 			}
 			const runtime = parseRuntimeOptions(words);
 			try {
+				if (workflow.parentOnly) throw new Error(`Prompt '${workflow.name}' orchestrates from the parent session; invoke /${workflow.name} directly.`);
 				if (workflow.chain) {
 					const chain = splitPromptChain(workflow.chain).map((stepName) => {
 						const step = findWorkflow(workflows, stepName);
 						if (!step) throw new Error(`Unknown prompt workflow in chain '${workflow.name}': ${stepName}`);
+						if (step.parentOnly) throw new Error(`Prompt '${step.name}' orchestrates from the parent session and cannot be a child prompt-workflow step.`);
 						return step;
 					});
 					await run(promptWorkflowExecutionParams(chain, runtime.args, runtime), ctx);

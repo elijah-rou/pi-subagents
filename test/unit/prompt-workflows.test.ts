@@ -68,6 +68,43 @@ Project body $1
 		assert.equal(workflow?.model, "openai/gpt-5-mini");
 	});
 
+	it("keeps parent-orchestrated templates out of the child prompt-workflow wrapper", async () => {
+		writePrompt(path.join(cwd, ".pi", "prompts"), "parent-panel", `---
+description: Parent panel
+parent-only: true
+---
+Orchestrate from the parent.
+`);
+		const commands = new Map<string, { handler: (args: string, ctx: never) => Promise<void> }>();
+		const runs: SubagentParamsLike[] = [];
+		registerPromptWorkflowCommands({
+			pi: {
+				registerCommand: (name: string, command: { handler: (args: string, ctx: never) => Promise<void> }) => commands.set(name, command),
+				sendMessage: () => {},
+			} as never,
+			run: async (params) => { runs.push(params); },
+		});
+		const ctx = makeCtx(cwd);
+		const notifications = (ctx as unknown as { ui: { notifications: Array<{ message: string; level: string }> } }).ui.notifications;
+
+		await commands.get("prompt-workflow")!.handler("parent-panel", ctx);
+
+		assert.deepEqual(runs, []);
+		assert.deepEqual(notifications, [{ message: "Prompt 'parent-panel' orchestrates from the parent session; invoke /parent-panel directly.", level: "error" }]);
+	});
+
+	it("packages a bounded parent-only candidate panel without provider-specific policy", () => {
+		const candidatePath = path.join(process.cwd(), "prompts", "candidate-panel.md");
+		assert.equal(fs.existsSync(candidatePath), true);
+		const candidate = discoverPromptWorkflows(cwd).find((entry) => entry.name === "candidate-panel");
+		assert.equal(candidate?.parentOnly, true);
+		assert.match(candidate?.body ?? "", /2–3 candidates/);
+		assert.match(candidate?.body ?? "", /remain the final decision maker/i);
+		assert.match(candidate?.body ?? "", /maxItems/);
+		assert.match(candidate?.body ?? "", /maxLength/);
+		assert.doesNotMatch(candidate?.body ?? "", /pstack|cursor|claude|gpt-/i);
+	});
+
 	it("runs a named workflow through native subagent execution", async () => {
 		writePrompt(path.join(cwd, ".pi", "prompts"), "native-run", `---
 description: Run native prompt

@@ -45,6 +45,7 @@ Packaged prompt shortcuts are also available for repeatable workflows. Treat the
 - `/parallel-research` — combine `researcher` and `scout` for external evidence plus local code context
 - `/gather-context-and-clarify` — scout/research first, then ask the user clarifying questions with `interview`
 - `/parallel-cleanup` — two fresh-context reviewers (deslop + verbosity passes) for an adversarial cleanup review of the current diff
+- `/candidate-panel` — 2–3 independent structured proposals, one fresh advisory judge, and a parent-owned final selection
 - `/council` — bounded advisor council for material decisions, plan critique, cross-exam, and parent-written decision memos
 
 ## Applying Prompt Techniques Without Slash Commands
@@ -54,6 +55,12 @@ The prompt templates in `prompts/` encode workflows the parent agent can run on 
 ### Commission-risk and cold-start packets
 
 Delegate only when the child materially improves evidence, independent review, or isolated execution; do not manufacture parallelism. Every child packet must be cold-start complete: state the goal, exact target/cwd/ref, authority and edit boundary, relevant context/evidence, success criteria, validation, output, and stop/escalation rules. For an orchestration audit by the critic tier, make the child read-only and request at most three omissions, each cited to a file, line, or decision; high thinking is an explicit escalation, not a default.
+
+### Candidate panel technique
+
+Use `/candidate-panel` when the parent must choose among concrete designs or implementation approaches and independent proposals reduce anchoring risk. Inspect the target first, give 2–3 fresh read-only candidates the same neutral decision contract plus distinct substantive lenses, and require the bounded structured proposal contract from `prompts/candidate-panel.md`. Pass only validated structured proposals to one fresh read-only judge. The judge is advisory: the parent verifies attribution and evidence, accepts or rejects grafts, and makes the final decision. Stop unresolved when fewer than two valid candidates remain. Do not route this parent-only recipe through `/prompt-workflow`.
+
+Use Council Mode instead when the tradeoffs need cross-examination, multiple passes, or deeper resolution of disputed claims. Do not turn a one-pass candidate panel into a shortened council or treat either as implementation authority.
 
 ### Council Mode technique
 

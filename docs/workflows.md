@@ -30,6 +30,10 @@ The package includes reusable prompt templates for common workflows. You do not 
 | `/parallel-research` | Combine `researcher` and `scout` for external evidence, local code context, and practical tradeoffs. |
 | `/gather-context-and-clarify` | Scout/research first, then ask the user the clarification questions that matter. |
 | `/parallel-cleanup` | Run review-only cleanup passes after implementation. |
+| `/candidate-panel` | Compare 2–3 independent structured proposals with one advisory judge. |
+| `/council` | Deliberate material tradeoffs through bounded advisor passes and parent synthesis. |
+
+`/candidate-panel` is a one-pass selection recipe for concrete proposals. Use `/council` when advisors need cross-examination, multiple passes, or deeper dispute resolution. In both cases the parent owns the final decision. These parent-orchestrated templates must be invoked directly; `/prompt-workflow candidate-panel` and `/prompt-workflow council` are rejected because the child wrapper is not the orchestration authority.
 
 Add `autofix` to `/parallel-review` or `/parallel-cleanup` to apply only the synthesized fixes worth doing now after reviewers return.
 

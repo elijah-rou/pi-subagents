@@ -1,6 +1,7 @@
 ---
 description: Run a bounded supervisor-mediated council of advisors and write a decision memo
 argument-hint: "<question> [--advisors name,name] [--max-passes 2|3] [--scope ...] [--non-goals ...]"
+parent-only: true
 ---
 
 Run a bounded, supervisor-mediated council on this question. You, the parent

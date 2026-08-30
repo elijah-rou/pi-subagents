@@ -67,8 +67,7 @@ Rule of thumb: `scout` before you understand the code, `researcher` before you t
 
 ## Common workflows
 
-The package includes `/council` and `council-mode`, plus documented model-based
-`council-*` profile examples that you add in your own agent directory.
+The package includes `/candidate-panel` for one-pass proposal selection and `/council` plus `council-mode` for multi-pass deliberation. Documented model-based `council-*` profile examples live in the council guide.
 
 | Want | Ask naturally |
 |------|---------------|
@@ -76,6 +75,7 @@ The package includes `/council` and `council-mode`, plus documented model-based
 | Solve a hard problem | "Use oracle to investigate this bug before we edit." |
 | Review a diff | "Use reviewer to review this diff." |
 | Run parallel reviewers | "Run reviewers for correctness, tests, and cleanup." |
+| Select among concrete proposals | "Use `/candidate-panel` to compare independent approaches." |
 | Debate a material decision | "Use `/council` with model-based advisors to compare this decision." |
 | Implement then review | "Implement this, then review it." |
 | Review until clean | "Run a review loop on this change with a max of 3 rounds." |
