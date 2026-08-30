@@ -7,6 +7,9 @@
 - Add a versioned parent-side child-profile resolver API. It can select model and thinking from child role, task, and serial/parallel topology while preserving explicit launch overrides, skipping external runners and retained resumes, enforcing upstream model/thinking constraints, projecting bounded provenance, and failing open to static agent defaults.
 - Add composable acceptance contracts with independent report, verification, review, and failure-policy dimensions while retaining legacy acceptance compatibility.
 - Add bounded soft runtime checkpoints that request a safe child handoff before the hard execution deadline.
+- Add locked, append-only bounded mission journals for durable decisions and evidence.
+- Add a parent-only `/candidate-panel` recipe for independent structured proposals and advisory comparison.
+- Add bounded project watchdog guidance from `WATCHDOG.md` and an explicit configured path.
 
 ### Changed
 - Preserve acceptance contracts and routed child provenance through workflow lanes, async status, recovery, receipts, and nested revival.
@@ -18,6 +21,8 @@
 - Clarify portable subagent orchestration guidance: keep the parent on the ordinary strong default model, route bounded workers/scouts to a fast worker tier, and reserve a top-reasoning model for bounded read-only critique or escalation without requiring a specific provider.
 - Trim duplicated orchestration recipes from the packaged skill while keeping policy in `constraints-and-recipes.md` and execution details in `execution-controls.md`.
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
+- Rank high-signal refinement evidence before output context and bound each complete serialized evidence item.
+- Reject parent-orchestrated prompt templates in the child `/prompt-workflow` wrapper.
 
 ### Fixed
 - Harden managed child outputs against symlink, inode-substitution, deletion, fallback-attribution, and cleanup races while keeping explicit absolute outputs user-managed.
