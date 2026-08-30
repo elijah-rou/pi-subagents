@@ -132,7 +132,7 @@ import { assertThinkingWithinCeiling, decodeThinkingCeiling, SUBAGENT_THINKING_C
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceBlocksRun, acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
@@ -2285,7 +2285,7 @@ async function runSingleStepInner(
 		structuredOutputPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.outputPath,
 		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.schemaPath,
 		acceptance: effectiveAcceptance,
-		...(step.acceptanceInput !== undefined ? { acceptanceInput: step.acceptanceInput } : {}),
+		...(step.effectiveAcceptance ? { acceptanceInput: persistResolvedAcceptance(step.effectiveAcceptance) } : step.acceptanceInput !== undefined ? { acceptanceInput: step.acceptanceInput } : {}),
 		watchdog: finalResult?.watchdog,
 		...(capabilityAudit ? { capabilityCeiling: capabilityAudit.ceiling, capabilityAudit } : {}),
 		launchResolvedExtensions,

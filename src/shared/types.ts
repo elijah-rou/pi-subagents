@@ -785,7 +785,7 @@ export interface SteeringRecoveryDescriptor {
 	managedOutputRelativePath?: string;
 	outputMode: "inline" | "file-only";
 	structuredOutputSchema?: JsonSchemaObject;
-	acceptance?: AcceptanceInput;
+	acceptance?: AcceptanceInput | PersistedResolvedAcceptanceInput;
 	controlConfig?: ResolvedControlConfig;
 	/** Resolved launch context for this async child. */
 	context?: "fresh" | "fork";
@@ -1003,6 +1003,18 @@ export interface AcceptanceContract {
 
 export type AcceptanceLegacyInput = AcceptanceLevel | AcceptanceConfig;
 export type AcceptanceInput = false | AcceptanceLegacyInput | AcceptanceContract;
+
+/** Canonical effective acceptance persisted for lossless resume and revival. */
+export interface PersistedResolvedAcceptanceInput {
+	kind: "resolved-acceptance";
+	contract: AcceptanceContract | false;
+	level: Exclude<AcceptanceLevel, "auto">;
+	explicit: boolean;
+	inferredReason: string[];
+	stopRules: string[];
+	reason?: string;
+	deprecationWarnings: string[];
+}
 
 export interface ResolvedAcceptanceGate extends AcceptanceGate {
 	id: string;
@@ -1261,8 +1273,8 @@ export interface SingleResult {
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
 	acceptance?: AcceptanceLedger;
-	/** Raw effective input retained for lossless result-identity revival. */
-	acceptanceInput?: AcceptanceInput;
+	/** Canonical effective input retained for lossless result-identity revival. */
+	acceptanceInput?: AcceptanceInput | PersistedResolvedAcceptanceInput;
 	agentContract?: AgentContract;
 	launchContractDigest?: string;
 	childProfile?: ChildProfileProvenance;
@@ -1877,8 +1889,8 @@ export interface AsyncStatus {
 		structuredOutputPath?: string;
 		structuredOutputSchemaPath?: string;
 		acceptance?: AcceptanceLedger;
-		/** Raw effective input retained for lossless async revival. */
-		acceptanceInput?: AcceptanceInput;
+		/** Canonical effective input retained for lossless async revival. */
+		acceptanceInput?: AcceptanceInput | PersistedResolvedAcceptanceInput;
 		agentContract?: AgentContract;
 		launchContractDigest?: string;
 		childProfile?: ChildProfileProvenance;
@@ -2007,7 +2019,7 @@ export interface ForegroundResumeChild {
 	transcriptError?: string;
 	detachedReason?: string;
 	acceptance?: AcceptanceLedger;
-	acceptanceInput?: AcceptanceInput;
+	acceptanceInput?: AcceptanceInput | PersistedResolvedAcceptanceInput;
 	agentContract?: AgentContract;
 	childProfile?: ChildProfileProvenance;
 	/** Private bounded launch fields needed to preserve the child contract on resume. */

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import { mergeAcceptanceInputs, type EffectiveAcceptanceInput } from "../../src/runs/shared/acceptance.ts";
+import { mergeAcceptanceInputs, resolveEffectiveAcceptance, validatePersistedAcceptanceInput, type EffectiveAcceptanceInput } from "../../src/runs/shared/acceptance.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { createRunFanoutBudget } from "../../src/runs/shared/run-fanout-budget.ts";
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, type AcceptanceInput, type SubagentState } from "../../src/shared/types.ts";
@@ -185,9 +185,18 @@ describe("nested revival acceptance propagation", () => {
 		return descriptor.acceptance;
 	}
 
-	it("inherits the original raw contract from nested result step metadata", async () => {
+	function resolveRevived(value: EffectiveAcceptanceInput | undefined) {
+		assert.ok(value);
+		assert.deepEqual(validatePersistedAcceptanceInput(value), []);
+		return resolveEffectiveAcceptance({ explicit: value, agentName: "worker", task: "Continue nested work", async: true });
+	}
+
+	it("inherits the original contract from nested result step metadata", async () => {
 		const acceptance: AcceptanceInput = { verify: [{ id: "nested-result", command: "node -e \"process.exit(0)\"" }], onFailure: "warn" };
-		assert.deepEqual(await reviveNested({ resultAcceptanceInput: acceptance }), acceptance);
+		const revived = resolveRevived(await reviveNested({ resultAcceptanceInput: acceptance }));
+		assert.equal(revived.level, "verified");
+		assert.equal(revived.verify[0]?.id, "nested-result");
+		assert.equal(revived.onFailure, "warn");
 	});
 
 	it("revives persisted root legacy metadata and merges a nested canonical override", async () => {
@@ -199,69 +208,53 @@ describe("nested revival acceptance propagation", () => {
 			acceptanceInput: persisted,
 			resumeAcceptance: { review: false, onFailure: "warn" },
 		});
-		assert.ok(revived && typeof revived === "object" && "kind" in revived);
-		assert.deepEqual(revived, {
-			kind: "merged-acceptance",
-			adapted: {
-				contract: {
-					report: {
-						evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"],
-					},
-					verify: [],
-					review: false,
-					onFailure: "warn",
-				},
-				stopRules: ["Stop on nested mismatch"],
-				reason: "root legacy policy",
-				deprecationWarnings: [],
-			},
-		});
+		const resolved = resolveRevived(revived);
+		assert.equal(resolved.level, "checked");
+		assert.equal(resolved.onFailure, "warn");
+		assert.deepEqual(resolved.stopRules, ["Stop on nested mismatch"]);
+		assert.equal(resolved.reason, "root legacy policy");
 	});
 
 	it("merges a canonical partial override into nested status acceptance metadata", async () => {
-		assert.deepEqual(await reviveNested({
+		const resolved = resolveRevived(await reviveNested({
 			acceptanceInput: { report: { criteria: ["nested status contract"] }, verify: [{ id: "status", command: "node -e \"process.exit(0)\"" }], onFailure: "warn" },
 			resumeAcceptance: { review: false },
-		}), {
-			report: { criteria: ["nested status contract"] },
-			verify: [{ id: "status", command: "node -e \"process.exit(0)\"" }],
-			review: false,
-			onFailure: "warn",
-		});
+		}));
+		assert.equal(resolved.level, "verified");
+		assert.equal(resolved.criteria[0]?.must, "nested status contract");
+		assert.equal(resolved.verify[0]?.id, "status");
+		assert.equal(resolved.review, false);
+		assert.equal(resolved.onFailure, "warn");
 	});
 
 	it("falls back from malformed nested internal metadata to valid legacy result metadata", async () => {
-		assert.deepEqual(await reviveNested({
+		const resolved = resolveRevived(await reviveNested({
 			acceptanceInput: {
 				kind: "merged-acceptance",
 				adapted: { contract: { verify: [] }, stopRules: [7], deprecationWarnings: [] },
 			},
 			resultAcceptanceInput: { level: "checked", stopRules: ["Result fallback rule"], reason: "legacy fallback" },
 			resumeAcceptance: { verify: [] },
-		}), {
-			kind: "merged-acceptance",
-			adapted: {
-				contract: {
-					report: { evidence: ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"] },
-					verify: [],
-					onFailure: "fail",
-				},
-				stopRules: ["Result fallback rule"],
-				reason: "legacy fallback",
-				deprecationWarnings: [],
-			},
-		});
+		}));
+		assert.equal(resolved.level, "checked");
+		assert.deepEqual(resolved.stopRules, ["Result fallback rule"]);
+		assert.equal(resolved.reason, "legacy fallback");
 	});
 
 	it("inherits a descriptor contract when old nested step metadata has no acceptance input", async () => {
 		const acceptance: AcceptanceInput = { verify: [{ id: "descriptor", command: "node -e \"process.exit(0)\"" }] };
-		assert.deepEqual(await reviveNested({ descriptorAcceptance: acceptance }), acceptance);
+		const resolved = resolveRevived(await reviveNested({ descriptorAcceptance: acceptance }));
+		assert.equal(resolved.level, "verified");
+		assert.equal(resolved.verify[0]?.id, "descriptor");
 	});
 
 	it("preserves an explicit disable with provenance over a recovered descriptor contract", async () => {
-		assert.deepEqual(await reviveNested({
+		const resolved = resolveRevived(await reviveNested({
 			descriptorAcceptance: { verify: [{ id: "descriptor", command: "node -e \"process.exit(0)\"" }] },
 			resumeAcceptance: { level: "none", reason: "manual nested disable" },
-		}), { level: "none", reason: "manual nested disable" });
+		}));
+		assert.equal(resolved.level, "none");
+		assert.equal(resolved.explicit, true);
+		assert.equal(resolved.reason, "manual nested disable");
 	});
 });

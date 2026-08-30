@@ -369,7 +369,7 @@ Acceptance is a composable contract with independent report, host verification, 
 }
 ```
 
-`report: false`, `verify: []`, and `review: false` clear individual dimensions. `acceptance: false` disables the complete contract. `acceptance: "none"` remains a deprecated compatibility spelling for `false`; `{ level: "none", reason? }` is also accepted for compatibility. Omitted acceptance and `"auto"` do not silently install gates: role, task, and risk inference is advisory and appears as recommendations only. With `agentContract: { version: 1 }`, omitted and auto acceptance produce no recommendations or gates.
+`report: false`, `verify: []`, and `review: false` clear individual dimensions. `acceptance: false` disables the complete contract. `acceptance: "none"` remains a deprecated compatibility spelling for `false`; `{ level: "none", reason? }` is also accepted for compatibility. Omitted acceptance and `"auto"` infer an enforced report contract: mutating work requires checked writer evidence, while read-only work receives a lightweight attested report without writer evidence. Inference never installs an automatic reviewer. With `agentContract: { version: 1 }`, omitted and auto acceptance produce no recommendations or gates.
 
 Canonical dimensions compose across workflow defaults and `runs.run`/`runs.all` child overrides. A child object inherits omitted dimensions, replaces supplied dimensions, and can clear each dimension explicitly. Legacy level/criteria/evidence inputs remain compatibility adapters, but new callers should use `report`, `verify`, `review`, and `onFailure` directly.
 
@@ -389,7 +389,7 @@ Use `gate` when one host command is the whole verification contract:
 
 A configured `report` asks the child for a fenced `acceptance-report` JSON block. A configured `verify` runs commands on the host; child-reported command success does not count. The resulting ledger records evidence progress as `claimed`, `attested`, `checked`, `verified`, `reviewed`, or `rejected`, while disabled or absent dimensions are `not-required`.
 
-The parser canonicalizes supported enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous fields fail with field-level diagnostics. Acceptance fences are removed from normal output artifacts, while the raw transcript and complete ledger remain available. A rejected explicit contract blocks only when `onFailure: "fail"`; advisory inference never fails a run.
+The parser canonicalizes supported enum synonyms, snake_case report keys and wrappers, underscore fence tags, unambiguous scalar arrays, string booleans, and criterion-id separators. Unknown or ambiguous fields fail with field-level diagnostics. Acceptance fences are removed from normal output artifacts, while the raw transcript and complete ledger remain available. A rejected inferred or explicit contract blocks when `onFailure: "fail"`; explicit opt-out remains non-blocking.
 
 ## Herdr project panes
 

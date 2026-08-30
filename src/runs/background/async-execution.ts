@@ -36,7 +36,7 @@ import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
-import { isPersistedMergedAcceptanceInput, mergeAcceptanceInputs, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
+import { isPersistedMergedAcceptanceInput, mergeAcceptanceInputs, persistResolvedAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateExecutionAcceptance, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.ts";
 import { validateImplementationToolContract } from "../shared/completion-guard.ts";
 import {
@@ -1752,6 +1752,7 @@ export function executeAsyncSingle(
 		async: true,
 		agentContract: params.agentContract,
 	});
+	const persistedAcceptance = persistResolvedAcceptance(resolvedAcceptance);
 	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
 		version: 1,
@@ -1793,7 +1794,7 @@ export function executeAsyncSingle(
 		...(managedOutput ? { managedOutput: true, managedOutputRelativePath: effectiveOutput as string } : {}),
 		outputMode,
 		...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
-		...(params.acceptance !== undefined ? { acceptance: params.acceptance } : {}),
+		acceptance: persistedAcceptance,
 		...(controlConfig ? { controlConfig } : {}),
 		...(params.context ? { context: params.context } : {}),
 		...(params.intercomBridge !== undefined ? { intercomBridge: params.intercomBridge } : {}),
@@ -1875,7 +1876,7 @@ export function executeAsyncSingle(
 						...(extensionBindings ? { extensionBindings } : {}),
 						launchResolvedExtensions,
 						effectiveAcceptance: resolvedAcceptance,
-						...(params.acceptance !== undefined ? { acceptanceInput: params.acceptance } : {}),
+						acceptanceInput: persistedAcceptance,
 						...(structuredOutput ? { structuredOutput } : {}),
 						...(params.structuredOutputSchema ? { structuredOutputSchema: params.structuredOutputSchema } : {}),
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
@@ -1942,7 +1943,7 @@ export function executeAsyncSingle(
 				currentStep: 0,
 				chainStepCount: 1,
 				...(lane ? { lane } : {}),
-				steps: [{ agent, status: "pending", ...(params.acceptance !== undefined ? { acceptanceInput: params.acceptance } : {}), ...(lane ? { lane } : {}), ...(model ? { model } : {}), ...(contextLimit !== undefined ? { contextLimit } : {}) }],
+				steps: [{ agent, status: "pending", acceptanceInput: persistedAcceptance, ...(lane ? { lane } : {}), ...(model ? { model } : {}), ...(contextLimit !== undefined ? { contextLimit } : {}) }],
 			},
 			path.join(asyncDir, "status.json"),
 			(proof) => emitProcessTerminalEvent(ctx, proof),

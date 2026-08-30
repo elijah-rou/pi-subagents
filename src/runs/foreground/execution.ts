@@ -106,7 +106,7 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, isPersistedMergedAcceptanceInput, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
+import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, isPersistedMergedAcceptanceInput, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
@@ -1852,6 +1852,7 @@ async function runSyncCompletionInner(
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 		agentContract: options.agentContract,
 	});
+	const persistedAcceptance = persistResolvedAcceptance(effectiveAcceptance);
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract), structuredOutput: Boolean(options.structuredOutput?.acceptanceReportPath) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	options.onEffectivePrompt?.(taskWithAcceptance);
@@ -1987,6 +1988,7 @@ async function runSyncCompletionInner(
 		...options,
 		...(managedOutputReservation ? { managedOutputReservation } : {}),
 		onDetachReceipt: (receipt) => {
+			receipt.acceptanceInput = persistedAcceptance;
 			receipt.acceptance = buildPendingAcceptanceLedger(effectiveAcceptance);
 			try {
 				persistResultMetadata(receipt);
@@ -2043,6 +2045,7 @@ async function runSyncCompletionInner(
 				launchWarnings,
 				verifyModel,
 			});
+			result.acceptanceInput = persistedAcceptance;
 			lastResult = result;
 			if (!recoveringAbort && startupAttemptIndex === 0) {
 				if (result.model) attemptedModels.push(result.model);

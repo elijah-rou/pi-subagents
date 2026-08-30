@@ -15,6 +15,7 @@ import type {
 	AcceptanceLevel,
 	AcceptanceReport,
 	AcceptanceRole,
+	PersistedResolvedAcceptanceInput,
 	AcceptanceRuntimeCheck,
 	AcceptanceRuntimeCheckStatus,
 	AcceptanceReviewResult,
@@ -167,6 +168,7 @@ export interface AdaptedAcceptance {
 }
 
 const MERGED_ACCEPTANCE_KIND = "merged-acceptance";
+const RESOLVED_ACCEPTANCE_KIND = "resolved-acceptance";
 
 /** Internal, serializable representation used after parent/child contract merging. */
 export interface MergedAcceptanceInput extends AcceptanceContract {
@@ -174,9 +176,10 @@ export interface MergedAcceptanceInput extends AcceptanceContract {
 	adapted: AdaptedAcceptance;
 }
 
-export type EffectiveAcceptanceInput = AcceptanceInput | MergedAcceptanceInput;
+export type EffectiveAcceptanceInput = AcceptanceInput | MergedAcceptanceInput | PersistedResolvedAcceptanceInput;
 
 const MERGED_ACCEPTANCE_KEYS = new Set(["kind", "adapted"]);
+const RESOLVED_ACCEPTANCE_KEYS = new Set(["kind", "contract", "level", "explicit", "inferredReason", "stopRules", "reason", "deprecationWarnings"]);
 const ADAPTED_ACCEPTANCE_KEYS = new Set(["contract", "stopRules", "reason", "deprecationWarnings"]);
 
 function mergedAcceptanceContractErrors(input: unknown, pathLabel: string): string[] {
@@ -195,8 +198,35 @@ function mergedAcceptanceContractErrors(input: unknown, pathLabel: string): stri
 	return errors;
 }
 
+function resolvedAcceptanceErrors(input: Record<string, unknown>, pathLabel: string): string[] {
+	const errors = Object.keys(input)
+		.filter((key) => !RESOLVED_ACCEPTANCE_KEYS.has(key))
+		.map((key) => `${pathLabel}.${key} is not supported in persisted resolved acceptance metadata.`);
+	if (!Object.prototype.hasOwnProperty.call(input, "contract")) errors.push(`${pathLabel}.contract is required.`);
+	else errors.push(...mergedAcceptanceContractErrors(input.contract, `${pathLabel}.contract`));
+	if (!VALID_LEVELS.has(input.level as AcceptanceLevel) || input.level === "auto") errors.push(`${pathLabel}.level must be a resolved acceptance level.`);
+	const contract = input.contract;
+	if (input.level === "none" && contract !== false) errors.push(`${pathLabel}.contract must be false when level is none.`);
+	if (input.level !== "none" && contract === false) errors.push(`${pathLabel}.contract must be enabled when level is ${String(input.level)}.`);
+	if (contract && typeof contract === "object" && !Array.isArray(contract)) {
+		const value = contract as Record<string, unknown>;
+		if ((input.level === "attested" || input.level === "checked") && (!value.report || typeof value.report !== "object")) errors.push(`${pathLabel}.contract.report must be enabled when level is ${String(input.level)}.`);
+		if (input.level === "verified" && (!Array.isArray(value.verify) || value.verify.length === 0)) errors.push(`${pathLabel}.contract.verify must be non-empty when level is verified.`);
+		if (input.level === "reviewed" && (!value.review || typeof value.review !== "object")) errors.push(`${pathLabel}.contract.review must be enabled when level is reviewed.`);
+	}
+	if (typeof input.explicit !== "boolean") errors.push(`${pathLabel}.explicit must be a boolean.`);
+	for (const key of ["inferredReason", "stopRules", "deprecationWarnings"] as const) {
+		if (!Array.isArray(input[key]) || !(input[key] as unknown[]).every((item) => typeof item === "string")) errors.push(`${pathLabel}.${key} must be an array of strings.`);
+	}
+	if (input.reason !== undefined && typeof input.reason !== "string") errors.push(`${pathLabel}.reason must be a string.`);
+	return errors;
+}
+
 /** Validate acceptance metadata read from trusted execution artifacts. */
 export function validatePersistedAcceptanceInput(input: unknown, pathLabel = "acceptance"): string[] {
+	if (input && typeof input === "object" && !Array.isArray(input) && (input as Record<string, unknown>).kind === RESOLVED_ACCEPTANCE_KIND) {
+		return resolvedAcceptanceErrors(input as Record<string, unknown>, pathLabel);
+	}
 	if (!input || typeof input !== "object" || Array.isArray(input) || (input as Record<string, unknown>).kind !== MERGED_ACCEPTANCE_KIND) {
 		return validateAcceptanceInput(input, pathLabel);
 	}
@@ -237,6 +267,31 @@ export function isPersistedMergedAcceptanceInput(input: unknown): input is Merge
 
 function isMergedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): input is MergedAcceptanceInput {
 	return isPersistedMergedAcceptanceInput(input);
+}
+
+function isPersistedResolvedAcceptanceInput(input: EffectiveAcceptanceInput | undefined): input is PersistedResolvedAcceptanceInput {
+	return typeof input === "object" && input !== null && !Array.isArray(input)
+		&& (input as Record<string, unknown>).kind === RESOLVED_ACCEPTANCE_KIND
+		&& validatePersistedAcceptanceInput(input).length === 0;
+}
+
+/** Materialize the canonical effective contract used by resume and revival paths. */
+export function persistResolvedAcceptance(input: ResolvedAcceptanceConfig): PersistedResolvedAcceptanceInput {
+	return {
+		kind: RESOLVED_ACCEPTANCE_KIND,
+		contract: input.level === "none" ? false : {
+			report: input.report,
+			...(input.verify.length ? { verify: input.verify } : {}),
+			...(input.review !== false ? { review: input.review } : {}),
+			onFailure: input.onFailure,
+		},
+		level: input.level,
+		explicit: input.explicit,
+		inferredReason: [...input.inferredReason],
+		stopRules: [...input.stopRules],
+		...(input.reason !== undefined ? { reason: input.reason } : {}),
+		deprecationWarnings: [...input.deprecationWarnings],
+	};
 }
 
 function isCanonicalObject(value: Record<string, unknown>): boolean {
@@ -292,6 +347,12 @@ export function mergeAcceptanceInputs(parent: EffectiveAcceptanceInput | undefin
 
 export function adaptLegacyAcceptance(input: EffectiveAcceptanceInput | undefined): AdaptedAcceptance {
 	if (isMergedAcceptanceInput(input)) return input.adapted;
+	if (isPersistedResolvedAcceptanceInput(input)) return {
+		contract: input.contract,
+		stopRules: input.stopRules,
+		...(input.reason !== undefined ? { reason: input.reason } : {}),
+		deprecationWarnings: input.deprecationWarnings,
+	};
 	if (input === undefined || input === "auto") return { contract: false, stopRules: [], deprecationWarnings: [] };
 	if (input === false) return { contract: false, stopRules: [], deprecationWarnings: [] };
 	if (input === "none") {
@@ -587,13 +648,29 @@ export function resolveEffectiveAcceptance(input: {
 	agentContract?: AgentContract;
 }): ResolvedAcceptanceConfig {
 	const agentContractV1 = isAgentContractV1(input.agentContract);
-	const explicitObjectForContract = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit) && !isMergedAcceptanceInput(input.explicit)
+	const persisted = isPersistedResolvedAcceptanceInput(input.explicit) ? input.explicit : undefined;
+	const explicitObjectForContract = typeof input.explicit === "object" && input.explicit !== null && !Array.isArray(input.explicit) && !isMergedAcceptanceInput(input.explicit) && !persisted
 		? input.explicit as Record<string, unknown>
 		: undefined;
-	const inheritedByContract = input.explicit === undefined || input.explicit === "auto" || explicitObjectForContract?.level === "auto";
-	const effectiveInput = agentContractV1 && inheritedByContract ? false : input.explicit;
+	const inheritedByContract = !persisted && (input.explicit === undefined || input.explicit === "auto" || explicitObjectForContract?.level === "auto");
+	const inferred = inferLevel(input);
+	const inferredContract: AcceptanceContract = {
+		report: { criteria: inferred.criteria, evidence: inferred.evidence },
+		onFailure: "fail",
+	};
+	const effectiveInput = agentContractV1 && inheritedByContract
+		? false
+		: inheritedByContract
+			? inferredContract
+			: input.explicit;
 	const adapted = adaptLegacyAcceptance(effectiveInput);
-	const advisory = agentContractV1 ? { recommendations: [], inferredReason: [] } : inferAcceptanceRecommendations(input);
+	if (inheritedByContract && explicitObjectForContract) {
+		adapted.stopRules = Array.isArray(explicitObjectForContract.stopRules) ? explicitObjectForContract.stopRules as string[] : [];
+		adapted.reason = typeof explicitObjectForContract.reason === "string" ? explicitObjectForContract.reason : undefined;
+	}
+	const advisory = persisted
+		? { recommendations: [], inferredReason: persisted.inferredReason }
+		: agentContractV1 ? { recommendations: [], inferredReason: [] } : inferAcceptanceRecommendations(input);
 	const contract = adapted.contract;
 	const report = contract === false ? false : contract.report ?? false;
 	const reportCriteria = report === false ? undefined : report.criteria;
@@ -601,16 +678,20 @@ export function resolveEffectiveAcceptance(input: {
 	const criteria = normalizeCriteria(reportCriteria, evidence);
 	const verify = contract === false ? [] : contract.verify ?? [];
 	const review = contract === false ? false : contract.review ?? false;
-	const level: ResolvedAcceptanceConfig["level"] = review !== false
-		? "reviewed"
-		: verify.length > 0
-			? "verified"
-			: report !== false
-				? (criteria.length > 0 || evidence.length > 0 ? "checked" : "attested")
-				: "none";
+	const level: ResolvedAcceptanceConfig["level"] = persisted
+		? persisted.level
+		: inheritedByContract && !agentContractV1
+		? inferred.level
+		: review !== false
+			? "reviewed"
+			: verify.length > 0
+				? "verified"
+				: report !== false
+					? (criteria.length > 0 || evidence.length > 0 ? "checked" : "attested")
+					: "none";
 	const explicitObjectAuto = explicitObjectForContract?.level === "auto"
 		&& Object.keys(explicitObjectForContract).every((key) => key === "level");
-	const explicit = input.explicit !== undefined && input.explicit !== "auto" && !explicitObjectAuto;
+	const explicit = persisted?.explicit ?? (input.explicit !== undefined && input.explicit !== "auto" && !explicitObjectAuto);
 	return {
 		level,
 		explicit,
@@ -1646,7 +1727,7 @@ export async function evaluateAcceptance(input: {
 	} else if (!reportPassed) {
 		ledger.evidenceStatus = "rejected";
 	} else {
-		ledger.evidenceStatus = acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
+		ledger.evidenceStatus = acceptance.level === "attested" ? "attested" : acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
 	}
 
 	for (const command of acceptance.verify) {
@@ -1677,7 +1758,7 @@ export async function evaluateAcceptance(input: {
 	if (!reportPassed || !verifyPassed || !reviewPassed) ledger.status = "rejected";
 	else if (acceptance.review !== false && ledger.reviewResult?.status === "no-blockers") ledger.status = "reviewed";
 	else if (acceptance.verify.length > 0) ledger.status = "verified";
-	else if (acceptance.report !== false) ledger.status = acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
+	else if (acceptance.report !== false) ledger.status = acceptance.level === "attested" ? "attested" : acceptance.criteria.length > 0 || acceptance.evidence.length > 0 ? "checked" : "attested";
 	else if (acceptance.review !== false && acceptance.review.required === false && !input.reviewResult) ledger.status = "not-required";
 	return ledger;
 }
@@ -1698,8 +1779,8 @@ export function buildSkippedAcceptanceLedger(acceptance: ResolvedAcceptanceConfi
 	};
 }
 
-function rejectedAcceptanceBlocksRun(status: string, explicit: boolean, onFailure: "fail" | "warn"): boolean {
-	return status === "rejected" && explicit && onFailure === "fail";
+function rejectedAcceptanceBlocksRun(status: string, _explicit: boolean, onFailure: "fail" | "warn"): boolean {
+	return status === "rejected" && onFailure === "fail";
 }
 
 export function acceptanceBlocksRun(ledger: AcceptanceLedger): boolean {

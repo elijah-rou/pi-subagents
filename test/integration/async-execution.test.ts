@@ -2126,7 +2126,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(statusPayload.steps?.[0]?.effects?.fileMutation?.status, "blocked");
 	});
 
-	it("keeps agent acceptance role inference advisory for async acceptance", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+	it("enforces agent acceptance role inference for async acceptance", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		mockPi.onCall({ output: "exploration complete" });
 		const executor = makeAsyncExecutor([makeAgent("worker", { acceptanceRole: "read-only" })]);
 
@@ -2141,12 +2141,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const asyncId = result.details?.asyncId;
 		assert.ok(asyncId, "expected asyncId");
 		const payload = await readAsyncPayload(asyncId);
-		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance.level, "none");
+		assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance.level, "attested");
+		assert.equal(payload.results[0]?.acceptance?.status, "attested");
 	});
 
 
 
-	it("keeps expanded async chain acceptance inference advisory", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("enforces expanded async chain acceptance inference", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "patched" });
 		mockPi.onCall({ output: "reviewed" });
 
@@ -2161,7 +2162,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 		});
 		const patchPayload = await readAsyncPayload(patchId);
-		assert.equal(patchPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "none");
+		assert.equal(patchPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "checked");
+		assert.equal(patchPayload.results[0]?.acceptance?.status, "checked");
 
 		const reviewId = `async-role-task-template-review-${Date.now().toString(36)}`;
 		executeAsyncChain(reviewId, {
@@ -2174,7 +2176,8 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			maxSubagentDepth: 2,
 		});
 		const reviewPayload = await readAsyncPayload(reviewId);
-		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "none");
+		assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
+		assert.equal(reviewPayload.results[0]?.acceptance?.status, "attested");
 	});
 
 
@@ -2707,7 +2710,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(payload.workflowGraph?.nodes?.[1]?.acceptanceStatus, "rejected");
 	});
 
-	it("keeps read-only async dynamic acceptance inference advisory", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("enforces lightweight read-only async dynamic acceptance inference", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		const readOnlyReport = [
 			"done",
@@ -2729,7 +2732,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-dynamic-acceptance-role-${Date.now().toString(36)}`;
 		const result = executeAsyncChain(id, {
 			chain: [
-				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" }, acceptance: false },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 2 },
 					parallel: { agent: "explorer", task: "Explore {target.path}", outputSchema: { type: "object" } },
@@ -2747,13 +2750,13 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(!result.isError);
 		const payload = await readAsyncPayload(id);
 		const explorerResults = payload.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["none", "none"]);
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["attested", "attested"]);
 		const dynamicNode = payload.workflowGraph?.nodes?.[1];
-		assert.equal(dynamicNode?.acceptanceStatus, "not-required");
-		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["not-required", "not-required"]);
+		assert.equal(dynamicNode?.acceptanceStatus, "attested");
+		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["attested", "attested"]);
 	});
 
-	it("keeps materialized async dynamic acceptance inference advisory", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("enforces materialized async dynamic acceptance inference", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "targets", structuredOutput: { items: [{ path: "src/a.ts" }, { path: "src/b.ts" }] } });
 		const writerReport = [
 			"done",
@@ -2774,7 +2777,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		const id = `async-dynamic-role-item-template-${Date.now().toString(36)}`;
 		executeAsyncChain(id, {
 			chain: [
-				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" } },
+				{ agent: "producer", task: "Produce targets", as: "targets", outputSchema: { type: "object" }, acceptance: false },
 				{
 					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 2 },
 					parallel: { agent: "explorer", task: "Patch {target.path}", outputSchema: { type: "object" } },
@@ -2791,11 +2794,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const payload = await readAsyncPayload(id);
 		const explorerResults = payload.results.filter((child) => child.agent === "explorer");
-		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["none", "none"]);
+		assert.deepEqual(explorerResults.map((child) => child.acceptance?.effectiveAcceptance?.level), ["checked", "checked"]);
 		const dynamicNode = payload.workflowGraph?.nodes?.[1];
-		assert.equal(payload.success, true);
-		assert.equal(dynamicNode?.acceptanceStatus, "not-required");
-		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["not-required", "not-required"]);
+		assert.equal(payload.success, false);
+		assert.equal(dynamicNode?.acceptanceStatus, undefined);
+		assert.deepEqual(dynamicNode?.children?.map((child) => child.acceptanceStatus), ["rejected", "rejected"]);
 	});
 
 	it("cancels dynamic fanout aggregate acceptance when the run times out", { skip: !isAsyncAvailable() ? "jiti not available" : process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined }, async () => {
