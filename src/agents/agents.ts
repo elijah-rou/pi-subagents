@@ -1345,6 +1345,12 @@ function applyBuiltinOverride(
 	if (override.completionGuard !== undefined) next.completionGuard = override.completionGuard;
 	if (override.toolBudget !== undefined) { if (override.toolBudget === false) delete next.toolBudget; else next.toolBudget = override.toolBudget; }
 
+	if (
+		override.inheritProjectContext !== undefined
+		&& override.inheritGlobalContext === undefined
+		&& !agentHasFrontmatterField(agent, "inheritGlobalContext")
+	) next.inheritGlobalContext = next.inheritProjectContext;
+
 	return next;
 }
 
@@ -1548,11 +1554,17 @@ function applyCustomAgentOverrides(
 			: agent;
 
 		const projectOverride = projectSettings.overrides[agent.name];
-		if (projectOverride && projectSettingsPath) {
-			return applyCustomAgentOverride(withUserOverride, projectOverride, { scope: "project", path: projectSettingsPath });
-		}
-
-		return withUserOverride;
+		const resolved = projectOverride && projectSettingsPath
+			? applyCustomAgentOverride(withUserOverride, projectOverride, { scope: "project", path: projectSettingsPath })
+			: withUserOverride;
+		const hasExplicitGlobalContext = agentHasFrontmatterField(agent, "inheritGlobalContext")
+			|| projectOverride?.inheritGlobalContext !== undefined
+			|| userOverride?.inheritGlobalContext !== undefined;
+		if (hasExplicitGlobalContext || resolved.inheritGlobalContext === resolved.inheritProjectContext) return resolved;
+		const normalized = { ...resolved, inheritGlobalContext: resolved.inheritProjectContext };
+		const frontmatterFields = agentFrontmatterFields.get(resolved);
+		if (frontmatterFields) agentFrontmatterFields.set(normalized, frontmatterFields);
+		return normalized;
 	});
 }
 
@@ -2036,7 +2048,11 @@ function loadAgentsFromDefinitionFiles(files: AgentDefinitionFile[], source: Age
 			: frontmatter.inheritProjectContext === "false"
 				? false
 				: defaultInheritProjectContext(localName);
-		const inheritGlobalContext = frontmatter.inheritGlobalContext === "true";
+		const inheritGlobalContext = frontmatter.inheritGlobalContext === "true"
+			? true
+			: frontmatter.inheritGlobalContext === "false"
+				? false
+				: inheritProjectContext;
 		const inheritSkills = frontmatter.inheritSkills === "true"
 			? true
 			: frontmatter.inheritSkills === "false"

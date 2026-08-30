@@ -915,6 +915,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (fs.existsSync(targetPath)) return result(`File already exists at ${targetPath} but is not a valid agent definition. Remove or rename it first.`, true);
 	const warnings: string[] = [];
 	if (d.builtin.some((a) => a.name === runtimeName)) warnings.push(`Note: this shadows the builtin agent '${runtimeName}'.`);
+	const inheritProjectContext = defaultInheritProjectContext(name);
 	const agent: AgentConfig = {
 		name: runtimeName,
 		localName: name,
@@ -924,12 +925,15 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 		filePath: targetPath,
 		systemPrompt: "",
 		systemPromptMode: defaultSystemPromptMode(name),
-		inheritProjectContext: defaultInheritProjectContext(name),
-		inheritGlobalContext: false,
+		inheritProjectContext,
+		inheritGlobalContext: inheritProjectContext,
 		inheritSkills: defaultInheritSkills(),
 	};
 	const applyError = applyAgentConfig(agent, cfg);
 	if (applyError) return result(applyError, true);
+	if (hasKey(cfg, "inheritProjectContext") && !hasKey(cfg, "inheritGlobalContext")) {
+		agent.inheritGlobalContext = agent.inheritProjectContext;
+	}
 	const profileError = validateCodeOwnedProfileRunner(agent);
 	if (profileError) return result(profileError, true);
 	const mw = modelWarning(ctx, agent.model);

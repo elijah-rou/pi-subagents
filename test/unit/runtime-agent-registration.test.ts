@@ -103,24 +103,44 @@ describe("runtime agent registration", () => {
 		registration.dispose();
 	});
 
-	it("accepts inheritGlobalContext in a runtime agent definition", () => {
-		const registration = registerAgent({
-			pi,
-			name: "runtime-global-helper",
-			definition: {
-				description: "Runtime global helper",
-				systemPrompt: "Help at runtime.",
-				inheritProjectContext: true,
-				inheritGlobalContext: true,
-			},
-		});
+	it("resolves runtime global-context inheritance from project context unless explicit", () => {
+		const registrations = [
+			registerAgent({
+				pi,
+				name: "runtime-project-helper",
+				definition: {
+					description: "Runtime project helper",
+					systemPrompt: "Help at runtime.",
+					inheritProjectContext: true,
+				},
+			}),
+			registerAgent({
+				pi,
+				name: "runtime-isolated-helper",
+				definition: {
+					description: "Runtime isolated helper",
+					systemPrompt: "Help at runtime.",
+					inheritProjectContext: false,
+				},
+			}),
+			registerAgent({
+				pi,
+				name: "runtime-explicit-global-isolation",
+				definition: {
+					description: "Runtime explicitly isolated helper",
+					systemPrompt: "Help at runtime.",
+					inheritProjectContext: true,
+					inheritGlobalContext: false,
+				},
+			}),
+		];
 
 		const agents = mergeRuntimeAgents(pi, discoverAgents(tempProject, "both")).agents;
-		const agent = agents.find((candidate) => candidate.name === "runtime-global-helper");
-		assert.equal(agent?.inheritProjectContext, true);
-		assert.equal(agent?.inheritGlobalContext, true);
+		assert.equal(agents.find((candidate) => candidate.name === "runtime-project-helper")?.inheritGlobalContext, true);
+		assert.equal(agents.find((candidate) => candidate.name === "runtime-isolated-helper")?.inheritGlobalContext, false);
+		assert.equal(agents.find((candidate) => candidate.name === "runtime-explicit-global-isolation")?.inheritGlobalContext, false);
 
-		registration.dispose();
+		for (const registration of registrations) registration.dispose();
 	});
 
 	it("registers through the owner runtime when consumer and owner API objects differ", () => {

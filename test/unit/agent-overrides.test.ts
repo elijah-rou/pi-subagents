@@ -593,6 +593,35 @@ describe("builtin agent overrides", () => {
 		assert.equal(reviewer.override?.scope, "project");
 	});
 
+	it("resolves omitted global inheritance after layered custom-agent context overrides", () => {
+		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
+			subagents: { agentOverrides: { inherited: { inheritGlobalContext: false } } },
+		});
+		fs.mkdirSync(path.join(tempProject, ".pi"), { recursive: true });
+		writeJson(path.join(tempProject, ".pi", "settings.json"), {
+			subagents: {
+				agentOverrides: {
+					delegate: { inheritProjectContext: false },
+					follow: { inheritProjectContext: true },
+					inherited: { inheritProjectContext: true },
+				},
+			},
+		});
+		writeUserAgent(tempHome, "follow", `---\nname: follow\ndescription: Follow resolved project context\n---\n`);
+		writeUserAgent(tempHome, "inherited", `---\nname: inherited\ndescription: Preserve explicit global isolation\n---\n`);
+
+		const agents = discoverAgents(tempProject, "both").agents;
+		const delegate = agents.find((agent) => agent.name === "delegate");
+		assert.equal(delegate?.inheritProjectContext, false);
+		assert.equal(delegate?.inheritGlobalContext, false);
+		const follow = agents.find((agent) => agent.name === "follow");
+		assert.equal(follow?.inheritProjectContext, true);
+		assert.equal(follow?.inheritGlobalContext, true);
+		const inherited = agents.find((agent) => agent.name === "inherited");
+		assert.equal(inherited?.inheritProjectContext, true);
+		assert.equal(inherited?.inheritGlobalContext, false);
+	});
+
 	it("lets a project override flip `disabled` on a custom agent even after a user override already set it", () => {
 		// Regression test for a bug caught in review of the layering fix above:
 		// applyCustomAgentOverride's `disabled` handling used a stray

@@ -1077,6 +1077,7 @@ Drive the failing test first.
 		const content = fs.readFileSync(filePath, "utf-8");
 		assert.match(content, /systemPromptMode: append/);
 		assert.match(content, /inheritProjectContext: true/);
+		assert.match(content, /inheritGlobalContext: true/);
 		assert.match(content, /inheritSkills: false/);
 	});
 

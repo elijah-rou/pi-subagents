@@ -321,6 +321,7 @@ function assertNoBuiltinCollision(agent: AgentConfig): void {
 
 function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentConfig {
 	const aliases = normalizeAliases(definition.aliases, name);
+	const inheritProjectContext = definition.inheritProjectContext ?? defaultInheritProjectContext(name);
 	const agent: AgentConfig = {
 		name,
 		description: definition.description,
@@ -333,8 +334,8 @@ function toAgentConfig(name: string, definition: RuntimeAgentDefinition): AgentC
 		...(definition.fallbackModels !== undefined ? { fallbackModels: [...definition.fallbackModels] } : {}),
 		...(definition.thinking !== undefined ? { thinking: definition.thinking } : {}),
 		systemPromptMode: definition.systemPromptMode ?? defaultSystemPromptMode(name),
-		inheritProjectContext: definition.inheritProjectContext ?? defaultInheritProjectContext(name),
-		inheritGlobalContext: definition.inheritGlobalContext ?? false,
+		inheritProjectContext,
+		inheritGlobalContext: definition.inheritGlobalContext ?? inheritProjectContext,
 		inheritSkills: definition.inheritSkills ?? defaultInheritSkills(),
 		...(definition.defaultContext !== undefined ? { defaultContext: definition.defaultContext } : {}),
 		...(definition.defaultAsync !== undefined ? { defaultAsync: definition.defaultAsync } : {}),

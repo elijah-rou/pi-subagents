@@ -237,11 +237,11 @@ Use these fields when an agent should see more:
 |-------|--------|
 | `systemPromptMode: append` | Append the agent prompt to Pi's normal base prompt. |
 | `inheritProjectContext: true` | Keep inherited repository instructions from files like `AGENTS.md` and `CLAUDE.md`. |
-| `inheritGlobalContext: true` | Also keep the operator's global context file from the Pi config agent directory (such as `~/.pi/agent/AGENTS.md`). Defaults to `false`. |
+| `inheritGlobalContext: false` | Explicitly remove operator-global instruction files from the Pi config agent directory (such as `~/.pi/agent/AGENTS.md`) for token savings or isolation. When omitted, it follows the resolved `inheritProjectContext` value. |
 | `inheritSkills: true` | Let the child see Pi's discovered skills catalog. |
 | `defaultContext: fork` | Prefer forked session context when a launch omits `context`; if the parent has no persisted session file or current leaf yet, the implicit default falls back to `fresh` without a failed first attempt. Explicit `context: "fork"` remains strict, and explicit `context: "fresh"` still wins. |
 
-Builtin agents opt into repository instruction inheritance by default so they follow repo-specific rules out of the box, but global context remains excluded unless `inheritGlobalContext: true` is set. This changes the behavior of existing agents that previously received global context as part of `inheritProjectContext: true`. `delegate` also uses append mode because its job is orchestration inside the parent workflow.
+Builtin agents opt into repository instruction inheritance by default so they follow repo-specific rules out of the box. Because omitted `inheritGlobalContext` follows the resolved project-context setting, they also retain authoritative operator-global instructions. Set `inheritGlobalContext: false` explicitly when the token savings or isolation outweigh that inherited policy. `delegate` also uses append mode because its job is orchestration inside the parent workflow.
 
 ## Frontmatter reference
 
@@ -309,7 +309,7 @@ Field notes:
 | `thinking` | Appended as a `:level` suffix at runtime unless a suffix is already present. |
 | `systemPromptMode` | `replace` by default; `append` keeps Pi's base prompt. |
 | `inheritProjectContext` | Keeps or strips inherited repository instruction blocks. |
-| `inheritGlobalContext` | Keeps or strips the operator's global context file from the Pi config agent directory (e.g. `~/.pi/agent/AGENTS.md`). It has an effect only when `inheritProjectContext` is `true`; otherwise all context files are already disabled. Defaults to `false`. |
+| `inheritGlobalContext` | Keeps or strips operator-global instruction files (`AGENTS.md`, `AGENTS.override.md`, and `CLAUDE.md`) from the Pi config agent directory. When omitted, it resolves to the already-resolved `inheritProjectContext` value; explicit `false` remains authoritative. It has an effect only when project context is enabled, because `inheritProjectContext: false` removes all inherited context. |
 | `inheritSkills` | Keeps or strips Pi's discovered skills catalog. |
 | `defaultContext` | Optional `fresh` or `fork` launch-context preference. An implicit `fork` falls back to `fresh` when the parent has no persisted session file or current leaf; an explicit launch `context: "fork"` remains strict. |
 | `skills` | Selects specific skills for the child, regardless of `inheritSkills`. |

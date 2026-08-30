@@ -1654,22 +1654,30 @@ Do work
 		assert.equal(worker?.inheritSkills, true);
 	});
 
-	it("defaults inheritGlobalContext to false when frontmatter omits it", () => {
+	it("defaults omitted inheritGlobalContext to the resolved project-context value", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-prompt-inheritance-frontmatter-"));
 		tempDirs.push(dir);
 		const agentsDir = path.join(dir, ".pi", "agents");
 		fs.mkdirSync(agentsDir, { recursive: true });
-		fs.writeFileSync(path.join(agentsDir, "worker.md"), `---
-name: worker
+		for (const [name, projectValue, globalLine, expectedGlobal] of [
+			["project-context", true, "", true],
+			["isolated", false, "", false],
+			["explicit-global-isolation", true, "inheritGlobalContext: false\n", false],
+		] as const) {
+			fs.writeFileSync(path.join(agentsDir, `${name}.md`), `---
+name: ${name}
 description: Worker
----
+inheritProjectContext: ${projectValue}
+${globalLine}---
 
 Do work
 `, "utf-8");
+		}
 
 		const result = discoverAgents(dir, "project");
-		const worker = result.agents.find((agent) => agent.name === "worker");
-		assert.equal(worker?.inheritGlobalContext, false);
+		assert.equal(result.agents.find((agent) => agent.name === "project-context")?.inheritGlobalContext, true);
+		assert.equal(result.agents.find((agent) => agent.name === "isolated")?.inheritGlobalContext, false);
+		assert.equal(result.agents.find((agent) => agent.name === "explicit-global-isolation")?.inheritGlobalContext, false);
 	});
 });
 
