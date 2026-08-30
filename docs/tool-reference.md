@@ -248,6 +248,8 @@ Rules:
 
 `refine`, `refine.show`, and `refine.rollback` manage project-local refinement overlays for one agent. `/subagents-refine <agent>` is the slash equivalent of `refine`. See [agents.md](agents.md#refinement-overlays) for behavior and storage.
 
+`mission.update` accepts `missionUpdate.journal` as an array of append-only entries with `kind`, `title`, optional `body`, optional `evidence`, and optional `runId`. The store generates each entry id and timestamp, serializes concurrent mission updates behind a per-record lock, and enforces entry and aggregate bounds. See [missions.md](missions.md#managing-missions).
+
 ## Lane merge evidence and cleanup eligibility
 
 Lane evidence actions update an existing parallel handoff manifest at an explicit update boundary. They do not verify GitHub state, run Git commands, or remove worktrees. Pass the manifest path and its exact `runId` as `laneId`:

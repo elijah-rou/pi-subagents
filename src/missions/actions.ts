@@ -6,6 +6,8 @@ import {
 	MISSION_STATUSES,
 	type MissionArtifact,
 	type MissionArtifactKind,
+	type MissionJournalEntry,
+	type MissionJournalKind,
 	type MissionReceipt,
 	type MissionReceiptKind,
 	type MissionReceiptStatus,
@@ -59,6 +61,7 @@ export interface MissionUpdateToolInput {
 	labels?: string[];
 	artifacts?: MissionArtifact[];
 	receipts?: Array<Omit<MissionReceipt, "createdAt">>;
+	journal?: Array<Omit<MissionJournalEntry, "id" | "createdAt" | "evidence"> & { evidence?: string[] }>;
 	decisions?: Array<{
 		title: string;
 		prompt?: string;
@@ -174,11 +177,34 @@ function validateReceipt(value: unknown, index: number): Omit<MissionReceipt, "c
 	};
 }
 
+function validateJournalEntry(value: unknown, index: number): Omit<MissionJournalEntry, "id" | "createdAt" | "evidence"> & { evidence?: string[] } {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`missionUpdate.journal[${index}] must be an object`);
+	const input = value as Record<string, unknown>;
+	for (const key of Object.keys(input)) {
+		if (!["kind", "title", "body", "evidence", "runId"].includes(key)) throw new Error(`missionUpdate.journal[${index}].${key} is unknown`);
+	}
+	const kinds: MissionJournalKind[] = ["decision", "hypothesis", "observation", "experiment", "result", "correction", "note"];
+	if (typeof input.kind !== "string" || !kinds.includes(input.kind as MissionJournalKind)) throw new Error(`missionUpdate.journal[${index}].kind is invalid`);
+	if (typeof input.title !== "string" || !input.title.trim()) throw new Error(`missionUpdate.journal[${index}].title must be a non-empty string`);
+	if (input.body !== undefined && (typeof input.body !== "string" || !input.body.trim())) throw new Error(`missionUpdate.journal[${index}].body must be a non-empty string`);
+	if (input.runId !== undefined && (typeof input.runId !== "string" || !input.runId.trim())) throw new Error(`missionUpdate.journal[${index}].runId must be a non-empty string`);
+	if (input.evidence !== undefined && (!Array.isArray(input.evidence) || input.evidence.some((item) => typeof item !== "string" || !item.trim()))) {
+		throw new Error(`missionUpdate.journal[${index}].evidence must contain only non-empty strings`);
+	}
+	return {
+		kind: input.kind as MissionJournalKind,
+		title: input.title.trim(),
+		...(typeof input.body === "string" ? { body: input.body.trim() } : {}),
+		...(Array.isArray(input.evidence) ? { evidence: input.evidence.map((item) => (item as string).trim()) } : {}),
+		...(typeof input.runId === "string" ? { runId: input.runId.trim() } : {}),
+	};
+}
+
 function validateMissionUpdate(value: unknown): MissionUpdateInput {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("missionUpdate must be an object");
 	const input = value as Record<string, unknown>;
 	for (const key of Object.keys(input)) {
-		if (!["title", "objective", "goal", "budget", "status", "summary", "labels", "artifacts", "receipts", "decisions"].includes(key)) throw new Error(`missionUpdate.${key} is unknown`);
+		if (!["title", "objective", "goal", "budget", "status", "summary", "labels", "artifacts", "receipts", "journal", "decisions"].includes(key)) throw new Error(`missionUpdate.${key} is unknown`);
 	}
 	const update: MissionUpdateInput = {};
 	for (const field of ["title", "objective", "summary"] as const) {
@@ -214,6 +240,10 @@ function validateMissionUpdate(value: unknown): MissionUpdateInput {
 	if (input.receipts !== undefined) {
 		if (!Array.isArray(input.receipts)) throw new Error("missionUpdate.receipts must be an array");
 		update.addReceipts = input.receipts.map(validateReceipt);
+	}
+	if (input.journal !== undefined) {
+		if (!Array.isArray(input.journal)) throw new Error("missionUpdate.journal must be an array");
+		update.addJournal = input.journal.map(validateJournalEntry);
 	}
 	if (input.decisions !== undefined) {
 		if (!Array.isArray(input.decisions)) throw new Error("missionUpdate.decisions must be an array");
@@ -321,6 +351,11 @@ function formatMission(record: MissionRecord): string {
 	if (record.receipts.length) {
 		lines.push("Delivery receipts:");
 		for (const receipt of record.receipts) lines.push(`  ${receipt.kind} (${receipt.status}): ${receipt.title} — ${receipt.url}`);
+	}
+	if (record.journal.length) {
+		const recent = record.journal.slice(-10);
+		lines.push(`Journal (${record.journal.length} ${record.journal.length === 1 ? "entry" : "entries"}${record.journal.length > recent.length ? `; showing latest ${recent.length}` : ""}):`);
+		for (const entry of recent) lines.push(`  ${entry.createdAt} ${entry.kind}: ${entry.title}${entry.runId ? ` (run ${entry.runId})` : ""}`);
 	}
 	return lines.join("\n");
 }

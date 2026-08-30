@@ -9,6 +9,8 @@ import {
 	createMission,
 	listGlobalMissions,
 	listMissions,
+	MISSION_JOURNAL_MAX_BYTES,
+	missionRecordPath,
 	readMission,
 	resolveMissionStoreLocation,
 	updateMission,
@@ -82,6 +84,97 @@ describe("mission store", () => {
 			const global = listGlobalMissions(test.location.globalIndexDir);
 			assert.equal(global.entries[0]?.missionId, created.id);
 			assert.equal(global.entries[0]?.stale, false);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("appends a bounded mission journal and renders only recent entries", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Journal", objective: "Keep durable evidence" });
+			const updated = updateMission(test.location, mission.id, {
+				addJournal: Array.from({ length: 12 }, (_, index) => ({
+					kind: index === 0 ? "decision" as const : "observation" as const,
+					title: `Entry ${index}`,
+					body: `Body ${index}`,
+					evidence: [`artifact-${index}`],
+					...(index === 0 ? { runId: "run-1" } : {}),
+				})),
+			}, new Date("2026-08-11T10:00:00.000Z"));
+
+			assert.equal(updated.journal.length, 12);
+			assert.equal(updated.journal[0]?.kind, "decision");
+			assert.equal(updated.journal[0]?.runId, "run-1");
+			assert.equal(updated.journal[0]?.createdAt, "2026-08-11T10:00:00.000Z");
+			assert.equal(new Set(updated.journal.map((entry) => entry.id)).size, 12);
+			assert.ok(Buffer.byteLength(JSON.stringify(updated.journal), "utf-8") <= MISSION_JOURNAL_MAX_BYTES);
+
+			const shown = handleMissionAction("mission.show", { missionId: mission.id }, { cwd: test.projectRoot, agentDir: test.agentDir });
+			const text = shown.content[0]?.type === "text" ? shown.content[0].text : "";
+			assert.match(text, /Journal \(12 entries; showing latest 10\):/);
+			assert.doesNotMatch(text, /Entry 1(?:\D|$)/);
+			assert.match(text, /Entry 11/);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects oversized or malformed mission journal updates without changing the record", () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Journal bounds", objective: "Reject invalid entries" });
+			assert.throws(() => updateMission(test.location, mission.id, {
+				addJournal: [{ kind: "result", title: "Oversized", body: "x".repeat(MISSION_JOURNAL_MAX_BYTES) }],
+			}), /journal.*limit|body.*4096 bytes/i);
+			assert.throws(() => updateMission(test.location, mission.id, {
+				addJournal: Array.from({ length: 65 }, (_, index) => ({ kind: "note" as const, title: `Note ${index}`, body: "x".repeat(4_096) })),
+			}), /journal.*256 KiB/i);
+			assert.throws(() => handleMissionAction("mission.update", {
+				missionId: mission.id,
+				missionUpdate: { journal: [{ kind: "unknown", title: "Bad" }] },
+			}, { cwd: test.projectRoot, agentDir: test.agentDir }), /journal\[0\]\.kind is invalid/);
+			assert.deepEqual(readMission(test.location, mission.id).journal, []);
+		} finally {
+			fs.rmSync(test.root, { recursive: true, force: true });
+		}
+	});
+
+	it("serializes mission record updates behind a mission-specific lock", async () => {
+		const test = fixture();
+		try {
+			const mission = createMission(test.location, { title: "Locked mission", objective: "Preserve concurrent appends" });
+			const lockPath = `${missionRecordPath(test.location, mission.id)}.lock`;
+			fs.mkdirSync(lockPath);
+			const script = `
+				import * as fs from "node:fs";
+				import { updateMission } from "./src/missions/store.ts";
+				const location = JSON.parse(process.env.MISSION_LOCATION);
+				fs.writeFileSync(process.env.READY_FILE, "ready", "utf-8");
+				updateMission(location, process.env.MISSION_ID, { addJournal: [{ kind: "observation", title: process.env.TITLE }] });
+			`;
+			const children = ["first", "second"].map((title) => {
+				const readyPath = path.join(test.root, `${title}-ready`);
+				let stderr = "";
+				let exited = false;
+				const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+					cwd: process.cwd(),
+					env: { ...process.env, MISSION_LOCATION: JSON.stringify(test.location), MISSION_ID: mission.id, READY_FILE: readyPath, TITLE: title },
+					stdio: ["ignore", "pipe", "pipe"],
+				});
+				child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+				const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.on("exit", (code, signal) => {
+					exited = true;
+					resolve({ code, signal });
+				}));
+				return { child, readyPath, title, stderr: () => stderr, exited: () => exited, exit };
+			});
+			await Promise.all(children.map((child) => waitForFile(child.readyPath)));
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			assert.equal(children.some((child) => child.exited()), false, "mission update ignored the record lock");
+			fs.rmSync(lockPath, { recursive: true, force: true });
+			for (const entry of children) assert.deepEqual(await entry.exit, { code: 0, signal: null }, entry.stderr());
+			assert.deepEqual(readMission(test.location, mission.id).journal.map((entry) => entry.title).sort(), ["first", "second"]);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
 		}
@@ -344,19 +437,21 @@ describe("mission store", () => {
 		}
 	});
 
-	it("loads older records that do not have receipts", () => {
+	it("loads older records that do not have receipts or journal entries", () => {
 		const test = fixture();
 		try {
 			const created = createMission(test.location, { title: "Older record", objective: "Stay readable" });
 			const recordPath = path.join(test.location.missionDir, `${created.id}.json`);
 			const raw = JSON.parse(fs.readFileSync(recordPath, "utf-8")) as Record<string, unknown>;
 			delete raw.receipts;
+			delete raw.journal;
 			fs.writeFileSync(recordPath, JSON.stringify(raw), "utf-8");
 
 			const mission = readMission(test.location, created.id);
 			assert.equal(mission.objective, "Stay readable");
 			assert.equal(mission.goal, undefined);
 			assert.deepEqual(mission.receipts, []);
+			assert.deepEqual(mission.journal, []);
 			assert.deepEqual(mission.workflowChildren, []);
 		} finally {
 			fs.rmSync(test.root, { recursive: true, force: true });
@@ -446,9 +541,11 @@ describe("mission store", () => {
 				missionId,
 				missionUpdate: {
 					receipts: [{ kind: "ci", status: "succeeded", title: "Unit tests", url: "https://github.com/example/repo/actions/runs/1", description: "All checks passed" }],
+					journal: [{ kind: "result", title: "Unit suite passed", evidence: ["ci:1"], runId: "run-2" }],
 				},
 			}, ctx);
 			assert.equal(receipt.details?.mission?.receipts[0]?.status, "succeeded");
+			assert.equal(receipt.details?.mission?.journal[0]?.title, "Unit suite passed");
 			assert.match(receipt.content[0]?.type === "text" ? receipt.content[0].text : "", /Delivery receipts:\n  ci \(succeeded\): Unit tests/);
 			const updatedReceipt = handleMissionAction("mission.update", {
 				missionId,

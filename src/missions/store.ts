@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writePrivateAtomicJson } from "../shared/atomic-json.ts";
+import { withPrivateFileLock } from "../shared/private-file-lock.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import {
 	MISSION_STATUSES,
@@ -14,6 +15,8 @@ import {
 	type MissionDecision,
 	type MissionGoal,
 	type MissionIndexEntry,
+	type MissionJournalEntry,
+	type MissionJournalKind,
 	type MissionListResult,
 	type MissionReceipt,
 	type MissionReceiptKind,
@@ -35,9 +38,17 @@ const MISSION_RUN_MODES = new Set<MissionRunMode>(["single", "parallel", "chain"
 const MISSION_ARTIFACT_KINDS = new Set<MissionArtifactKind>(["status", "output", "patch", "manifest", "review", "note", "other"]);
 const MISSION_RECEIPT_KINDS = new Set<MissionReceiptKind>(["pull_request", "ci", "deployment", "release"]);
 const MISSION_RECEIPT_STATUSES = new Set<MissionReceiptStatus>(["pending", "ready", "succeeded", "failed"]);
+const MISSION_JOURNAL_KINDS = new Set<MissionJournalKind>(["decision", "hypothesis", "observation", "experiment", "result", "correction", "note"]);
 const MISSION_STATUS_SET = new Set<MissionStatus>(MISSION_STATUSES);
 const TERMINAL_MISSION_STATUSES = new Set<MissionStatus>(["completed", "failed", "cancelled"]);
 const DEFAULT_TERMINAL_MISSION_RETENTION = 200;
+const MISSION_JOURNAL_MAX_ENTRIES = 256;
+const MISSION_JOURNAL_TITLE_MAX_BYTES = 256;
+const MISSION_JOURNAL_BODY_MAX_BYTES = 4 * 1024;
+const MISSION_JOURNAL_EVIDENCE_MAX_ITEMS = 16;
+const MISSION_JOURNAL_EVIDENCE_ITEM_MAX_BYTES = 2 * 1024;
+const MISSION_JOURNAL_RUN_ID_MAX_BYTES = 256;
+export const MISSION_JOURNAL_MAX_BYTES = 256 * 1024;
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be a JSON object`);
@@ -52,6 +63,13 @@ function requiredString(value: unknown, label: string): string {
 function optionalString(value: unknown, label: string): string | undefined {
 	if (value === undefined) return undefined;
 	return requiredString(value, label);
+}
+
+function boundedString(value: unknown, label: string, maxBytes: number): string {
+	const result = requiredString(value, label).trim();
+	const bytes = Buffer.byteLength(result, "utf-8");
+	if (bytes > maxBytes) throw new Error(`${label} exceeds ${maxBytes} bytes (${bytes} bytes).`);
+	return result;
 }
 
 function timestamp(value: unknown, label: string): string {
@@ -205,6 +223,31 @@ function parseReceipt(value: unknown, label: string): MissionReceipt {
 	};
 }
 
+function parseJournalEntry(value: unknown, label: string): MissionJournalEntry {
+	const input = asObject(value, label);
+	const kind = requiredString(input.kind, `${label}.kind`) as MissionJournalKind;
+	if (!MISSION_JOURNAL_KINDS.has(kind)) throw new Error(`${label}.kind is invalid`);
+	if (input.evidence !== undefined && !Array.isArray(input.evidence)) throw new Error(`${label}.evidence must be an array of non-empty strings`);
+	const evidence = (input.evidence ?? []) as unknown[];
+	if (evidence.length > MISSION_JOURNAL_EVIDENCE_MAX_ITEMS) throw new Error(`${label}.evidence supports at most ${MISSION_JOURNAL_EVIDENCE_MAX_ITEMS} items.`);
+	return {
+		id: validateMissionId(input.id, `${label}.id`),
+		kind,
+		title: boundedString(input.title, `${label}.title`, MISSION_JOURNAL_TITLE_MAX_BYTES),
+		createdAt: timestamp(input.createdAt, `${label}.createdAt`),
+		...(input.body !== undefined ? { body: boundedString(input.body, `${label}.body`, MISSION_JOURNAL_BODY_MAX_BYTES) } : {}),
+		evidence: [...new Set(evidence.map((item, index) => boundedString(item, `${label}.evidence[${index}]`, MISSION_JOURNAL_EVIDENCE_ITEM_MAX_BYTES)))],
+		...(input.runId !== undefined ? { runId: boundedString(input.runId, `${label}.runId`, MISSION_JOURNAL_RUN_ID_MAX_BYTES) } : {}),
+	};
+}
+
+function validateJournalBounds(journal: MissionJournalEntry[], label: string): void {
+	if (journal.length > MISSION_JOURNAL_MAX_ENTRIES) throw new Error(`${label} supports at most ${MISSION_JOURNAL_MAX_ENTRIES} entries.`);
+	const bytes = Buffer.byteLength(JSON.stringify(journal), "utf-8");
+	if (bytes > MISSION_JOURNAL_MAX_BYTES) throw new Error(`${label} exceeds the ${MISSION_JOURNAL_MAX_BYTES / 1024} KiB limit (${bytes} bytes).`);
+	if (new Set(journal.map((entry) => entry.id)).size !== journal.length) throw new Error(`${label} contains duplicate entry ids.`);
+}
+
 export function parseMissionRecord(value: unknown, source = "mission record"): MissionRecord {
 	const input = asObject(value, source);
 	if (input.schemaVersion !== 1) throw new Error(`${source}.schemaVersion must be 1`);
@@ -213,11 +256,15 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 	if (!Array.isArray(input.decisions)) throw new Error(`${source}.decisions must be an array`);
 	if (!Array.isArray(input.artifacts)) throw new Error(`${source}.artifacts must be an array`);
 	if (input.receipts !== undefined && !Array.isArray(input.receipts)) throw new Error(`${source}.receipts must be an array`);
+	if (input.journal !== undefined && !Array.isArray(input.journal)) throw new Error(`${source}.journal must be an array`);
 	const runs = input.runs as unknown[];
 	const workflowChildren = (input.workflowChildren ?? []) as unknown[];
 	const decisions = input.decisions as unknown[];
 	const artifacts = input.artifacts as unknown[];
 	const receipts = (input.receipts ?? []) as unknown[];
+	const journal = (input.journal ?? []) as unknown[];
+	const parsedJournal = journal.map((item, index) => parseJournalEntry(item, `${source}.journal[${index}]`));
+	validateJournalBounds(parsedJournal, `${source}.journal`);
 	const goal = input.goal !== undefined ? parseGoal(input.goal, `${source}.goal`) : undefined;
 	const budget = input.budget !== undefined ? parseBudget(input.budget, `${source}.budget`) : undefined;
 	const usage = input.usage !== undefined ? parseUsage(input.usage, `${source}.usage`) : undefined;
@@ -240,6 +287,7 @@ export function parseMissionRecord(value: unknown, source = "mission record"): M
 		decisions: decisions.map((item, index) => parseDecision(item, `${source}.decisions[${index}]`)),
 		artifacts: artifacts.map((item, index) => parseArtifact(item, `${source}.artifacts[${index}]`)),
 		receipts: receipts.map((item, index) => parseReceipt(item, `${source}.receipts[${index}]`)),
+		journal: parsedJournal,
 		...(optionalString(input.cwd, `${source}.cwd`) ? { cwd: input.cwd as string } : {}),
 		...(optionalString(input.ownerSessionId, `${source}.ownerSessionId`) ? { ownerSessionId: input.ownerSessionId as string } : {}),
 		...(optionalString(input.summary, `${source}.summary`) ? { summary: input.summary as string } : {}),
@@ -382,6 +430,7 @@ export function createMission(location: MissionStoreLocation, input: MissionCrea
 		decisions: [],
 		artifacts: [],
 		receipts: [],
+		journal: [],
 		...(input.ownerSessionId ? { ownerSessionId: requiredString(input.ownerSessionId, "mission.ownerSessionId") } : {}),
 		...(input.labels ? { labels: stringArray(input.labels, "mission.labels") } : {}),
 	};
@@ -437,6 +486,11 @@ export function listMissions(location: MissionStoreLocation): MissionListResult 
 }
 
 export function updateMission(location: MissionStoreLocation, missionId: string, update: MissionUpdateInput, now = new Date(), retainTerminal = location.retainTerminal ?? DEFAULT_TERMINAL_MISSION_RETENTION): MissionRecord {
+	const filePath = missionRecordPath(location, missionId);
+	return withPrivateFileLock(filePath, () => updateMissionLocked(location, missionId, update, now, retainTerminal), { label: "mission record" });
+}
+
+function updateMissionLocked(location: MissionStoreLocation, missionId: string, update: MissionUpdateInput, now: Date, retainTerminal: number): MissionRecord {
 	const current = readMission(location, missionId);
 	const runs = [...current.runs];
 	for (const candidate of update.addRuns ?? []) {
@@ -482,6 +536,11 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 		if (existingIndex === -1) receipts.push(receipt);
 		else receipts[existingIndex] = { ...receipt, createdAt: receipts[existingIndex]!.createdAt };
 	}
+	const journal = [
+		...current.journal,
+		...(update.addJournal ?? []).map((entry, index) => parseJournalEntry({ ...entry, id: randomUUID(), createdAt }, `mission.update.addJournal[${index}]`)),
+	];
+	validateJournalBounds(journal, "mission.update.journal");
 	const decisions = [
 		...current.decisions,
 		...(update.addDecisions ?? []).map((decision): MissionDecision => ({
@@ -535,6 +594,7 @@ export function updateMission(location: MissionStoreLocation, missionId: string,
 		workflowChildren,
 		artifacts,
 		receipts,
+		journal,
 		decisions,
 		...(update.title !== undefined ? { title: requiredString(update.title, "mission.update.title").trim() } : {}),
 		...(update.objective !== undefined ? { objective: requiredString(update.objective, "mission.update.objective").trim() } : {}),

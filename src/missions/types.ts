@@ -13,6 +13,7 @@ export type MissionRunMode = "single" | "parallel" | "chain" | "workflow" | "sch
 export type MissionArtifactKind = "status" | "output" | "patch" | "manifest" | "review" | "note" | "other";
 export type MissionReceiptKind = "pull_request" | "ci" | "deployment" | "release";
 export type MissionReceiptStatus = "pending" | "ready" | "succeeded" | "failed";
+export type MissionJournalKind = "decision" | "hypothesis" | "observation" | "experiment" | "result" | "correction" | "note";
 export type MissionGoalStatus = "active" | "paused" | "budget-exhausted";
 
 export interface MissionGoal {
@@ -96,6 +97,16 @@ export interface MissionReceipt {
 	description?: string;
 }
 
+export interface MissionJournalEntry {
+	id: string;
+	kind: MissionJournalKind;
+	title: string;
+	createdAt: string;
+	body?: string;
+	evidence: string[];
+	runId?: string;
+}
+
 export interface MissionRecord {
 	schemaVersion: 1;
 	id: string;
@@ -114,6 +125,7 @@ export interface MissionRecord {
 	decisions: MissionDecision[];
 	artifacts: MissionArtifact[];
 	receipts: MissionReceipt[];
+	journal: MissionJournalEntry[];
 	summary?: string;
 	acceptance?: unknown;
 	labels?: string[];
@@ -187,4 +199,5 @@ export interface MissionUpdateInput {
 	addDecisions?: Array<Omit<MissionDecision, "id" | "status" | "createdAt">>;
 	resolveDecision?: { id: string; resolution: string };
 	addReceipts?: Array<Omit<MissionReceipt, "createdAt">>;
+	addJournal?: Array<Omit<MissionJournalEntry, "id" | "createdAt" | "evidence"> & { evidence?: string[] }>;
 }

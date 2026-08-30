@@ -385,7 +385,7 @@ const SubagentParamProperties = {
 	catchUp: Type.Optional(Type.String({ enum: ["none", "latest"], description: "Missed occurrence policy for recurring schedules. Defaults to latest." })),
 	missionId: Type.Optional(Type.String({ description: "Mission id." })),
 	mission: Type.Optional(Type.Unsafe({ ...MissionLaunchOverride, description: "Mission object, or false for no mission. Set exactly one non-empty title or summary; objective and labels are optional. goal may only be true and then requires budget.tokens." })),
-	missionUpdate: Type.Optional(Type.Unsafe({ ...MissionUpdateOverride, description: "Mission update: objective, goal false or {paused:boolean}, budget, summary, labels, decisions, artifacts, or delivery receipts." })),
+	missionUpdate: Type.Optional(Type.Unsafe({ ...MissionUpdateOverride, description: "Mission update: objective, goal false or {paused:boolean}, budget, summary, labels, decisions, bounded journal entries, artifacts, or delivery receipts." })),
 	missionStatus: Type.Optional(Type.String({ description: "Mission status." })),
 	missionScope: Type.Optional(Type.String({ description: "Mission list scope: project (default) or global pointer index." })),
 	runMode: Type.Optional(Type.String({ description: "Attached run mode." })),

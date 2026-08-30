@@ -11,7 +11,7 @@ Missions are durable wrappers around runs. The noun map:
 - **Run** — one actual subagent execution.
 - **Receipt** — proof or a link for an external outcome, such as a PR, CI check, deployment, or release.
 
-Ordinary workflow launches create one enclosing mission by default, with detailed JSON records under `~/.pi/agent/missions/projects/<project-hash>/` linking objectives, run ids, lifecycle status, decisions, artifact paths, and delivery receipts. Workflow children do not create separate missions. Each workflow child attempt is stored in the enclosing mission with its stable workflow key, run id when known, agent, task metadata, timestamps, session and artifact paths, and latest status heartbeat.
+Ordinary workflow launches create one enclosing mission by default, with detailed JSON records under `~/.pi/agent/missions/projects/<project-hash>/` linking objectives, run ids, lifecycle status, decisions, bounded journal entries, artifact paths, and delivery receipts. Workflow children do not create separate missions. Each workflow child attempt is stored in the enclosing mission with its stable workflow key, run id when known, agent, task metadata, timestamps, session and artifact paths, and latest status heartbeat.
 
 Records created under the old default `<project>/.pi/subagents/missions` stay on disk. Continue them by setting `missions.directory` to that path for the project or by copying the record into the new agent-dir project store. There is no automatic migration.
 
@@ -68,9 +68,28 @@ Pause and resume notices with `mission.update` and `{ goal: { paused: true } }` 
 
 Use `mission.list`, `mission.show`, `mission.update`, `mission.resolve-decision`, `mission.attach-run`, and `mission.close`.
 
-- Use `mission.update` to record decisions, artifacts, labels, summaries, and delivery receipts while work runs. Adding a decision gates active or completed missions as `needs_decision`; planned and waiting missions keep their lifecycle status while the decision stays visible. Resolve it with `mission.resolve-decision`, `missionId`, the decision `id`, and a resolution in `summary`. A gated mission returns to `active` after its last open decision is resolved.
-- `mission.show` includes each workflow child's latest status, phase, update time, session path metadata, and heartbeat. The ledger is a recovery record only. It does not schedule or restart children.
+- Use `mission.update` to record decisions, journal entries, artifacts, labels, summaries, and delivery receipts while work runs. Adding a decision gates active or completed missions as `needs_decision`; planned and waiting missions keep their lifecycle status while the decision stays visible. Resolve it with `mission.resolve-decision`, `missionId`, the decision `id`, and a resolution in `summary`. A gated mission returns to `active` after its last open decision is resolved.
+- Mission updates take a per-record lock around the complete read-modify-write operation. Concurrent child, workflow, and management updates therefore merge against the latest record instead of silently dropping one another.
+- `mission.show` includes each workflow child's latest status, phase, update time, session path metadata, and heartbeat. It renders only the latest 10 journal entries while structured details retain the complete bounded journal. The ledger is a recovery record only. It does not schedule or restart children.
 - Receipts are durable links for pull requests, CI, deployments, or releases, each with `kind`, `status`, `title`, `url`, and optional `description`. They record delivery state only; pi-subagents does not merge, poll CI, or deploy.
+- Journal entries record compact decision and evidence history. Each entry has `kind`, `title`, optional `body`, optional `evidence` references, and optional `runId`; the store generates its immutable `id` and `createdAt`. Kinds are `decision`, `hypothesis`, `observation`, `experiment`, `result`, `correction`, and `note`. Titles are limited to 256 UTF-8 bytes, bodies to 4 KiB, evidence to 16 items of 2 KiB each, the journal to 256 entries, and its serialized form to 256 KiB.
+
+```ts
+subagent({
+  action: "mission.update",
+  missionId: "<mission-id>",
+  missionUpdate: {
+    journal: [{
+      kind: "result",
+      title: "Refresh-token regression reproduced",
+      body: "Expired access tokens loop only when the refresh cookie is absent.",
+      evidence: ["test/auth-refresh.test.ts", "run:repro-auth"],
+      runId: "repro-auth"
+    }]
+  }
+})
+```
+
 - Use `mission.close` with a terminal status and summary when a mission is done.
 - After compaction or restart, resume from `mission.list`/`mission.show` first: `mission.show` refreshes linked async status where available, then use the linked run ids with normal `status`, `steer`, `resume`, or `stop` actions.
 - `mission.list` with `missionScope: "global"` reads the user-local pointer index under the Pi agent directory. Project records remain the source of truth, and missing records are reported as stale rather than hiding other projects.
