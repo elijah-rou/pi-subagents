@@ -12,19 +12,13 @@ description: |
 Parent owns orchestration. Children do not spawn subagents unless the parent
 explicitly delegated fanout and their resolved `tools` allow `subagent`.
 
-**Whole-program design gate:** For broad, predeclared, or multi-phase work, read
-`references/program-orchestration.md` before reconnaissance. Record the intake
-map first, then have the parent synthesize the execution map after reconnaissance
-and before the first mutation-capable child. Execute that program as bounded
-waves rather than burying parent or operator decisions inside one autonomous run.
-
 ## Launch shape
 
 | Need | Use |
 | --- | --- |
 | One bounded task for one child | direct `{ agent, task }` |
 | JavaScript control flow or data-dependent branching; sequence, fanout, retry, rolling fanout, or aggregation | `workflowScript` with `runs.run(...)` / `runs.all(...)` |
-| Predeclared adjacent stages that need no parent decision between them | `workflowScript` with `runs.lanes([{ key, stages: [...] }])` |
+| A broad plan split into visible narrow stages per lane | `workflowScript` with `runs.lanes([{ key, stages: [...] }])` |
 | Independent worktree or repository lanes | `references/multi-lane-orchestration.md` |
 | Council of advisors | `../council-mode/SKILL.md` |
 | Management, status, steering, authoring, or inspection | `action` |
@@ -44,10 +38,9 @@ issue. Split it into narrow stages, such as a scout/red test, helper-only change
 one render seam, validation, minimality challenge, or fresh review, and give the
 writer only its assigned implementation stage.
 
-Use async/background by default. Async is a scheduling choice, not workflow
-topology: it does not establish dependencies or useful concurrency. Set
-`async:false` only when the parent must block. Final reviews, validation gates,
-oracle checks, and publication checks stay async.
+Use async/background by default. Set `async:false` only when the parent must
+block. Final reviews, validation gates, oracle checks, and publication checks
+stay async.
 
 In an ordinary interactive session, yield after launching or triaging useful
 async lanes and let Pi wake the parent on completion; do not call blocking
@@ -66,7 +59,6 @@ that runner explicitly supports the option.
 
 | Branch | Read |
 | --- | --- |
-| Design broad, predeclared, or multi-phase work before reconnaissance or mutation | `references/program-orchestration.md` |
 | Delegate or choose roles, prompts, models, or slash commands | `references/prompting-and-roles.md` |
 | Execute single, scripted, async, scheduled, mission, forked, watchdog, oracle, or intercom workflows | `references/execution-controls.md` |
 | Review, validate, triage gate failures, or prepare delivery | `references/review-and-validation.md` |
@@ -74,11 +66,9 @@ that runner explicitly supports the option.
 | List, create, edit, disable, eject, or expose agents/RPC | `references/management-authoring-rpc.md` |
 | Check safety constraints, recipes, or error handling | `references/constraints-and-recipes.md` |
 
-For broad, predeclared, or multi-phase work, read only
-`references/program-orchestration.md` first. Load execution, lane, prompting, or
-review references when the mapped wave reaches that branch. Do not load the
-program reference for one bounded child or unrelated review, management,
-status, or inspection work.
+For complex work, read `prompting-and-roles.md` and `execution-controls.md`, then
+load `review-and-validation.md` and `constraints-and-recipes.md` before launch or
+review.
 
 ## Operating rules
 
