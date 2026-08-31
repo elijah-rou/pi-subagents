@@ -86,7 +86,9 @@ subagent({
 
 These controls are opt-in. Avoid tight hard budgets for mutation-capable workers unless the workflow has an explicit checkpoint and handoff path.
 
-The result is `{ ok, errors }`. Invalid scripts return a tool error and include line and column data when available. Validation checks syntax, portable nested-async rules, literal `runs.run` and `runs.all` keys, duplicate literal keys in one `runs.all` group, direct keyed access to a known `runs.all` result, and statically clear non-JSON boundary values. Dynamic keys and other runtime-only values are accepted without a warning. Validation does not discover agents, launch children, or create run artifacts.
+Invalid scripts return `{ ok: false, errors }` as a tool error and include line and column data when available. Valid scripts also return a bounded `topology` manifest and `advisories`. The manifest reports statically proven sequential, parallel, and staged-lane groups; child and host-step keys; lane stages; literal `cwd`, `worktree`, and gate claims; declared child count; maximum parallel width; and explicit unknown regions. `coverage: "partial"` and `null` counts or widths mean dynamic control flow prevents a complete answer.
+
+Validation checks syntax, portable nested-async rules, literal `runs.run` and `runs.all` keys, direct keyed access to a known `runs.all` result, and statically clear non-JSON boundary values. A workflow that only wraps one ordinary child receives a non-failing advisory to use direct `{ agent, task }` execution. The preview is limited to 64 groups, 64 steps, 32 lanes, 16 unknown-region diagnostics, 256-character claim strings, and 64 KiB of topology JSON. Validation does not discover agents, launch children, scan the filesystem, call a model, or create run artifacts.
 
 ```js
 subagent({ workflowScript: `

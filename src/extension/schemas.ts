@@ -332,7 +332,7 @@ const SubagentParamProperties = {
 	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Namespaced, bounded plain-JSON metadata delivered only to the child runtime. Namespace keys use package.name/1 syntax." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
-		description: "Optional management/control action. Use action='validate' with workflowScript or workflowScriptPath for offline checks. Omit this field for structured single-child or workflow execution; otherwise, use it only for management/control actions."
+		description: "Optional management/control action. Use action='validate' with workflowScript or workflowScriptPath for offline checks and a bounded static topology preview. Omit this field for structured single-child or workflow execution; otherwise, use it only for management/control actions."
 	})),
 	id: Type.Optional(Type.String({
 		description: "Run id/prefix for status/debug.run, interrupt, resume, steer, or stop."

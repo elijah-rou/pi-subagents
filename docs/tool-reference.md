@@ -8,7 +8,7 @@ The model-facing actions are exactly:
 
 `list`, `get`, `models`, `children.list`, `guide`, `validate`, `worktree.discard`, `lane.status`, `status`, `debug.run`, `interrupt`, `resume`, `steer`, `stop`, and `doctor`.
 
-Omit `action` for execution. Use `{ agent, task? }` for one direct child, or `workflowScript`/`workflowScriptPath` for orchestration. `validate` accepts a workflow script without launching children.
+Omit `action` for execution. Use `{ agent, task? }` for one direct child, or `workflowScript`/`workflowScriptPath` for orchestration. `validate` checks a workflow without launching children and returns a bounded static topology preview for valid scripts; dynamic regions remain explicitly unknown.
 
 Agent authoring uses the human `/subagents` interface. Fleet inspection uses `/subagents-fleet`. Trusted RPC clients retain only passive legacy `schedule.list`, `schedule.show`, and `schedule.history` readers for one release.
 

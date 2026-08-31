@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
-import { formatWorkflowJsonPreview, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
+import { formatWorkflowJsonPreview, inspectWorkflowScript, previewSimpleWorkflowRun, runWorkflowScript, validateWorkflowScript, WorkflowScriptError } from "../../src/workflows/scripted-workflow.ts";
 
 describe("scripted workflow runtime", () => {
 	it("uses ordinary statement-body return semantics", async () => {
@@ -96,6 +96,141 @@ describe("scripted workflow runtime", () => {
 
 		assert.deepEqual(validateWorkflowScript(`return runs.all([{ ...{ key: "bad key" }, agent: "worker" }]);`), { ok: true, errors: [] });
 		assert.deepEqual(validateWorkflowScript(`return runs.run("same", { agent: selectedAgent });`), { ok: true, errors: [] });
+	});
+
+	it("previews literal sequential and parallel workflow topology", () => {
+		const result = inspectWorkflowScript([
+			`const scan = await runs.run("scan", { agent: "scout" });`,
+			`const reviews = await runs.all([`,
+			`  { key: "correctness", agent: "reviewer", cwd: "/repo/correctness", worktree: true },`,
+			`  { key: "tests", agent: "reviewer", gate: "npm test" },`,
+			`]);`,
+			`await runs.host("quality", { kind: "command", command: "npm run lint", timeoutMs: 1000, role: "gate" });`,
+			`return reviews.map((review) => review.output);`,
+		].join("\n"), { cwd: "/repo", worktree: true });
+
+		assert.equal(result.ok, true);
+		assert.deepEqual(result.errors, []);
+		assert.deepEqual(result.advisories, []);
+		assert.deepEqual(result.topology, {
+			version: 1,
+			coverage: "complete",
+			workflow: { cwd: "/repo", worktree: true },
+			groups: [
+				{ index: 0, kind: "sequential", keys: ["scan"] },
+				{ index: 1, kind: "parallel", keys: ["correctness", "tests"], after: 0 },
+				{ index: 2, kind: "sequential", keys: ["quality"], after: 1 },
+			],
+			steps: [
+				{ key: "scan", kind: "child", group: 0 },
+				{ key: "correctness", kind: "child", group: 1, cwd: "/repo/correctness", worktree: true },
+				{ key: "tests", kind: "child", group: 1, gate: "npm test" },
+				{ key: "quality", kind: "host", group: 2, command: "npm run lint", role: "gate" },
+			],
+			lanes: [],
+			declaredChildCount: 3,
+			maximumParallelWidth: 2,
+			unknownRegions: [],
+		});
+	});
+
+	it("previews literal runs.lanes stages without launching them", () => {
+		const result = inspectWorkflowScript(`return runs.lanes([
+			{ key: "api", stages: [
+				{ key: "write", agent: "worker", worktree: true },
+				{ key: "review", agent: "reviewer", resume: "previous" }
+			] },
+			{ key: "docs", stages: [
+				{ key: "write", agent: "worker", cwd: "/repo/docs" }
+			] }
+		]);`);
+
+		assert.equal(result.ok, true);
+		assert.ok(result.topology);
+		const topology = result.topology;
+		assert.equal(topology.coverage, "complete");
+		assert.deepEqual(topology.groups, [{
+			index: 0,
+			kind: "lanes",
+			keys: ["api.write", "api.review", "docs.write"],
+		}]);
+		assert.deepEqual(topology.lanes, [
+			{ key: "api", stages: [{ key: "write", generatedKey: "api.write" }, { key: "review", generatedKey: "api.review" }] },
+			{ key: "docs", stages: [{ key: "write", generatedKey: "docs.write" }] },
+		]);
+		assert.deepEqual(topology.steps, [
+			{ key: "api.write", kind: "child", group: 0, lane: "api", stage: "write", worktree: true },
+			{ key: "api.review", kind: "child", group: 0, lane: "api", stage: "review" },
+			{ key: "docs.write", kind: "child", group: 0, lane: "docs", stage: "write", cwd: "/repo/docs" },
+		]);
+		assert.equal(topology.declaredChildCount, 3);
+		assert.equal(topology.maximumParallelWidth, 2);
+	});
+
+	it("marks dynamic launch regions unknown without estimating topology", () => {
+		const result = inspectWorkflowScript([
+			`const child = await runs.run(prefix + "-worker", { agent: selectedAgent });`,
+			`const reviews = await runs.all(items.map((item) => ({ key: item.key, agent: item.agent })));`,
+			`return { child, reviews };`,
+		].join("\n"));
+
+		assert.equal(result.ok, true);
+		assert.ok(result.topology);
+		const topology = result.topology;
+		assert.equal(topology.coverage, "partial");
+		assert.equal(topology.declaredChildCount, null);
+		assert.equal(topology.maximumParallelWidth, null);
+		assert.ok(topology.unknownRegions.length >= 2);
+		assert.ok(topology.unknownRegions.every((region) => region.code === "dynamic-launch"));
+	});
+
+	it("keeps dynamic and unobserved launches out of proven topology", () => {
+		for (const script of [
+			`return runs.all([{ key: "child", agent: "worker", ...dynamicChild }]);`,
+			`return runs.lanes([{ key: "api", stages: [{ key: "write", agent: "worker" }], ...dynamicLane }]);`,
+			`runs.run("first", { agent: "worker" }); return runs.run("second", { agent: "worker" });`,
+			`const launch = runs.run; return launch("child", { agent: "worker" });`,
+			`const launch = runs[method]; return launch("child", { agent: "worker" });`,
+			`const launch = runs["r" + "un"]; return launch("child", { agent: "worker" });`,
+			`const aliasedRuns = runs; return aliasedRuns.run("child", { agent: "worker" });`,
+			`const { run: launch } = runs; return launch("child", { agent: "worker" });`,
+		]) {
+			const result = inspectWorkflowScript(script);
+			assert.equal(result.ok, true);
+			assert.ok(result.topology);
+			const topology = result.topology;
+			assert.equal(topology.coverage, "partial");
+			assert.equal(topology.declaredChildCount, null);
+			assert.equal(topology.maximumParallelWidth, null);
+			assert.ok(topology.unknownRegions.some((region) => region.code === "dynamic-launch"));
+		}
+	});
+
+	it("bounds topology output and reports omitted static launches", () => {
+		const items = Array.from({ length: 65 }, (_, index) => `{ key: "child-${index}", agent: "worker" }`).join(",");
+		const result = inspectWorkflowScript(`return runs.all([${items}]);`);
+		assert.equal(result.ok, true);
+		assert.ok(result.topology);
+		const topology = result.topology;
+		assert.equal(topology.coverage, "partial");
+		assert.equal(topology.steps.length, 64);
+		assert.equal(topology.declaredChildCount, null);
+		assert.equal(topology.maximumParallelWidth, null);
+		assert.ok(topology.unknownRegions.some((region) => region.code === "manifest-limit"));
+		assert.ok(Buffer.byteLength(JSON.stringify(result), "utf8") <= 64 * 1024);
+	});
+
+	it("advises direct execution for a trivial one-child wrapper", () => {
+		const result = inspectWorkflowScript(`return runs.run("main", { agent: "worker", task: "Implement" });`);
+		assert.equal(result.ok, true);
+		assert.deepEqual(result.advisories.map((advisory) => advisory.code), ["single-child-workflow"]);
+		assert.match(result.advisories[0]?.message ?? "", /direct \{ agent, task \} execution/i);
+	});
+
+	it("does not recommend direct execution for a retained child wrapper", () => {
+		const result = inspectWorkflowScript(`return runs.run("resume", { resume: "retained-run", task: "Continue" });`);
+		assert.equal(result.ok, true);
+		assert.deepEqual(result.advisories, []);
 	});
 
 	it("validates runs.host shape offline without executing it", () => {

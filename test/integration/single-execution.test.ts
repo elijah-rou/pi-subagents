@@ -1030,6 +1030,29 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			ok: false,
 			errors: [{ message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", line: 1, column: 17 }],
 		});
+		const preview = await executor.executePublic(
+			"offline-topology-preview",
+			{
+				action: "validate",
+				cwd: tempDir,
+				worktree: true,
+				workflowScript: `const scan = await runs.run("scan", { agent: "echo" });\nreturn runs.all([{ key: "review", agent: "echo", task: scan.output }]);`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.equal(preview.isError, undefined);
+		const previewPayload = JSON.parse(preview.content[0]?.text ?? "null") as {
+			ok?: boolean;
+			topology?: { workflow?: { cwd?: string; worktree?: boolean }; declaredChildCount?: number; maximumParallelWidth?: number };
+			advisories?: unknown[];
+		};
+		assert.equal(previewPayload.ok, true);
+		assert.deepEqual(previewPayload.topology?.workflow, { cwd: tempDir, worktree: true });
+		assert.equal(previewPayload.topology?.declaredChildCount, 2);
+		assert.equal(previewPayload.topology?.maximumParallelWidth, 1);
+		assert.deepEqual(previewPayload.advisories, []);
 		const invalidPreflight = await executor.executePublic(
 			"invalid-preflight",
 			{ workflowScript: `return runs.run("child", { agent: "echo" });`, preflight: { version: 1, lanes: [{ key: "bad key" }] } },

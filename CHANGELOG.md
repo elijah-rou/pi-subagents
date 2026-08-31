@@ -4,6 +4,7 @@
 ## [Unreleased]
 
 ### Added
+- Add bounded static topology previews and non-failing advisories to successful `action: "validate"` workflow checks. Dynamic launch regions remain explicit instead of being estimated.
 - Add a versioned parent-side child-profile resolver API. It can select model and thinking from child role, task, and serial/parallel topology while preserving explicit launch overrides, skipping external runners and retained resumes, enforcing upstream model/thinking constraints, projecting bounded provenance, and failing open to static agent defaults.
 - Add composable acceptance contracts with independent report, verification, review, and failure-policy dimensions while retaining legacy acceptance compatibility.
 - Add bounded soft runtime checkpoints that request a safe child handoff before the hard execution deadline.

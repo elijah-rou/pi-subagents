@@ -38,6 +38,8 @@ Use stable keys. Await every `runs.run`, `runs.all`, `runs.steer`, and retained 
 
 Keep one writer per checkout. Use managed `worktree:true` isolation for parallel mutation lanes. Preserve capability ceilings, permissions, acceptance, timeouts, tool budgets, usage budgets, and fanout bounds.
 
+Before launching a predeclared workflow, `action: "validate"` returns a bounded static topology preview for literal `runs.run`, `runs.all`, `runs.lanes`, and `runs.host` structure. Treat `coverage: "partial"`, `null` counts or widths, and `unknownRegions` as unresolved rather than estimated. Advisories do not make an otherwise valid script fail.
+
 ## Status and control
 
 Use `status` and `debug.run` for bounded lifecycle views. Use `children.list` before `resume` and resume only rows reported resumable. `steer` is acknowledged delivery; it is not proof of compliance. `interrupt` pauses current work when supported. `stop` remains ownership-controlled. Use `subagent_wait` rather than sleep or status polling when the current turn must consume async completion.

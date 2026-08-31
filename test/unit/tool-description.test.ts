@@ -36,7 +36,7 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription();
 		const metadata = buildSubagentToolPromptMetadata();
 		assert.equal(description, DEFAULT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.equal(Buffer.byteLength(description), 2207);
+		assert.equal(Buffer.byteLength(description), 2328);
 		assert.match(description, /workflowScriptPath.*request cwd/i);
 		assert.match(description, /script inputs are mutually exclusive/i);
 		assert.match(description, /runs\.lanes\(\[\{key,stages:/);
@@ -53,6 +53,7 @@ describe("registered subagent tool description", () => {
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript for multi-step or parallel work/i);
+		assert.match(description, /validate.*bounded static topology preview.*dynamic regions remain unknown/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /workflowScript means exactly one top-level subagent tool call with async:true/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Inside it, use runs\.run\/runs\.all to launch children/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /nested async function.*plain helper functions.*Promise chains/i);

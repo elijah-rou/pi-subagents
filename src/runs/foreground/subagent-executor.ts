@@ -103,7 +103,7 @@ import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externa
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import { resolveAuthorityDecision } from "../../policy/authority.ts";
-import { runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
+import { inspectWorkflowScript, runWorkflowScript, validateWorkflowScript, WorkflowScriptError, type WorkflowLanePlan, type WorkflowReceiptResumeReference, type WorkflowScriptChildResult, type WorkflowScriptTraceEntry, type WorkflowSteerOptions, type WorkflowSteerResult } from "../../workflows/scripted-workflow.ts";
 import { executeWorkflowHostCommand, resolveWorkflowHostOutputClaimPath, type WorkflowHostCommandParams, type WorkflowHostCommandResult } from "../../workflows/host-command.ts";
 import { buildWorkflowReceipt, resolveWorkflowReceiptResumeEntry, writeWorkflowReceipt, type WorkflowReceipt, type WorkflowReceiptState } from "../../workflows/workflow-receipt.ts";
 import { upsertHostStep, validHostStepNodes } from "../shared/host-step-status.ts";
@@ -3912,7 +3912,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return buildRequestedModeError(requestParams, message);
 		}
 		if (requestParams.action?.trim() === "validate") {
-			const validation = validateWorkflowScript(requestParams.workflowScript ?? "");
+			const inspection = inspectWorkflowScript(requestParams.workflowScript ?? "", {
+				cwd: requestParams.cwd,
+				worktree: typeof requestParams.worktree === "boolean"
+					? requestParams.worktree
+					: requestParams.isolation === "worktree"
+						? true
+						: requestParams.isolation === "none"
+							? false
+							: undefined,
+			});
+			const validation = inspection.ok ? inspection : { ok: inspection.ok, errors: inspection.errors };
 			const payload = workflowPreflight ? { ...validation, preflight: workflowPreflight } : validation;
 			return {
 				content: [{ type: "text", text: JSON.stringify(payload) }],

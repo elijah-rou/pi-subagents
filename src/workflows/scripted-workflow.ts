@@ -21,6 +21,68 @@ export interface WorkflowScriptValidationResult {
 	errors: WorkflowScriptValidationError[];
 }
 
+export interface WorkflowScriptTopologyUnknownRegion extends WorkflowScriptValidationError {
+	code: "dynamic-launch" | "dynamic-claim" | "manifest-limit";
+}
+
+export interface WorkflowScriptTopologyGroup {
+	index: number;
+	kind: "sequential" | "parallel" | "lanes";
+	keys: string[];
+	after?: number;
+}
+
+export interface WorkflowScriptTopologyStep {
+	key: string;
+	kind: "child" | "host";
+	group: number;
+	lane?: string;
+	stage?: string;
+	cwd?: string;
+	worktree?: boolean;
+	gate?: string;
+	command?: string;
+	role?: "ci" | "gate";
+}
+
+export interface WorkflowScriptTopologyLane {
+	key: string;
+	stages: Array<{ key: string; generatedKey: string }>;
+}
+
+export interface WorkflowScriptTopologyManifest {
+	version: 1;
+	coverage: "complete" | "partial";
+	workflow: { cwd?: string; worktree?: boolean };
+	groups: WorkflowScriptTopologyGroup[];
+	steps: WorkflowScriptTopologyStep[];
+	lanes: WorkflowScriptTopologyLane[];
+	declaredChildCount: number | null;
+	maximumParallelWidth: number | null;
+	unknownRegions: WorkflowScriptTopologyUnknownRegion[];
+}
+
+export interface WorkflowScriptAdvisory extends WorkflowScriptValidationError {
+	code: "single-child-workflow";
+}
+
+export interface WorkflowScriptInspectionResult extends WorkflowScriptValidationResult {
+	topology?: WorkflowScriptTopologyManifest;
+	advisories: WorkflowScriptAdvisory[];
+}
+
+export interface WorkflowScriptInspectionOptions {
+	cwd?: unknown;
+	worktree?: unknown;
+}
+
+const WORKFLOW_TOPOLOGY_MAX_GROUPS = 64;
+const WORKFLOW_TOPOLOGY_MAX_STEPS = 64;
+const WORKFLOW_TOPOLOGY_MAX_LANES = 32;
+const WORKFLOW_TOPOLOGY_MAX_UNKNOWN_REGIONS = 16;
+const WORKFLOW_TOPOLOGY_MAX_STRING_LENGTH = 256;
+const WORKFLOW_TOPOLOGY_MAX_BYTES = 64 * 1024;
+
 const WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
 const vm = require("node:vm");
@@ -1249,7 +1311,7 @@ function literalString(node: unknown): string | undefined {
 	return undefined;
 }
 
-function directRunsCall(node: unknown, method: "run" | "all" | "host"): node is AstNode {
+function directRunsCall(node: unknown, method: "run" | "all" | "lanes" | "host"): node is AstNode {
 	if (!astNode(node) || node.type !== "CallExpression" || !astNode(node.callee) || node.callee.type !== "MemberExpression") return false;
 	const property = node.callee.computed === true ? literalString(node.callee.property) : astNode(node.callee.property) && node.callee.property.type === "Identifier" ? node.callee.property.name : undefined;
 	return property === method && astNode(node.callee.object) && node.callee.object.type === "Identifier" && node.callee.object.name === "runs";
@@ -1355,6 +1417,12 @@ function directObjectPropertyValue(node: AstNode, name: string): AstNode | undef
 	return value;
 }
 
+function objectHasDynamicProperties(node: AstNode): boolean {
+	return node.type !== "ObjectExpression"
+		|| !Array.isArray(node.properties)
+		|| node.properties.some((property) => !astNode(property) || property.type !== "Property" || staticPropertyKey(property) === undefined);
+}
+
 function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }> {
 	const args = Array.isArray(call.arguments) ? call.arguments : [];
 	const items = astNode(args[0]) && args[0].type === "ArrayExpression" && Array.isArray(args[0].elements) ? args[0].elements : [];
@@ -1366,10 +1434,364 @@ function directRunsAllKeys(call: AstNode): Array<{ key: string; node: AstNode }>
 	});
 }
 
+function directObservedCall(node: unknown): AstNode | undefined {
+	if (!astNode(node)) return undefined;
+	const candidate = node.type === "AwaitExpression" && astNode(node.argument) ? node.argument : node;
+	return ["run", "all", "lanes", "host"].some((method) => directRunsCall(candidate, method as "run" | "all" | "lanes" | "host"))
+		? candidate
+		: undefined;
+}
+
+function directStatementCalls(statement: AstNode): AstNode[] {
+	if (statement.type === "ReturnStatement") {
+		const call = directObservedCall(statement.argument);
+		return call ? [call] : [];
+	}
+	if (statement.type === "ExpressionStatement") {
+		if (!astNode(statement.expression) || statement.expression.type !== "AwaitExpression") return [];
+		const call = directObservedCall(statement.expression);
+		return call ? [call] : [];
+	}
+	if (statement.type !== "VariableDeclaration" || !Array.isArray(statement.declarations)) return [];
+	const calls: AstNode[] = [];
+	for (const declaration of statement.declarations) {
+		if (!astNode(declaration) || !astNode(declaration.init) || declaration.init.type !== "AwaitExpression") return [];
+		const call = directObservedCall(declaration.init);
+		if (!call) return [];
+		calls.push(call);
+	}
+	return calls;
+}
+
+function literalBoolean(node: unknown): boolean | undefined {
+	return astNode(node) && node.type === "Literal" && typeof node.value === "boolean" ? node.value : undefined;
+}
+
+function boundedTopologyString(node: AstNode | undefined): string | undefined {
+	const value = literalString(node);
+	return value !== undefined && value.length <= WORKFLOW_TOPOLOGY_MAX_STRING_LENGTH ? value : undefined;
+}
+
+function ordinarySingleChildCall(workflowBody: AstNode): AstNode | undefined {
+	if (workflowBody.type !== "BlockStatement" || !Array.isArray(workflowBody.body) || workflowBody.body.length !== 1 || !astNode(workflowBody.body[0]) || workflowBody.body[0].type !== "ReturnStatement") return undefined;
+	const call = directObservedCall(workflowBody.body[0].argument);
+	if (!call || !directRunsCall(call, "run")) return undefined;
+	const args = Array.isArray(call.arguments) ? call.arguments : [];
+	const params = astNode(args[1]) && args[1].type === "ObjectExpression" ? args[1] : undefined;
+	if (!params || objectHasDynamicProperties(params) || !Array.isArray(params.properties)) return undefined;
+	const fields = params.properties.flatMap((property) => astNode(property) && property.type === "Property" ? [staticPropertyKey(property)] : []);
+	return fields.includes("agent") && fields.every((field) => field === "agent" || field === "task") ? call : undefined;
+}
+
+function buildWorkflowTopology(
+	workflowBody: AstNode,
+	options: WorkflowScriptInspectionOptions,
+): { topology: WorkflowScriptTopologyManifest; advisories: WorkflowScriptAdvisory[] } {
+	const groups: WorkflowScriptTopologyGroup[] = [];
+	const steps: WorkflowScriptTopologyStep[] = [];
+	const lanes: WorkflowScriptTopologyLane[] = [];
+	const unknownRegions: WorkflowScriptTopologyUnknownRegion[] = [];
+	const recognizedCalls = new Set<AstNode>();
+	let launchCountKnown = true;
+	let maximumWidthKnown = true;
+	let maximumParallelWidth = 0;
+	let omittedUnknownRegionCount = 0;
+
+	const addUnknown = (
+		code: WorkflowScriptTopologyUnknownRegion["code"],
+		message: string,
+		node?: AstNode,
+		affectsLaunchShape = false,
+	): void => {
+		if (affectsLaunchShape) {
+			launchCountKnown = false;
+			maximumWidthKnown = false;
+		}
+		if (unknownRegions.length >= WORKFLOW_TOPOLOGY_MAX_UNKNOWN_REGIONS) {
+			omittedUnknownRegionCount += 1;
+			return;
+		}
+		const candidate = { code, message, ...(node ? nodeLocation(node) : {}) };
+		if (!unknownRegions.some((entry) => entry.code === candidate.code && entry.message === candidate.message && entry.line === candidate.line && entry.column === candidate.column)) unknownRegions.push(candidate);
+	};
+	const topologyString = (params: AstNode, name: "cwd" | "gate", owner: string): string | undefined => {
+		const node = directObjectPropertyValue(params, name);
+		if (!node) return undefined;
+		const value = boundedTopologyString(node);
+		if (value === undefined) addUnknown("dynamic-claim", `${owner} ${name} is dynamic or exceeds ${WORKFLOW_TOPOLOGY_MAX_STRING_LENGTH} characters.`, node);
+		return value;
+	};
+	const topologyWorktree = (params: AstNode, owner: string): boolean | undefined => {
+		const node = directObjectPropertyValue(params, "worktree");
+		if (!node) return undefined;
+		const value = literalBoolean(node);
+		if (value === undefined) addUnknown("dynamic-claim", `${owner} worktree is dynamic.`, node);
+		return value;
+	};
+	const addGroup = (kind: WorkflowScriptTopologyGroup["kind"], keys: string[]): number | undefined => {
+		if (groups.length >= WORKFLOW_TOPOLOGY_MAX_GROUPS) {
+			addUnknown("manifest-limit", `Topology exceeds ${WORKFLOW_TOPOLOGY_MAX_GROUPS} groups.`, undefined, true);
+			return undefined;
+		}
+		const index = groups.length;
+		groups.push({ index, kind, keys, ...(index > 0 ? { after: index - 1 } : {}) });
+		return index;
+	};
+	const addStep = (step: WorkflowScriptTopologyStep): void => {
+		if (steps.length >= WORKFLOW_TOPOLOGY_MAX_STEPS) {
+			addUnknown("manifest-limit", `Topology exceeds ${WORKFLOW_TOPOLOGY_MAX_STEPS} steps.`, undefined, true);
+			return;
+		}
+		steps.push(step);
+	};
+	const addChildStep = (key: string, params: AstNode, group: number, extra: Pick<WorkflowScriptTopologyStep, "lane" | "stage"> = {}): void => {
+		if (objectHasDynamicProperties(params)) {
+			addUnknown("dynamic-claim", `Child '${key}' params contain dynamic properties.`, params);
+			addStep({ key, kind: "child", group, ...extra });
+			return;
+		}
+		const cwd = topologyString(params, "cwd", `Child '${key}'`);
+		const gate = topologyString(params, "gate", `Child '${key}'`);
+		const worktree = topologyWorktree(params, `Child '${key}'`);
+		addStep({ key, kind: "child", group, ...extra, ...(cwd !== undefined ? { cwd } : {}), ...(worktree !== undefined ? { worktree } : {}), ...(gate !== undefined ? { gate } : {}) });
+	};
+	const addRun = (call: AstNode): void => {
+		const args = Array.isArray(call.arguments) ? call.arguments : [];
+		const keyNode = astNode(args[0]) ? args[0] : undefined;
+		const params = astNode(args[1]) && args[1].type === "ObjectExpression" ? args[1] : undefined;
+		const key = literalString(keyNode);
+		if (!keyNode || key === undefined || !params) {
+			addUnknown("dynamic-launch", "runs.run key or params are dynamic.", keyNode ?? call, true);
+			return;
+		}
+		const group = addGroup("sequential", [key]);
+		if (group === undefined) return;
+		addChildStep(key, params, group);
+		maximumParallelWidth = Math.max(maximumParallelWidth, 1);
+	};
+	const addAll = (call: AstNode): void => {
+		const args = Array.isArray(call.arguments) ? call.arguments : [];
+		const array = astNode(args[0]) && args[0].type === "ArrayExpression" ? args[0] : undefined;
+		const elements = array && Array.isArray(array.elements) ? array.elements : undefined;
+		if (!array || !elements) {
+			addUnknown("dynamic-launch", "runs.all items are dynamic.", astNode(args[0]) ? args[0] : call, true);
+			return;
+		}
+		const entries: Array<{ key: string; params: AstNode }> = [];
+		for (const item of elements) {
+			if (!astNode(item) || item.type !== "ObjectExpression") {
+				addUnknown("dynamic-launch", "runs.all contains a dynamic item.", astNode(item) ? item : array, true);
+				continue;
+			}
+			if (objectHasDynamicProperties(item)) {
+				addUnknown("dynamic-launch", "runs.all contains an item with dynamic properties.", item, true);
+				continue;
+			}
+			const keyNode = directObjectPropertyValue(item, "key");
+			const key = literalString(keyNode);
+			if (!keyNode || key === undefined) {
+				addUnknown("dynamic-launch", "runs.all contains an item with a dynamic key.", keyNode ?? item, true);
+				continue;
+			}
+			if (entries.length >= WORKFLOW_TOPOLOGY_MAX_STEPS) {
+				addUnknown("manifest-limit", `Topology exceeds ${WORKFLOW_TOPOLOGY_MAX_STEPS} steps.`, item, true);
+				break;
+			}
+			entries.push({ key, params: item });
+		}
+		if (entries.length === 0) return;
+		const group = addGroup("parallel", entries.map((entry) => entry.key));
+		if (group === undefined) return;
+		for (const entry of entries) addChildStep(entry.key, entry.params, group);
+		maximumParallelWidth = Math.max(maximumParallelWidth, entries.length);
+	};
+	const addLanes = (call: AstNode): void => {
+		const args = Array.isArray(call.arguments) ? call.arguments : [];
+		const array = astNode(args[0]) && args[0].type === "ArrayExpression" ? args[0] : undefined;
+		const elements = array && Array.isArray(array.elements) ? array.elements : undefined;
+		if (!array || !elements) {
+			addUnknown("dynamic-launch", "runs.lanes inventory is dynamic.", astNode(args[0]) ? args[0] : call, true);
+			return;
+		}
+		const laneEntries: Array<{ key: string; stages: Array<{ key: string; generatedKey: string; params: AstNode }> }> = [];
+		let knownStageCount = 0;
+		for (const laneNode of elements) {
+			if (knownStageCount >= WORKFLOW_TOPOLOGY_MAX_STEPS) {
+				addUnknown("manifest-limit", `Topology exceeds ${WORKFLOW_TOPOLOGY_MAX_STEPS} steps.`, astNode(laneNode) ? laneNode : array, true);
+				break;
+			}
+			if (laneEntries.length >= WORKFLOW_TOPOLOGY_MAX_LANES) {
+				addUnknown("manifest-limit", `Topology exceeds ${WORKFLOW_TOPOLOGY_MAX_LANES} lanes.`, astNode(laneNode) ? laneNode : array, true);
+				break;
+			}
+			if (!astNode(laneNode) || laneNode.type !== "ObjectExpression") {
+				addUnknown("dynamic-launch", "runs.lanes contains a dynamic lane.", astNode(laneNode) ? laneNode : array, true);
+				continue;
+			}
+			if (objectHasDynamicProperties(laneNode)) {
+				addUnknown("dynamic-launch", "runs.lanes contains a lane with dynamic properties.", laneNode, true);
+				continue;
+			}
+			const laneKeyNode = directObjectPropertyValue(laneNode, "key");
+			const laneKey = literalString(laneKeyNode);
+			const stagesNode = directObjectPropertyValue(laneNode, "stages");
+			if (!laneKeyNode || laneKey === undefined || !stagesNode || stagesNode.type !== "ArrayExpression" || !Array.isArray(stagesNode.elements)) {
+				addUnknown("dynamic-launch", "runs.lanes lane key or stages are dynamic.", laneKeyNode ?? stagesNode ?? laneNode, true);
+				continue;
+			}
+			const stages: Array<{ key: string; generatedKey: string; params: AstNode }> = [];
+			for (const stageNode of stagesNode.elements) {
+				if (!astNode(stageNode) || stageNode.type !== "ObjectExpression") {
+					addUnknown("dynamic-launch", `runs.lanes lane '${laneKey}' contains a dynamic stage.`, astNode(stageNode) ? stageNode : stagesNode, true);
+					continue;
+				}
+				if (objectHasDynamicProperties(stageNode)) {
+					addUnknown("dynamic-launch", `runs.lanes lane '${laneKey}' contains a stage with dynamic properties.`, stageNode, true);
+					continue;
+				}
+				const stageKeyNode = directObjectPropertyValue(stageNode, "key");
+				const stageKey = literalString(stageKeyNode);
+				if (!stageKeyNode || stageKey === undefined) {
+					addUnknown("dynamic-launch", `runs.lanes lane '${laneKey}' contains a stage with a dynamic key.`, stageKeyNode ?? stageNode, true);
+					continue;
+				}
+				if (knownStageCount >= WORKFLOW_TOPOLOGY_MAX_STEPS) {
+					addUnknown("manifest-limit", `Topology exceeds ${WORKFLOW_TOPOLOGY_MAX_STEPS} steps.`, stageNode, true);
+					break;
+				}
+				stages.push({ key: stageKey, generatedKey: `${laneKey}.${stageKey}`, params: stageNode });
+				knownStageCount += 1;
+			}
+			laneEntries.push({ key: laneKey, stages });
+		}
+		const generatedKeys = laneEntries.flatMap((lane) => lane.stages.map((stage) => stage.generatedKey));
+		if (generatedKeys.length === 0) return;
+		const group = addGroup("lanes", generatedKeys);
+		if (group === undefined) return;
+		for (const lane of laneEntries) {
+			if (lanes.length >= WORKFLOW_TOPOLOGY_MAX_LANES) {
+				addUnknown("manifest-limit", `Topology exceeds ${WORKFLOW_TOPOLOGY_MAX_LANES} lanes.`, undefined, true);
+				break;
+			}
+			lanes.push({ key: lane.key, stages: lane.stages.map(({ key, generatedKey }) => ({ key, generatedKey })) });
+			for (const stage of lane.stages) addChildStep(stage.generatedKey, stage.params, group, { lane: lane.key, stage: stage.key });
+		}
+		maximumParallelWidth = Math.max(maximumParallelWidth, laneEntries.length);
+	};
+	const addHost = (call: AstNode): void => {
+		const args = Array.isArray(call.arguments) ? call.arguments : [];
+		const keyNode = astNode(args[0]) ? args[0] : undefined;
+		const params = astNode(args[1]) && args[1].type === "ObjectExpression" ? args[1] : undefined;
+		const key = literalString(keyNode);
+		if (!keyNode || key === undefined || !params) {
+			addUnknown("dynamic-launch", "runs.host key or params are dynamic.", keyNode ?? call, true);
+			return;
+		}
+		const group = addGroup("sequential", [key]);
+		if (group === undefined) return;
+		if (objectHasDynamicProperties(params)) {
+			addUnknown("dynamic-claim", `Host '${key}' params contain dynamic properties.`, params);
+			addStep({ key, kind: "host", group });
+			maximumParallelWidth = Math.max(maximumParallelWidth, 1);
+			return;
+		}
+		const commandNode = directObjectPropertyValue(params, "command");
+		const roleNode = directObjectPropertyValue(params, "role");
+		const command = boundedTopologyString(commandNode);
+		const role = literalString(roleNode);
+		if (commandNode && command === undefined) addUnknown("dynamic-claim", `Host '${key}' command is dynamic or exceeds ${WORKFLOW_TOPOLOGY_MAX_STRING_LENGTH} characters.`, commandNode);
+		if (roleNode && role !== "ci" && role !== "gate") addUnknown("dynamic-claim", `Host '${key}' role is dynamic.`, roleNode);
+		addStep({ key, kind: "host", group, ...(command !== undefined ? { command } : {}), ...(role === "ci" || role === "gate" ? { role } : {}) });
+		maximumParallelWidth = Math.max(maximumParallelWidth, 1);
+	};
+
+	if (workflowBody.type === "BlockStatement" && Array.isArray(workflowBody.body)) {
+		for (const statement of workflowBody.body) {
+			if (!astNode(statement)) continue;
+			for (const call of directStatementCalls(statement)) {
+				recognizedCalls.add(call);
+				if (directRunsCall(call, "run")) addRun(call);
+				else if (directRunsCall(call, "all")) addAll(call);
+				else if (directRunsCall(call, "lanes")) addLanes(call);
+				else if (directRunsCall(call, "host")) addHost(call);
+			}
+			if (statement.type === "ReturnStatement") break;
+		}
+	}
+	const directlyInvokedRunsMembers = new Set<AstNode>();
+	const directRunsObjectReferences = new Set<AstNode>();
+	walkAst(workflowBody, (node) => {
+		if (node.type === "CallExpression" && astNode(node.callee) && node.callee.type === "MemberExpression" && astNode(node.callee.object) && node.callee.object.type === "Identifier" && node.callee.object.name === "runs") {
+			directlyInvokedRunsMembers.add(node.callee);
+		}
+		if (recognizedCalls.has(node)) return;
+		if (["run", "all", "lanes", "host"].some((method) => directRunsCall(node, method as "run" | "all" | "lanes" | "host"))) {
+			addUnknown("dynamic-launch", "Workflow launch occurs in dynamic or unsupported control flow.", node, true);
+			return;
+		}
+		if (node.type === "MemberExpression" && astNode(node.object) && node.object.type === "Identifier" && node.object.name === "runs") {
+			directRunsObjectReferences.add(node.object);
+			const method = node.computed === true ? literalString(node.property) : astNode(node.property) && node.property.type === "Identifier" && typeof node.property.name === "string" ? node.property.name : undefined;
+			if (!directlyInvokedRunsMembers.has(node) && (method === undefined || ["run", "all", "lanes", "host"].includes(method))) {
+				const selection = method === undefined ? "a dynamically selected runs method" : `runs.${method}`;
+				addUnknown("dynamic-launch", `Workflow aliases ${selection}; aliased launches cannot be resolved statically.`, node, true);
+			}
+			return;
+		}
+		if (node.type === "Identifier" && node.name === "runs" && !directRunsObjectReferences.has(node)) {
+			addUnknown("dynamic-launch", "Workflow references the runs object indirectly; aliased launches cannot be resolved statically.", node, true);
+			return;
+		}
+		if (node.type !== "CallExpression" || !astNode(node.callee) || node.callee.type !== "MemberExpression" || !astNode(node.callee.object) || node.callee.object.type !== "Identifier" || node.callee.object.name !== "runs") return;
+		const method = node.callee.computed === true ? literalString(node.callee.property) : astNode(node.callee.property) && node.callee.property.type === "Identifier" ? node.callee.property.name : undefined;
+		if (method === undefined) addUnknown("dynamic-launch", "Workflow uses a dynamically selected runs method.", node, true);
+	});
+
+	const workflow: WorkflowScriptTopologyManifest["workflow"] = {};
+	if (typeof options.cwd === "string") {
+		if (options.cwd.length <= WORKFLOW_TOPOLOGY_MAX_STRING_LENGTH) workflow.cwd = options.cwd;
+		else addUnknown("dynamic-claim", `Workflow cwd exceeds ${WORKFLOW_TOPOLOGY_MAX_STRING_LENGTH} characters.`);
+	}
+	if (typeof options.worktree === "boolean") workflow.worktree = options.worktree;
+	if (omittedUnknownRegionCount > 0) {
+		const summary: WorkflowScriptTopologyUnknownRegion = { code: "manifest-limit", message: `${omittedUnknownRegionCount} additional unknown region(s) omitted.` };
+		if (unknownRegions.length >= WORKFLOW_TOPOLOGY_MAX_UNKNOWN_REGIONS) unknownRegions[unknownRegions.length - 1] = summary;
+		else unknownRegions.push(summary);
+	}
+	let topology: WorkflowScriptTopologyManifest = {
+		version: 1,
+		coverage: unknownRegions.length === 0 ? "complete" : "partial",
+		workflow,
+		groups,
+		steps,
+		lanes,
+		declaredChildCount: launchCountKnown ? steps.filter((step) => step.kind === "child").length : null,
+		maximumParallelWidth: maximumWidthKnown ? maximumParallelWidth : null,
+		unknownRegions,
+	};
+	if (Buffer.byteLength(JSON.stringify(topology), "utf8") > WORKFLOW_TOPOLOGY_MAX_BYTES) {
+		topology = {
+			version: 1,
+			coverage: "partial",
+			workflow,
+			groups: [],
+			steps: [],
+			lanes: [],
+			declaredChildCount: null,
+			maximumParallelWidth: null,
+			unknownRegions: [{ code: "manifest-limit", message: `Topology manifest exceeds ${WORKFLOW_TOPOLOGY_MAX_BYTES} bytes.` }],
+		};
+	}
+	const advisories: WorkflowScriptAdvisory[] = ordinarySingleChildCall(workflowBody) !== undefined && topology.coverage === "complete" && topology.declaredChildCount === 1 && topology.steps.length === 1
+		? [{ code: "single-child-workflow", message: "This workflow wraps one ordinary child without workflow-only control flow. Prefer direct { agent, task } execution." }]
+		: [];
+	return { topology, advisories };
+}
+
 /** Parse a workflowScript and apply only rules that are decidable from its local syntax. */
-export function validateWorkflowScript(script: string): WorkflowScriptValidationResult {
+function inspectWorkflowScriptInternal(script: string, includeTopology: boolean, options: WorkflowScriptInspectionOptions): WorkflowScriptInspectionResult {
 	const errors: WorkflowScriptValidationError[] = [];
-	if (!script.trim()) return { ok: false, errors: [{ message: "workflowScript must not be empty." }] };
+	if (!script.trim()) return { ok: false, errors: [{ message: "workflowScript must not be empty." }], advisories: [] };
 	let root: AstNode;
 	try {
 		const parser = requireFromPackage(resolveWorkflowParserEntry()) as { parse(source: string, options: Record<string, unknown>): unknown };
@@ -1379,7 +1801,7 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 			? error.loc as { line?: unknown; column?: unknown }
 			: undefined;
 		const message = (error instanceof Error ? error.message : String(error)).replace(/\s+\(\d+:\d+\)$/, "");
-		return { ok: false, errors: [{ message, ...(typeof location?.line === "number" ? { line: Math.max(1, location.line - 1) } : {}), ...(typeof location?.column === "number" ? { column: location.column + 1 } : {}) }] };
+		return { ok: false, errors: [{ message, ...(typeof location?.line === "number" ? { line: Math.max(1, location.line - 1) } : {}), ...(typeof location?.column === "number" ? { column: location.column + 1 } : {}) }], advisories: [] };
 	}
 
 	const wrapper = astNode(root.body) ? undefined : Array.isArray(root.body) && astNode(root.body[0]) && astNode(root.body[0].expression) && astNode(root.body[0].expression.callee)
@@ -1449,8 +1871,21 @@ export function validateWorkflowScript(script: string): WorkflowScriptValidation
 	}
 
 	const unique = errors.filter((error, index) => errors.findIndex((candidate) => candidate.message === error.message && candidate.line === error.line && candidate.column === error.column) === index);
-	return { ok: unique.length === 0, errors: unique };
+	const validation = { ok: unique.length === 0, errors: unique };
+	if (!includeTopology || !validation.ok) return { ...validation, advisories: [] };
+	const { topology, advisories } = buildWorkflowTopology(workflowBody, options);
+	return { ...validation, topology, advisories };
 }
+
+export function validateWorkflowScript(script: string): WorkflowScriptValidationResult {
+	const { ok, errors } = inspectWorkflowScriptInternal(script, false, {});
+	return { ok, errors };
+}
+
+export function inspectWorkflowScript(script: string, options: WorkflowScriptInspectionOptions = {}): WorkflowScriptInspectionResult {
+	return inspectWorkflowScriptInternal(script, true, options);
+}
+
 function workflowStringMetadata(params: Record<string, unknown>): Pick<WorkflowScriptTraceEntry, "phase" | "label" | "agent"> {
 	return {
 		...(typeof params.phase === "string" && params.phase.trim() ? { phase: params.phase.trim() } : {}),
