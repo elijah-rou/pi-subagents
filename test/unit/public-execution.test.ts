@@ -18,7 +18,7 @@ describe("public subagent execution normalization", () => {
 			"list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status",
 			"status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor",
 		]);
-		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 27);
+		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 25);
 		assert.deepEqual(SUBAGENT_INTERNAL_ACTIONS.filter((action) => action.startsWith("schedule.")), []);
 		assert.ok(!SUBAGENT_INTERNAL_ACTIONS.includes("append-step"));
 		for (const action of ["inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "refine", "refine.show", "refine.rollback"]) {
@@ -104,16 +104,21 @@ describe("public subagent execution normalization", () => {
 		);
 	});
 
-	it("rejects administration removed from the model surface but accepts it for trusted hosts", () => {
+	it("rejects administration removed from the model surface but accepts retained trusted actions", () => {
 		for (const params of [
 			{ action: "create" },
 			{ action: "worktree.cleanup", mode: "plan" },
-			{ action: "lane.recordMerge" },
 		]) {
 			const result = normalizePublicSubagentExecution(params);
 			assert.equal(result.ok, false);
 			if (!result.ok) assert.match(result.error, /human administration|removed from the model surface/i);
 			assert.equal(normalizeTrustedHostSubagentExecution(params).ok, true, params.action);
+		}
+		for (const action of ["lane.recordMerge", "lane.recordSupersession"]) {
+			assert.equal(normalizePublicSubagentExecution({ action }).ok, false);
+			const trusted = normalizeTrustedHostSubagentExecution({ action });
+			assert.equal(trusted.ok, false);
+			if (!trusted.ok) assert.match(trusted.error, /Unknown trusted host action/);
 		}
 		for (const action of ["watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"]) {
 			assert.equal(normalizePublicSubagentExecution({ action }).ok, false);

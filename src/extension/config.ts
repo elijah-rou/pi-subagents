@@ -8,9 +8,10 @@ import { getAgentDir } from "../shared/config-paths.ts";
 import { DEFAULT_MODEL_EXCLUSION_TTL_MS, MAX_MODEL_EXCLUSION_TTL_MS, setDefaultTTL } from "../runs/shared/model-exclusions.ts";
 import { validatePermissionConfig } from "../runs/shared/permissions.ts";
 import { MAX_ABANDONED_SLOT_RELEASE_AFTER_MS, MIN_ABANDONED_SLOT_RELEASE_AFTER_MS } from "../runs/background/active-async-capacity.ts";
+import { validateMissionStoreConfig } from "../missions/store.ts";
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
-const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
+const FLEET_KEYBINDING_ACTION_SET = new Set<string>([...FLEET_KEYBINDING_ACTIONS, "inspect"]);
 const KEY_MODIFIERS = new Set(["ctrl", "shift", "alt", "super"]);
 const BASE_KEY_IDS = new Set([
 	..."abcdefghijklmnopqrstuvwxyz0123456789",
@@ -127,7 +128,7 @@ function validateMainWindowRendererConfig(value: unknown): void {
 	}
 }
 
-const RETIRED_CONFIG_KEYS = ["missions", "orcaProgressTabs", "parallel"] as const;
+const RETIRED_CONFIG_KEYS = ["parallel"] as const;
 
 function validatePositiveInteger(value: unknown, label: string, minimum = 1): void {
 	if (value !== undefined && (typeof value !== "number" || !Number.isInteger(value) || value < minimum)) {
@@ -137,8 +138,6 @@ function validatePositiveInteger(value: unknown, label: string, minimum = 1): vo
 
 function normalizeConfigAliases(config: Record<string, unknown>): ExtensionConfig {
 	const retired: string[] = RETIRED_CONFIG_KEYS.filter((key) => config[key] !== undefined);
-	const fleetInspect = (config.fleetKeybindings as Record<string, unknown> | undefined)?.inspect;
-	if (fleetInspect !== undefined) retired.push("fleetKeybindings.inspect");
 	if (retired.length > 0) {
 		throw new Error(`Retired subagent config ${retired.slice(0, 8).join(", ")} is no longer supported. Remove ${retired.length === 1 ? "this key" : "these keys"}; use workflowScript, Fleet status, and current lifecycle artifacts instead.`);
 	}
@@ -205,6 +204,7 @@ function validateConfig(input: Record<string, unknown>): ExtensionConfig {
 	validateAuthorityPolicy(config.authorityPolicy);
 	validatePermissionConfig(config.permissions);
 	validateScheduledRunsConfig(config.scheduledRuns);
+	validateMissionStoreConfig(config.missions);
 	validateFleetKeybindingsConfig(config.fleetKeybindings);
 	validateArtifactConfig(config.artifactConfig);
 	validateCapacityConfig(config.capacity);

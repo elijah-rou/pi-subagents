@@ -12,6 +12,8 @@ const DEFAULT_MAX_CHILDREN_PER_NODE = 8;
 const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_STRING_LENGTH = 160;
 const DEFAULT_MAX_SERIALIZED_BYTES = 32 * 1024;
+/** The fixed empty snapshot envelope must fit before any bounded run payload is admitted. */
+export const MIN_MAX_SERIALIZED_BYTES = 512;
 
 export type AsyncStatusSnapshotState = "queued" | "running" | "complete" | "failed" | "partial" | "paused" | "stopped" | "rejected";
 export type AsyncStatusSnapshotKind = "subagent" | "workflow" | "step";
@@ -137,7 +139,7 @@ function resolveCaps(options: AsyncStatusSnapshotOptions): AsyncStatusSnapshotCa
 		maxChildrenPerNode: Math.max(0, Math.floor(options.maxChildrenPerNode ?? DEFAULT_MAX_CHILDREN_PER_NODE)),
 		maxDepth: Math.max(0, Math.floor(options.maxDepth ?? DEFAULT_MAX_DEPTH)),
 		maxStringLength: Math.max(0, Math.floor(options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH)),
-		maxSerializedBytes: Math.max(256, Math.floor(options.maxSerializedBytes ?? DEFAULT_MAX_SERIALIZED_BYTES)),
+		maxSerializedBytes: Math.max(MIN_MAX_SERIALIZED_BYTES, Math.floor(options.maxSerializedBytes ?? DEFAULT_MAX_SERIALIZED_BYTES)),
 	};
 }
 
@@ -403,6 +405,9 @@ function enforceByteLimit(snapshot: AsyncStatusSnapshotV1): void {
 	}
 	snapshot.runs = runs.slice(0, lower);
 	snapshot.omitted.runs = initialOmittedRuns + runs.length - lower;
+	if (snapshotBytes(snapshot) > snapshot.caps.maxSerializedBytes) {
+		throw new Error(`Async status snapshot fixed envelope exceeds the ${snapshot.caps.maxSerializedBytes}-byte invariant`);
+	}
 }
 
 function workflowStepActivity(step: AsyncJobStep): string | undefined {

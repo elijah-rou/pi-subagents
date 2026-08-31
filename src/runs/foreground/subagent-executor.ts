@@ -66,7 +66,7 @@ import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructure
 import { resolveChildCwd } from "../../shared/path-resolution.ts";
 import { compactForegroundDetails, getSingleResultOutput, readStatus, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
-import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
+import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import {
 	attachNestedChildrenToResultChildren,
@@ -174,7 +174,7 @@ import {
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "dismiss"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "worktree.discard", "worktree.cleanup", "dismiss"]);
 const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "worktree.discard", "stop", "interrupt"]);
 
 function resolveSteerDeliveryMode(mode: SubagentParamsLike["mode"]): SteerDeliveryMode | undefined {
@@ -280,8 +280,6 @@ export interface SubagentParamsLike {
 	dir?: string;
 	handoffPath?: string;
 	laneId?: string;
-	merge?: unknown;
-	supersession?: unknown;
 	index?: number;
 	childId?: string;
 	view?: "fleet" | "transcript";
@@ -4785,26 +4783,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 				}
 			}
-			if (action === "lane.status" || action === "lane.recordMerge" || action === "lane.recordSupersession") {
-				if (action !== "lane.status" && deps.allowMutatingManagementActions === false) {
-					return { content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }], isError: true, details: { mode: "management", results: [] } };
-				}
+			if (action === "lane.status") {
 				const laneId = paramsWithResolvedCwd.laneId?.trim();
-				if (!laneId) return { content: [{ type: "text", text: `${action} requires laneId.` }], isError: true, details: { mode: "management", results: [] } };
+				if (!laneId) return { content: [{ type: "text", text: "lane.status requires laneId." }], isError: true, details: { mode: "management", results: [] } };
 				const handoffPath = paramsWithResolvedCwd.handoffPath?.trim();
-				if (!handoffPath) return { content: [{ type: "text", text: `${action} requires handoffPath for the existing parallel handoff manifest.` }], isError: true, details: { mode: "management", results: [] } };
+				if (!handoffPath) return { content: [{ type: "text", text: "lane.status requires handoffPath for the existing parallel handoff manifest." }], isError: true, details: { mode: "management", results: [] } };
 				const manifestPath = path.isAbsolute(handoffPath) ? handoffPath : path.resolve(requestCwd, handoffPath);
 				try {
-					if (action === "lane.status") {
-						let manifest;
-						try { manifest = readParallelHandoffManifest(manifestPath); } catch { manifest = undefined; }
-						if (manifest && manifest.runId !== laneId) throw new Error(`Lane '${laneId}' does not match manifest run '${manifest.runId}'.`);
-						return { content: [{ type: "text", text: formatStoredParallelHandoffCleanup(manifestPath, manifest) }], details: { mode: "management", results: [] } };
-					}
-					const recorded = action === "lane.recordMerge"
-						? recordParallelHandoffMerge({ manifestPath, laneId, merge: paramsWithResolvedCwd.merge })
-						: recordParallelHandoffSupersession({ manifestPath, laneId, supersession: paramsWithResolvedCwd.supersession });
-					return { content: [{ type: "text", text: recorded.text }], details: { mode: "management", results: [], parallelHandoff: recorded.reference } };
+					let manifest;
+					try { manifest = readParallelHandoffManifest(manifestPath); } catch { manifest = undefined; }
+					if (manifest && manifest.runId !== laneId) throw new Error(`Lane '${laneId}' does not match manifest run '${manifest.runId}'.`);
+					return { content: [{ type: "text", text: formatStoredParallelHandoffCleanup(manifestPath, manifest) }], details: { mode: "management", results: [] } };
 				} catch (error) {
 					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
 				}

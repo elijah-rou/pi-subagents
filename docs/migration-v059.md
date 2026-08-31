@@ -14,7 +14,7 @@ This is the upgrade checklist for users moving from the fork before the v0.46–
 
 4. **Review custom agent isolation.** When `inheritProjectContext` resolves to `true`, omitted `inheritGlobalContext` now also resolves to `true`. Set `inheritGlobalContext: false` explicitly only for an agent that must exclude operator-global instructions.
 5. **Replace removed launch shapes and vendor builtins.** Rewrite legacy multi-child inputs as `workflowScript`; define or install every external CLI profile you intend to use.
-6. **Remove retired Orca configuration.** Package 3b no longer discovers or invokes Orca. `orcaProgressTabs` is tolerated inertly for one published Package 3b release, and existing `.pi/subagents/views/orca` or temporary mirror artifacts are left untouched.
+6. **Plan removal of retired compatibility configuration.** Package 3b no longer discovers or invokes Orca. `orcaProgressTabs` of any JSON shape is tolerated and preserved inertly for one published Package 3b release. Legacy `missions` location config and validated `fleetKeybindings.inspect` arrays are likewise preserved for their promised one-release horizons without restoring runtime behavior. Remove `parallel` now because it remains a migration error.
 7. **Run the read-only diagnostic command** `/subagents-doctor` (the same report is available through `subagent({ action: "doctor" })`). Agent listing, management actions, and diagnostics are separate: use `subagent({ action: "list" })` to list agents, and do not expect `doctor` to appear there.
 
 ## Acceptance is enforced when inferred
@@ -86,7 +86,7 @@ See [Models](models.md), [Tool and extension selection](agents.md#tool-and-exten
 
 ## Package 1 cleanup and pane access
 
-Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet`, status, and transcripts. Package 3c removed passive pane observation and all inspector/project-pane seams. For one published release, old binding JSON, project-pane root indexes, metadata, environment variables, and legacy session-root payloads are unknown inert inputs or artifacts: core does not read, write, heal, delete, or migrate them. Existing `fleetKeybindings.inspect` arrays are also accepted, validated, and preserved by unrelated config updates during this horizon, but cannot activate a Fleet action. Do not replace removed exports with internal source imports.
+Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet`, status, and transcripts. Package 3c removed passive pane observation and all inspector/project-pane seams. For one published release, old binding JSON, project-pane root indexes, metadata, environment variables, and legacy session-root payloads are unknown inert inputs or artifacts: core does not read, write, heal, delete, or migrate them. Existing `fleetKeybindings.inspect` non-empty string arrays are also accepted, validated, and preserved by unrelated config updates during this horizon, but cannot activate a Fleet action. Do not replace removed exports with internal source imports.
 
 ## Package 3a watchdog removal
 

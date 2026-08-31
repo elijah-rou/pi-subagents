@@ -8,8 +8,6 @@ export interface PublicSubagentExecutionParams {
 	task?: unknown;
 	handoffPath?: unknown;
 	laneId?: unknown;
-	merge?: unknown;
-	supersession?: unknown;
 	step?: unknown;
 	tasks?: unknown;
 	chain?: unknown;

@@ -169,9 +169,12 @@ describe("async status snapshot", () => {
 		assert.ok((snapshot.runs[0]?.label.length ?? 0) <= 16);
 		assert.ok(Buffer.byteLength(json(snapshot), "utf8") <= 1200);
 
-		const byteCapped = buildAsyncStatusSnapshot(jobs, { maxSerializedBytes: 512 });
-		assert.equal(byteCapped.omitted.byteLimitExceeded, true);
-		assert.ok(Buffer.byteLength(json(byteCapped), "utf8") <= 512);
+		for (const requestedMax of [256, 512]) {
+			const byteCapped = buildAsyncStatusSnapshot(jobs, { maxSerializedBytes: requestedMax });
+			assert.equal(byteCapped.omitted.byteLimitExceeded, true);
+			assert.ok(byteCapped.caps.maxSerializedBytes >= requestedMax);
+			assert.ok(Buffer.byteLength(json(byteCapped), "utf8") <= byteCapped.caps.maxSerializedBytes);
+		}
 	});
 
 	it("uses the canonical current-session lifecycle map without rebuilding history", () => {

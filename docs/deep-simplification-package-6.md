@@ -12,7 +12,7 @@ Status: implemented and reviewed.
 | Workflow receipt | `status.workflow.receipt` | receipt state and creation time only |
 | Nested children | nested event/status records folded into status and observer state | bounded recursive `children` |
 
-`projectAsyncStatusSnapshot` is pure and bounded by run, child, depth, string, and serialized-byte caps. Active siblings precede terminal siblings while source order remains stable within each rank. Projection now ranks and slices before recursively serializing omitted children.
+`projectAsyncStatusSnapshot` is pure and bounded by run, child, depth, string, and serialized-byte caps. The effective serialized-byte cap has a named 512-byte minimum so the fixed empty envelope fits; every returned snapshot serializes within its reported effective cap, including callers that request the former 256-byte value. Active siblings precede terminal siblings while source order remains stable within each rank. Projection now ranks and slices before recursively serializing omitted children.
 
 ## Migrations
 

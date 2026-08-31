@@ -2407,7 +2407,19 @@ export const FLEET_KEYBINDING_ACTIONS = [
 ] as const;
 
 export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
-export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
+export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>> & {
+	/** @deprecated Inert one-release compatibility field; runtime key resolution ignores it. */
+	inspect?: string[];
+};
+
+/** Structural copy of the legacy mission-store location contract. Keep shared contracts independent of mission feature modules. */
+export interface LegacyMissionStoreConfig {
+	enabled?: boolean;
+	directory?: string;
+	globalIndex?: boolean;
+	globalIndexDir?: string;
+	retainTerminal?: number;
+}
 
 export interface MainWindowRendererConfig {
 	/** Unit of horizontal space in main chat subagent call/result rows. Omit to preserve current spacing. Set 0 for no extra padding. */
@@ -2514,6 +2526,10 @@ export interface ExtensionConfig {
 	 *  - \"off\": never log slow result-index scans. */
 	resultScanLogging?: "all" | "activity" | "off";
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
+	/** Passive legacy mission-record location only; no mission runtime behavior or general project state. */
+	missions?: LegacyMissionStoreConfig;
+	/** @deprecated Inert one-release compatibility field; no value can activate Orca behavior. */
+	orcaProgressTabs?: unknown;
 	/** Passive legacy schedule lookup only; no execution or writer behavior. */
 	scheduledRuns?: ScheduledRunsConfig;
 	/** Small fixed authority policy for the supported operational actions. */
@@ -2625,7 +2641,7 @@ export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
 export const SUBAGENT_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status", "status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor"] as const;
 
 /** Full trusted host dispatch surface. Not registered with model-facing tools. */
-export const SUBAGENT_INTERNAL_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor"] as const;
+export const SUBAGENT_INTERNAL_ACTIONS = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "worktree.discard", "worktree.cleanup", "lane.status", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "dismiss", "doctor"] as const;
 
 export const DEFAULT_FORK_PREAMBLE =
 	"You are a delegated subagent running from a fork of the parent session. " +

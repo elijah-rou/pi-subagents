@@ -331,30 +331,6 @@ function hasActiveChildren(manifest: ParallelHandoffManifest): boolean {
 	});
 }
 
-function hasManagedWorktreeTasks(manifest: ParallelHandoffManifest): boolean {
-	return manifest.groups.length > 0 && manifest.groups.some((group) => Array.isArray(group.cleanup?.tasks) && group.cleanup.tasks.length > 0);
-}
-
-function validateManifestForLaneEvidence(manifest: ParallelHandoffManifest, laneId: string): void {
-	if (manifest.runId !== laneId) throw new Error(`Lane '${laneId}' does not match manifest run '${manifest.runId}'.`);
-	if (!hasValidStoredLaneShape(manifest)) throw new Error("Lane manifest is malformed.");
-	if (!manifest.groups.length || !hasManagedWorktreeTasks(manifest)) throw new Error("Lane manifest has no managed worktree tasks.");
-	if (hasActiveChildren(manifest)) throw new Error("Lane has an active child owner; merge evidence must be recorded after local reconciliation.");
-	for (const group of manifest.groups) {
-		if (typeof group.repoRoot !== "string" || !group.repoRoot.trim()) throw new Error("Lane manifest has no valid repository root.");
-		if (group.cleanup.state !== "complete" && group.cleanup.state !== "partial") throw new Error("Lane manifest has an invalid cleanup state.");
-		if (!Array.isArray(group.cleanup.tasks) || group.cleanup.tasks.some((task) => typeof task.path !== "string" || !task.path.trim() || typeof task.branch !== "string" || !task.branch.trim())) {
-			throw new Error("Lane manifest has an invalid cleanup task.");
-		}
-		if (!Array.isArray(group.children)) throw new Error("Lane manifest has invalid child records.");
-		for (const child of group.children) {
-			if (!STORED_CHILD_STATUSES.has(child.status)) {
-				throw new Error("Lane manifest has an invalid child status.");
-			}
-		}
-	}
-}
-
 function cleanupEligibilityForEvidence(manifest: ParallelHandoffManifest): CleanupEligibility {
 	if (hasActiveChildren(manifest)) return { state: "active" };
 	let merge: ParallelHandoffMergeEvidence | undefined;
@@ -381,20 +357,6 @@ function cleanupEligibilityForEvidence(manifest: ParallelHandoffManifest): Clean
 	}
 	if (merge.postMergeChecks !== "recorded") return { state: "terminal-blocked", reason: "required post-merge checks were not recorded" };
 	return { state: "terminal-eligible" };
-}
-
-function sameMergeEvidence(left: ParallelHandoffMergeEvidence, right: ParallelHandoffMergeEvidence): boolean {
-	return left.prNumber === right.prNumber
-		&& left.reviewedHead === right.reviewedHead
-		&& left.mergeCommit === right.mergeCommit
-		&& left.treeEquivalent === right.treeEquivalent
-		&& left.postMergeChecks === right.postMergeChecks
-		&& left.attestedBy === right.attestedBy
-		&& left.attestedAt === right.attestedAt;
-}
-
-function sameSupersessionEvidence(left: ParallelHandoffSupersessionEvidence, right: ParallelHandoffSupersessionEvidence): boolean {
-	return left.supersededBy === right.supersededBy && left.attestedBy === right.attestedBy && left.attestedAt === right.attestedAt;
 }
 
 function firstRepositoryRoot(manifest: ParallelHandoffManifest): string | undefined {
@@ -425,47 +387,6 @@ export function formatStoredParallelHandoffCleanup(manifestPath: string, manifes
 	const command = formatCleanupCommand(manifestPath, stored);
 	if (command) lines.push(`Plan command: ${command}`);
 	return lines.join("\n");
-}
-
-export interface ParallelHandoffEvidenceResult {
-	manifest: ParallelHandoffManifest;
-	reference: ParallelHandoffReference;
-	text: string;
-}
-
-export function recordParallelHandoffMerge(input: { manifestPath: string; laneId: string; merge: unknown; now?: number }): ParallelHandoffEvidenceResult {
-	const manifest = readParallelHandoffManifest(input.manifestPath);
-	if (!manifest) throw new Error(`Parallel handoff manifest not found: ${input.manifestPath}`);
-	validateManifestForLaneEvidence(manifest, boundedString(input.laneId, "laneId", MAX_SUPERSESSION_ID_LENGTH));
-	if (hasActiveChildren(manifest)) throw new Error("Lane has an active child owner; merge evidence must be recorded after local reconciliation.");
-	const merge = { ...normalizeMergeEvidence(input.merge), manifestDigest: manifestFactsDigest(manifest) };
-	if (manifest.merge) {
-		const existing = normalizeMergeEvidence(manifest.merge);
-		if (existing.reviewedHead !== merge.reviewedHead) throw new Error(`Lane manifest is stale: reviewed head is already recorded as ${existing.reviewedHead}.`);
-		if (!sameMergeEvidence(existing, merge)) throw new Error("Lane manifest already contains different merge evidence for this reviewed head.");
-	}
-	const reconciled: ParallelHandoffManifest = { ...manifest, merge };
-	delete reconciled.supersession;
-	const updated: ParallelHandoffManifest = { ...reconciled, cleanupEligibility: cleanupEligibilityForEvidence(reconciled), updatedAt: input.now ?? Date.now() };
-	writeAtomicJson(input.manifestPath, updated);
-	return { manifest: updated, reference: referenceFor(input.manifestPath, updated), text: formatStoredParallelHandoffCleanup(input.manifestPath, updated) };
-}
-
-export function recordParallelHandoffSupersession(input: { manifestPath: string; laneId: string; supersession: unknown; now?: number }): ParallelHandoffEvidenceResult {
-	const manifest = readParallelHandoffManifest(input.manifestPath);
-	if (!manifest) throw new Error(`Parallel handoff manifest not found: ${input.manifestPath}`);
-	const laneId = boundedString(input.laneId, "laneId", MAX_SUPERSESSION_ID_LENGTH);
-	validateManifestForLaneEvidence(manifest, laneId);
-	if (hasActiveChildren(manifest)) throw new Error("Lane has an active child owner; supersession must be recorded after local reconciliation.");
-	const supersession = { ...normalizeSupersessionEvidence(input.supersession), manifestDigest: manifestFactsDigest(manifest) };
-	if (supersession.supersededBy === laneId) throw new Error("supersession.supersededBy must identify a different replacement lane.");
-	if (manifest.supersession) {
-		const existing = normalizeSupersessionEvidence(manifest.supersession);
-		if (!sameSupersessionEvidence(existing, supersession)) throw new Error("Lane manifest already contains different supersession evidence.");
-	}
-	const updated: ParallelHandoffManifest = { ...manifest, supersession, cleanupEligibility: cleanupEligibilityForEvidence({ ...manifest, supersession }), updatedAt: input.now ?? Date.now() };
-	writeAtomicJson(input.manifestPath, updated);
-	return { manifest: updated, reference: referenceFor(input.manifestPath, updated), text: formatStoredParallelHandoffCleanup(input.manifestPath, updated) };
 }
 
 function safeHandoffAgentName(agent: string): string {

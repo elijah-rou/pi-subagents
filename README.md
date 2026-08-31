@@ -127,5 +127,5 @@ The full reference lives in `docs/`:
 | [Legacy missions](https://github.com/nicobailon/pi-subagents/blob/main/docs/missions.md) | One-release passive compatibility for records created before Package 2a. |
 | [Legacy schedules](https://github.com/nicobailon/pi-subagents/blob/main/docs/schedules.md) | One-release passive readers for records created before Package 2b. |
 | [Configuration](https://github.com/nicobailon/pi-subagents/blob/main/docs/configuration.md) | Every `config.json` key and environment variable. |
-| [Extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md) | The RPC, delegation API, preflight, capability ceilings, background-work providers, and external run integration. |
+| [Extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md) | The retained RPC, delegation, preflight, capability-ceiling, child-profile, control-channel, and external-job provider contracts. |
 | [Pre-v0.59 migration](https://github.com/nicobailon/pi-subagents/blob/main/docs/migration-v059.md) | Required upgrade actions, changed defaults, removed APIs, compatibility readers, and reload requirements. |

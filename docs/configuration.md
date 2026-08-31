@@ -161,9 +161,13 @@ Customizes only the full Fleet inspector opened by `/subagents-fleet` or FleetVi
 
 Each action accepts a non-empty array of key strings. Configured actions replace their defaults. Unset actions keep the defaults: `selectUp` is `up`/`k`, `selectDown` is `down`/`j`, `scrollUp` is `K`, `scrollDown` is `J`, `pageUp` is `pageUp`, `pageDown` is `pageDown`, `selectFirst` is `home`, `selectLast` is `end`, `toggleTools` is `x`/`X`/`ctrl+o`, `refresh` is `r`/`R`, `steer` is `s`, `stop` is `D`, and `close` is `escape`/`ctrl+c`/`q`.
 
-`fleetKeybindings.inspect` is retired and produces the same actionable migration diagnostic as other removed feature keys.
+`fleetKeybindings.inspect` is accepted for one published Package 3c release. It must be a non-empty string array, survives unrelated config updates, and is ignored by runtime key resolution. No value can restore the retired inspector action.
 
 Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text or stop confirmation even when the Fleet-level close binding is changed.
+
+## One-release retired-feature config compatibility
+
+`missions` remains validated and preserved only to locate legacy mission records. Its accepted fields are `enabled`, `directory`, `globalIndex`, `globalIndexDir`, and positive-integer `retainTerminal`; it cannot create or update mission state. `orcaProgressTabs` accepts and preserves any JSON shape inertly, and no value can activate Orca. `parallel` is not retained and fails with an actionable migration error because current composition uses `workflowScript`.
 
 ## `asyncWidget`
 
@@ -243,9 +247,9 @@ Legacy `globalConcurrencyLimit` remains a read-only alias for one published rele
 
 Bounds a dynamic `workflowScript` expansion when the step omits `expand.maxItems`. Zero disables implicit expansion. Legacy `chain.dynamicFanout.maxItems` remains a read-only alias for one published release with the same warning, normalization, and conflict rules.
 
-## Retired feature keys
+## Retired feature key
 
-`missions`, `orcaProgressTabs`, `parallel`, and `fleetKeybindings.inspect` no longer change runtime behavior. Config load/update returns one bounded diagnostic naming the present retired keys and directs the user to remove them.
+`parallel` fails config load/update with an actionable migration diagnostic. Use `workflowScript` concurrency and remove this key.
 
 ## `scheduledRuns`
 

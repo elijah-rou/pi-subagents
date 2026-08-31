@@ -22,7 +22,7 @@ Status: implemented in the working tree after `30d94818`. Package 6 was committe
 
 The compatible 15-action model contract is unchanged. Root delegation owns `list`, `get`, `models`, `children.list`, `guide`, `validate`, `worktree.discard`, `lane.status`, `status`, `debug.run`, `interrupt`, `resume`, `steer`, `stop`, and `doctor`. The model is the consumer. `public-execution.test.ts`, `schemas.test.ts`, and focused action tests cover validation and dispatch.
 
-Trusted host administration additionally owns `create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`, `worktree.cleanup`, `lane.recordMerge`, `lane.recordSupersession`, `grant-spawn-budget`, and `dismiss`. These compose agent administration, bounded cleanup/evidence, resource grants, and recovered-workflow disposal for operator/host consumers. Together with the 15 model actions they form the 27 trusted actions covered by agent-management, worktree, authority, lifecycle, and public-execution tests. There is no internal compatibility action.
+Trusted host administration additionally owns `create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset`, `worktree.cleanup`, `grant-spawn-budget`, and `dismiss`. These compose agent administration, bounded cleanup, resource grants, and recovered-workflow disposal for operator/host consumers. Together with the 15 model actions they form the 25 trusted actions covered by agent-management, worktree, authority, lifecycle, and public-execution tests. `lane.recordMerge` and `lane.recordSupersession` are retired and fail trusted normalization. There is no internal compatibility action.
 
 ### Slash commands
 
@@ -51,12 +51,12 @@ Every retained key has a runtime owner and operator consumer:
 | visibility | `fleetView`, `fleetViewPlacement`, `fleetKeybindings`, `asyncWidget`, `inlineToolDisplay`, `mainWindowRenderer`, `resultScanLogging`, `completionBatch`, `foregroundDetachShortcut` | Fleet, renderer, watcher, completion, config-dir tests |
 | authority and child runtime | `authorityPolicy`, `permissions`, `control`, `intercomBridge`, `proactiveSkillSubagents`, `toolDescriptionMode` | authority, permissions, control, bridge, schema tests |
 | storage and isolation | `artifactDir`, `artifactConfig`, `worktreeBaseDir`, `worktreeSetupHook`, `worktreeSetupHookTimeoutMs` | artifact, worktree, config-dir tests |
-| passive artifact compatibility | `scheduledRuns.enabled`, `scheduledRuns.maxPending`, `scheduledRuns.storeRoot` | Package 2b inert config and custom-root schedule readers | config-dir, scheduled-run, and scheduled-store-root tests |
+| passive artifact compatibility | `missions`, `orcaProgressTabs`, `scheduledRuns.enabled`, `scheduledRuns.maxPending`, `scheduledRuns.storeRoot` | Package 2a/2b/3b one-release compatibility and legacy record locations | config-dir, mission compatibility, scheduled-run, and scheduled-store-root tests |
 | model failure policy | `modelExclusions` | config-dir and model-exclusion tests |
 
 `globalConcurrencyLimit` and `chain.dynamicFanout.maxItems` are read-only aliases for one published release. They normalize to `perRunConcurrencyLimit` and `workflowDynamicFanoutMaxItems`, emit one bounded migration warning per load, reject conflicting old/new values, and are never written back. The canonical spellings name the actual scope directly; a nested `workflow.dynamicFanout` object was rejected because it adds a pass-through layer for one bound.
 
-`missions`, `orcaProgressTabs`, `parallel`, and `fleetKeybindings.inspect` are removed. A single bounded diagnostic names all retired keys present and directs the operator to remove them. Package 2b's promised horizon still accepts and preserves `scheduledRuns.enabled` and `scheduledRuns.maxPending` inertly; `scheduledRuns.storeRoot` remains lookup-only. None can reactivate schedule execution or writers.
+`missions`, `orcaProgressTabs`, and `fleetKeybindings.inspect` remain one-release compatibility fields. `missions` is validated only by the legacy mission-store location contract; `orcaProgressTabs` accepts any JSON shape inertly; `fleetKeybindings.inspect` requires a non-empty string array and is ignored by runtime key resolution. All survive unrelated config updates and none can reactivate retired behavior or writers. `parallel` remains a bounded migration error. Package 2b's promised horizon still accepts and preserves `scheduledRuns.enabled` and `scheduledRuns.maxPending` inertly; `scheduledRuns.storeRoot` remains lookup-only. None can reactivate schedule execution or writers.
 
 ## Review disposition
 
@@ -67,11 +67,13 @@ For Package 2b config, the viable choices were immediate rejection or inert acce
 - Import retained contracts from the seven exports above. Consumers of a removed subpath must move to a retained versioned contract or own their registry privately.
 - Replace `globalConcurrencyLimit` with `perRunConcurrencyLimit`.
 - Replace `chain.dynamicFanout.maxItems` with `workflowDynamicFanoutMaxItems`.
-- Remove retired feature keys named by the config diagnostic.
+- Remove `parallel` immediately. Plan removal of `missions`, `orcaProgressTabs`, and `fleetKeybindings.inspect` after their promised one-release compatibility horizons.
 - RPC clients may use only the three passive schedule reads under `manage` during the Package 2b horizon. There is no schedule execution replacement in core.
 
 ## Baseline and validation
 
-The final fresh isolated baseline records 221 production TypeScript files and 80,985 lines, down from Package 6's 80,989 lines. It records 7 package exports, 15 model actions, 12 slash commands, 42 configuration fields including the two one-release aliases and passive `scheduledRuns`, and unchanged combined root schema size of 18,519 bytes. Import/registration p50 was 569.009 ms, direct preparation p50 1.854 ms, active refresh p50 0.039 ms with the same seven filesystem calls, and idle scanning remained three `readdir` calls per 60 seconds.
+The Package 7 baseline records 221 production TypeScript files and 80,985 lines, down from Package 6's 80,989 lines. It records 7 package exports, 15 model actions, 12 slash commands, 42 configuration fields including the two one-release aliases and passive `scheduledRuns`, and unchanged combined root schema size of 18,519 bytes. Import/registration p50 was 569.009 ms, direct preparation p50 1.854 ms, active refresh p50 0.039 ms with the same seven filesystem calls, and idle scanning remained three `readdir` calls per 60 seconds.
+
+The final pre-integration baseline after Package 8 and reviewer fixes records 44 top-level configuration fields, including restored `missions` and `orcaProgressTabs` compatibility. `fleetKeybindings.inspect` remains nested and does not change that count.
 
 Validation: `npm run typecheck`; 218 focused config, schema, action, slash, RPC, export/import, external/Surf, and security tests, followed by 24 focused config tests after alias-shape hardening and 1 focused status integration test. Review follow-up reran 33 config/runtime-registration unit tests and 30 slash integration tests. `npm pack --dry-run --json` contained 277 files and no removed API wrapper; the final isolated baseline, credential-pattern scan, and `git diff --check` also completed with exit 0.

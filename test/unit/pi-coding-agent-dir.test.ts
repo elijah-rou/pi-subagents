@@ -360,13 +360,45 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.fleetKeybindings\.pageUp entries must be non-empty strings/);
 	});
 
-	it("rejects retired feature config with one actionable migration diagnostic", () => {
+	it("preserves one-release inert feature config through unrelated updates", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		writeFile(configPath, JSON.stringify({ missions: {}, orcaProgressTabs: {}, parallel: {}, fleetKeybindings: { inspect: ["H"] } }));
-		assert.throws(
-			() => updateConfig((config) => config),
-			/Retired subagent config missions, orcaProgressTabs, parallel, fleetKeybindings\.inspect is no longer supported\. Remove these keys/,
-		);
+		const missions = { enabled: false, directory: "legacy-missions", globalIndex: false, retainTerminal: 3 };
+		const orcaProgressTabs = ["any", { nested: true }];
+		const inspect = ["H", "ctrl+i"];
+		writeFile(configPath, JSON.stringify({ missions, orcaProgressTabs, fleetKeybindings: { inspect, pageUp: ["u"] }, asyncByDefault: true }));
+
+		const loaded = loadConfig();
+		assert.deepEqual(loaded.missions, missions);
+		assert.deepEqual(loaded.orcaProgressTabs, orcaProgressTabs);
+		assert.deepEqual(loaded.fleetKeybindings?.inspect, inspect);
+		assert.equal(loaded.asyncByDefault, true);
+
+		updateConfig((config) => ({ ...config, asyncByDefault: false }));
+		const updated = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+		assert.deepEqual(updated.missions, missions);
+		assert.deepEqual(updated.orcaProgressTabs, orcaProgressTabs);
+		assert.deepEqual(updated.fleetKeybindings.inspect, inspect);
+		assert.equal(updated.asyncByDefault, false);
+	});
+
+	it("validates retained mission locations and Fleet inspect bindings without whole-config fallback", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		for (const [value, pattern] of [
+			[{ missions: { directory: "" } }, /config\.missions\.directory must be a non-empty string/],
+			[{ missions: { unknown: true } }, /config\.missions\.unknown is unknown/],
+			[{ fleetKeybindings: { inspect: [] } }, /config\.fleetKeybindings\.inspect must be a non-empty array of strings/],
+			[{ fleetKeybindings: { inspect: [""] } }, /config\.fleetKeybindings\.inspect entries must be non-empty strings/],
+		] as const) {
+			writeFile(configPath, JSON.stringify({ ...value, asyncByDefault: false }));
+			assert.throws(() => updateConfig((config) => config), pattern);
+			assert.equal(loadConfig().asyncByDefault, undefined);
+		}
+	});
+
+	it("keeps parallel as a retired-key migration error", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ parallel: {} }));
+		assert.throws(() => updateConfig((config) => config), /Retired subagent config parallel is no longer supported/);
 	});
 
 	it("preserves inert scheduled run compatibility fields through unrelated updates", () => {
