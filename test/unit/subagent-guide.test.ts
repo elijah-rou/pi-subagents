@@ -44,6 +44,12 @@ describe("subagent guide", () => {
 		assert.doesNotMatch(guide, /\{\s*action:\s*["']worktree\.cleanup/i);
 	});
 
+	it("documents retired administration products as retired rather than model-hidden", () => {
+		const guide = readSubagentGuide("tool-reference");
+		assert.match(guide, /provider profile\/catalog administration product is retired/i);
+		assert.match(guide, /Herdr inspector and project-pane products are retired/i);
+	});
+
 	it("packages the complete pre-v0.59 migration inventory", () => {
 		const guide = readSubagentGuide("migration-v059");
 		for (const required of [
@@ -59,7 +65,7 @@ describe("subagent guide", () => {
 			/\.pi-subagents\/[\s\S]*\.pi\/subagents\//,
 			/reviewer` has only `read`, `grep`, `find`, and `ls`/,
 			/Explicit or configured native model selections must resolve[\s\S]*already-running parent session model is intentionally trusted[\s\S]*gateway and proxy sessions[\s\S]*final filtered registry[\s\S]*External CLI profile metadata/,
-			/Package 1 removed broad worktree cleanup and project\/inspector pane actions from the model surface[\s\S]*Neither area has a supported replacement command or package API pending Packages 2 and 3/,
+			/Package 1 removed broad worktree cleanup and project\/inspector pane actions from the model surface[\s\S]*Neither area has a supported replacement command or package API\./,
 			/reload Pi[\s\S]*restart/,
 		]) assert.match(guide, required);
 	});

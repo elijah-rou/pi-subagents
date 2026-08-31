@@ -51,6 +51,12 @@ export type PublicSubagentExecutionNormalization<T> =
 	| { ok: true; params: T }
 	| { ok: false; error: string; mode: PublicSubagentExecutionMode };
 
+const RETIRED_REFINEMENT_GUIDANCE: ReadonlyMap<string, string> = new Map([
+	["refine", "Refinement overlays are retired. Use an explicit reviewer workflow for review and the human /subagents interface to edit agent definitions."],
+	["refine.show", "Refinement overlay display is retired. Existing .pi/subagents/refinements artifacts are inert unknown files; inspect them directly only for historical reference."],
+	["refine.rollback", "Refinement overlay rollback is retired and rollback is unavailable. Use the human /subagents interface to edit the agent definition; existing refinement artifacts remain untouched."],
+]);
+
 /**
  * Enforce the public execution cutover before requests reach the executor.
  * Internal runs.run children and structured owned delegation bypass this boundary.
@@ -105,6 +111,10 @@ function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(par
 	if (normalizedAction !== undefined) {
 		if (normalizedAction.toLowerCase() === "append-step") {
 			return { ok: false, error: "Legacy append-step control is internal executor compatibility and is unavailable through model, slash, or RPC surfaces; use current workflowScript orchestration.", mode: "management" };
+		}
+		const retirementGuidance = RETIRED_REFINEMENT_GUIDANCE.get(normalizedAction.toLowerCase());
+		if (retirementGuidance !== undefined) {
+			return { ok: false, error: retirementGuidance, mode: "management" };
 		}
 		const allowedActions = trustedHost ? SUBAGENT_INTERNAL_ACTIONS : SUBAGENT_ACTIONS;
 		if (!(allowedActions as readonly string[]).includes(normalizedAction)) {

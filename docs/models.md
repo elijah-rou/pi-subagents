@@ -233,30 +233,8 @@ Model scope is policy only. It rejects or warns; it does not select a cheaper mo
 
 Project `modelScope` settings replace the complete user `modelScope`, as with the existing project-over-user settings precedence. Project settings are trusted and can therefore replace user restrictions.
 
-## Profiles and provider model catalogs
+## Retired provider profile administration
 
-Profiles let you generate and save role-to-model assignments from a provider's live catalog.
+Package 3d removed saved provider profile and catalog administration from core. Configure current model selection through user or project `subagents` settings, agent frontmatter, or explicit launch overrides. Pi's active model registry remains the source for model discovery and validation.
 
-Profiles are stored under:
-
-```text
-~/.pi/agent/profiles/pi-subagents/
-```
-
-Provider model catalogs are cached under:
-
-```text
-~/.pi/agent/profiles/pi-subagents/providers/
-```
-
-The workflow:
-
-```text
-/subagents-refresh-provider-models openai-codex
-/subagents-generate-profiles openai-codex
-/subagents-load-profile openai-codex.quota
-```
-
-- `/subagents-refresh-provider-models` writes a serialized provider model catalog with observed registry data, simple role-oriented classification, and live probe results from tiny one-shot `pi -p --model ... --no-tools` checks. The cache refreshes when missing or stale; use `--force` to ignore freshness and probe again immediately.
-- `/subagents-generate-profiles` uses the provider catalog to produce quota and quality profiles.
-- `/subagents-check-profile` re-checks each assigned model in a saved profile against the current registry and a live probe, so you can detect model removals, auth problems, or stale assignments.
+For one published release, existing files under `~/.pi/agent/profiles/pi-subagents/` are unknown inert artifacts. Core does not read, probe, write, migrate, or delete them. Model settings previously applied to `~/.pi/agent/settings.json` remain ordinary current settings and are not reverted or rewritten.

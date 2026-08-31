@@ -5,7 +5,7 @@ This is the upgrade checklist for users moving from the fork before the v0.46–
 ## Common upgrade actions
 
 1. **Reload Pi after installing the new package.** Settings and agent/profile files are loaded into the live runtime; after editing either, reload Pi again. Existing running or persisted launches retain their saved contracts rather than being reinterpreted with new defaults.
-2. **Move project-scoped state you still need** from `<project>/.pi-subagents/` to `<project>/.pi/subagents/` before relying on it. Project artifacts, refinements, views, cleanup plans, and workflow artifacts configured with `artifactDir: "project"` use `.pi/subagents/`. Package 2b no longer creates schedules; passive readers inspect only existing records at `.pi/subagents/schedules/`. There is no general automatic migration from `.pi-subagents/`.
+2. **Move retained project-scoped state you still need** from `<project>/.pi-subagents/` to `<project>/.pi/subagents/` before relying on it. Project artifacts, views, cleanup plans, and workflow artifacts configured with `artifactDir: "project"` use `.pi/subagents/`. Package 2b no longer creates schedules; passive readers inspect only existing records at `.pi/subagents/schedules/`. Package 3e no longer reads or writes refinement overlays; existing `.pi/subagents/refinements/` files remain untouched inert unknown artifacts for one published release. There is no general automatic migration from `.pi-subagents/`.
 3. **Review concurrency settings.** Omitted `maxActiveAsyncRunsPerSession` now means `4`. To retain the old unlimited active top-level async behavior, set this exact compatibility override in the extension config and reload Pi:
 
    ```json
@@ -48,6 +48,12 @@ Only `maxActiveAsyncRunsPerSession: 0` restores unlimited active top-level async
 
 See [Per-run child concurrency](configuration.md#per-run-child-concurrency-globalconcurrencylimit) and [`maxActiveAsyncRunsPerSession`](configuration.md#maxactiveasyncrunspersession).
 
+## Provider profile/catalog administration was removed
+
+The five provider administration commands for listing, loading, refreshing, generating, and checking saved profiles are no longer registered. Move current model assignments into user or project `subagents` settings or agent frontmatter. No automatic migration runs: existing `~/.pi/agent/profiles/pi-subagents/` JSON remains untouched for one published release, and settings already applied from an old saved profile remain ordinary current settings.
+
+This does not affect explicit external CLI agent profiles, their adapters, child-profile routing, `context: "profile"`, or static model selection.
+
 ## Vendor profiles must be defined or installed
 
 `codex-exec`, `codex-exec-writer`, `claude-code`, `claude-code-writer`, `cursor-agent`, and `cursor-agent-writer` are no longer builtin agents and do not appear in the default list. Their code-owned adapters remain available only when an explicitly defined custom profile or installed package selects one.
@@ -80,7 +86,7 @@ See [Models](models.md), [Tool and extension selection](agents.md#tool-and-exten
 
 ## Package 1 cleanup and pane access
 
-Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API pending Packages 2 and 3. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet`, status, and transcripts. Package 3c removed passive pane observation and all inspector/project-pane seams. For one published release, old binding JSON, project-pane root indexes, metadata, environment variables, and legacy session-root payloads are unknown inert inputs or artifacts: core does not read, write, heal, delete, or migrate them. Existing `fleetKeybindings.inspect` arrays are also accepted, validated, and preserved by unrelated config updates during this horizon, but cannot activate a Fleet action. Do not replace removed exports with internal source imports.
+Package 1 removed broad worktree cleanup and project/inspector pane actions from the model surface. Neither area has a supported replacement command or package API. `worktree.discard` remains the only destructive model action and keeps confirmation plus handoff-path validation. Use `/subagents-fleet`, status, and transcripts. Package 3c removed passive pane observation and all inspector/project-pane seams. For one published release, old binding JSON, project-pane root indexes, metadata, environment variables, and legacy session-root payloads are unknown inert inputs or artifacts: core does not read, write, heal, delete, or migrate them. Existing `fleetKeybindings.inspect` arrays are also accepted, validated, and preserved by unrelated config updates during this horizon, but cannot activate a Fleet action. Do not replace removed exports with internal source imports.
 
 ## Package 3a watchdog removal
 

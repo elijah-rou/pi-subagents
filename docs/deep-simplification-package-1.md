@@ -6,7 +6,7 @@ Status: implemented in the working tree. The owner approved every Package 0 reco
 
 The model-facing `subagent` action surface is exactly: `list`, `get`, `models`, `children.list`, `guide`, `validate`, `worktree.discard`, `lane.status`, `status`, `debug.run`, `interrupt`, `resume`, `steer`, `stop`, and `doctor`.
 
-The executor retains a separate trusted-host dispatch list containing all 56 pre-Package-1 actions. Internal `append-step` compatibility remains executable only through the executor's internal `execute` entrypoint; model, slash, and RPC normalizers reject it. Public normalization rejects every non-model action. Supported administration is limited to `/subagents`, `/subagents-refine`, `/subagents-watchdog`, the profile slash commands, `/subagents-fleet`, and, until Package 2b, RPC schedule management. Slash and RPC hosts use a distinct trusted normalization and executor entrypoint. The root and fanout model tools use only the public entrypoint.
+The executor retains a separate trusted-host dispatch list containing all 56 pre-Package-1 actions. Internal `append-step` compatibility remains executable only through the executor's internal `execute` entrypoint; model, slash, and RPC normalizers reject it. Public normalization rejects every non-model action. At Package 1, supported administration was limited to `/subagents`, `/subagents-refine`, `/subagents-watchdog`, the profile slash commands, `/subagents-fleet`, and RPC schedule management. Later packages retired several of those temporary interfaces as described below. Slash and RPC hosts use a distinct trusted normalization and executor entrypoint. The root and fanout model tools use only the public entrypoint.
 
 This is a surface contraction, not subsystem removal. Agent authoring uses `/subagents`; refinement uses `/subagents-refine`; watchdog administration uses `/subagents-watchdog`; profile administration uses the existing profile slash commands; Fleet inspection uses `/subagents-fleet`; and Package 2b subsequently replaced RPC schedule management with three one-release passive readers. At Package 1, missions, lane merge/supersession policy, broad cleanup, and optional pane administration had no supported human replacement. Package 2a subsequently removed new mission/goal runtime writes while retaining one-release legacy readers and completion synchronization. Existing RPC spawn requests still pass public execution normalization, so legacy public orchestration shapes remain rejected.
 
@@ -24,7 +24,7 @@ Direct and `workflowScript` execution, acceptance, capability and resource ceili
 
 ## Migration
 
-Models must use only the 15 retained actions. The supported human/RPC interfaces are exactly those named above. Package 2a subsequently removed mission administration and all new mission writes. Lane merge/supersession, broad cleanup, and panes still have no supported replacement pending Package 3. Do not route trusted execution through root or child model tools.
+Models must use only the 15 retained actions. At Package 1, the supported human/RPC interfaces were exactly those named above. Package 2a subsequently removed mission administration and all new mission writes; Package 2b replaced RPC schedule management with three one-release passive readers; Packages 3a, 3d, and 3e subsequently removed watchdog, provider-profile, and refinement administration respectively. Lane merge/supersession and broad cleanup still have no supported replacement; Package 3c subsequently removed panes. Do not route trusted execution through root or child model tools.
 
 Current tool reference and execution-control skill guidance now distinguish the model surface from trusted temporary administration. Package 0 evidence and the committed baseline were not rewritten.
 
@@ -55,6 +55,6 @@ The fresh isolated run showed lower startup, direct-preparation, and refresh per
 
 Validation passed TypeScript typecheck and `npm run test:all`: 2,789 unit tests passed with 5 skipped, and 899 integration tests passed with 6 skipped. The real Pi-session E2E suite registered no tests because the Pi runtime packages were unavailable. Focused tests additionally cover every model-readable guide topic, schema shape, public/trusted normalization, trusted slash administration, passive RPC schedule-reader administration, schedule mutator rejection, and public spawn rejection, model descriptions, and root/child registration.
 
-## Package 3a follow-up
+## Subsequent Package 3 removals
 
-Package 3a subsequently removed watchdog administration, runtime review behavior, child launch coupling, and its four trusted actions. The Package 1 counts above remain historical evidence for that package.
+Package 3a removed watchdog administration, runtime review behavior, child launch coupling, and its four trusted actions. Package 3d removed provider-profile and catalog administration and its five slash commands. Package 3e removed refinement administration, prompt injection, and its three trusted actions. The counts above remain historical Package 1 evidence.

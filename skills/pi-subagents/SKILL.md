@@ -74,7 +74,7 @@ review.
 
 - Keep simple, low-risk one-tool-call work local; delegate asynchronously to a child or `workflowScript` for most non-trivial requests needing multiple tool calls, independent research, broad inspection, risky edits, fresh review, or progress while the parent handles another lane. Avoid duplicate scouts, overlapping writers, and vague prompts without a concrete deliverable; follow the existing `runs.lanes(...)`, worktree, and async-yield guidance.
 - Keep the parent on the ordinary strong default model. Route workers/scouts to a fast capable tier, serious reviews to a strong tier, and top reasoning to bounded read-only critique.
-- Exact model names are deployment policy. Put them in user/project settings or profiles, not package guidance.
+- Exact model names are deployment policy. Put them in user/project settings or explicit agent definitions, not package guidance.
 - Give every child a compact meta-prompt checklist: objective; repo/cwd/ref; authority/edit boundary; relevant files/contracts and constraints; success/acceptance criteria; validation; expected output/report; and stop/ask conditions. See `references/prompting-and-roles.md`.
 - For mutation work, use an isolated lane/worktree when isolation, overlap, or concurrent juggling matters; keep one writer per cwd/worktree. See `references/multi-lane-orchestration.md` for lane mechanics.
 - Keep long/high-output validation out of chat: prefer `interactive_shell` dispatch/background monitors, bounded logs, or subagent-owned reports; return a concise summary plus report path unless same-turn output is required. See `references/execution-controls.md`.

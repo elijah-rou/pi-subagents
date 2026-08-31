@@ -1101,7 +1101,7 @@ Valid foo.
 		});
 	});
 
-	it("does not register legacy orchestration commands", async () => {
+	it("does not register retired orchestration or provider administration commands", async () => {
 		const commands = new Map<string, unknown>();
 		registerSlashCommands!({
 			registerCommand(name: string, command: unknown) { commands.set(name, command); },
@@ -1109,9 +1109,17 @@ Valid foo.
 			events: createEventBus(),
 		} as never, { baseCwd: process.cwd() } as never);
 		assert.equal(commands.has("run"), true);
-		assert.equal(commands.has("chain"), false);
-		assert.equal(commands.has("parallel"), false);
-		assert.equal(commands.has("run-chain"), false);
+		for (const retired of [
+			"chain",
+			"parallel",
+			"run-chain",
+			"subagents-profiles",
+			"subagents-load-profile",
+			"subagents-refresh-provider-models",
+			"subagents-generate-profiles",
+			"subagents-check-profile",
+			"subagents-refine",
+		]) assert.equal(commands.has(retired), false, retired);
 	});
 });
 

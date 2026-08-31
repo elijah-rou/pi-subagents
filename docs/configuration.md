@@ -89,6 +89,10 @@ Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes
 }
 ```
 
+## Retired provider profiles and catalogs
+
+Package 3d removed provider profile/catalog administration and its model probes. Existing files under `~/.pi/agent/profiles/pi-subagents/` remain untouched unknown artifacts for one published release. Core does not read, write, migrate, or delete them. Already-applied `subagents` values in `~/.pi/agent/settings.json` remain ordinary settings and continue through the normal settings precedence described above.
+
 ## Retired `orcaProgressTabs` key
 
 The Orca observer was removed in Package 3b. The `orcaProgressTabs` key is accepted as inert unknown configuration for one published Package 3b release, regardless of its value. It cannot launch a process or create, update, or delete observer artifacts. Remove the key from current configuration. Existing `.pi/subagents/views/orca` files and old temporary files are left untouched as unknown user artifacts.

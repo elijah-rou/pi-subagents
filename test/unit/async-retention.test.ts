@@ -21,6 +21,10 @@ function makeRoots(): { root: string; asyncDirRoot: string; resultsDir: string; 
 	return { root, asyncDirRoot, resultsDir, waitsDir };
 }
 
+function setPhysicalTimestamp(timestamp: number, ...paths: string[]): void {
+	for (const filePath of paths) fs.utimesSync(filePath, timestamp / 1000, timestamp / 1000);
+}
+
 function writeOldRun(asyncDirRoot: string, runId: string, overrides: Record<string, unknown> = {}): string {
 	const runDir = path.join(asyncDirRoot, runId);
 	fs.mkdirSync(runDir, { recursive: true });
@@ -35,15 +39,14 @@ function writeOldRun(asyncDirRoot: string, runId: string, overrides: Record<stri
 	};
 	const statusPath = path.join(runDir, "status.json");
 	fs.writeFileSync(statusPath, JSON.stringify(status));
-	fs.utimesSync(statusPath, OLD / 1000, OLD / 1000);
-	fs.utimesSync(runDir, OLD / 1000, OLD / 1000);
+	setPhysicalTimestamp(OLD, statusPath, runDir);
 	return runDir;
 }
 
 function writeOldResult(resultsDir: string, runId: string, overrides: Record<string, unknown> = {}): string {
 	const resultPath = path.join(resultsDir, `${runId}.json`);
 	fs.writeFileSync(resultPath, JSON.stringify({ runId, sessionId: "session-a", success: true, state: "complete", endedAt: OLD, ...overrides }));
-	fs.utimesSync(resultPath, OLD / 1000, OLD / 1000);
+	setPhysicalTimestamp(OLD, resultPath);
 	return resultPath;
 }
 
@@ -100,12 +103,20 @@ describe("async retention cleanup", () => {
 			assert.equal(repaired.repairedRuns, 1);
 			assert.equal(repaired.deletedRuns, 0);
 			assert.equal(repaired.skipped.recent, 1);
-			assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, "status.json"), "utf-8")).state, "failed");
+			const repairedStatusPath = path.join(runDir, "status.json");
+			const repairedResultPath = path.join(roots.resultsDir, "dead-running.json");
+			const repairedStatus = JSON.parse(fs.readFileSync(repairedStatusPath, "utf-8")) as { state: string; endedAt: number };
+			const repairedResult = JSON.parse(fs.readFileSync(repairedResultPath, "utf-8")) as { timestamp: number };
+			assert.deepEqual({ state: repairedStatus.state, endedAt: repairedStatus.endedAt }, { state: "failed", endedAt: NOW });
+			assert.equal(repairedResult.timestamp, NOW);
 			assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, ".active-runs", "dead-running")), false);
-			assert.equal(fs.existsSync(path.join(roots.resultsDir, "dead-running.json")), true);
+			assert.equal(fs.existsSync(repairedResultPath), true);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(protectedDir, "status.json"), "utf-8")).state, "running");
 			assert.equal(repaired.skipped["runtime-reference"], 1);
 
+			// Reconciliation writes use the wall clock. Pin those physical timestamps to
+			// the injected logical clock before testing the later retention boundary.
+			setPhysicalTimestamp(NOW, repairedStatusPath, repairedResultPath, runDir);
 			const retained = await cleanupAsyncRetention({
 				...cleanupOptions(roots),
 				now: () => NOW + 45 * DAY_MS,
@@ -222,7 +233,9 @@ describe("async retention cleanup", () => {
 	it("uses one cleaner, reaps stale tombstones safely, and limits processed runs", async () => {
 		const roots = makeRoots();
 		try {
-			fs.mkdirSync(path.join(roots.root, ".async-retention.lock"));
+			const emptyLock = path.join(roots.root, ".async-retention.lock");
+			fs.mkdirSync(emptyLock);
+			setPhysicalTimestamp(NOW, emptyLock);
 			const locked = await cleanupAsyncRetention(cleanupOptions(roots));
 			assert.equal(locked.acquired, false);
 			assert.equal(locked.skipped["lock-busy"], 1);

@@ -2,20 +2,18 @@
 
 Models may use only the Package 1 actions listed in the main skill. For discovery, use `list`, `get`, `models`, and `children.list`. For lifecycle work, use the retained status/control actions.
 
-Do not call agent authoring, refinement, profile, schedule, mission, pane, lane-policy, broad-cleanup, or spawn-budget administration through the model-facing `subagent` tool.
+Do not call agent authoring, schedule, mission, lane-policy, broad-cleanup, or spawn-budget administration through the model-facing `subagent` tool. Provider profile/catalog administration and the Herdr inspector/project-pane products are retired, not hidden behind trusted slash, RPC, or package routes. Refinement overlays are retired.
 
 ## Named human interfaces
 
 - Agent authoring and enable/disable/reset operations: `/subagents`
-- Refinement overlays: `/subagents-refine`
-- Profiles and provider catalogs: `/subagents-profiles`, `/subagents-load-profile`, `/subagents-refresh-provider-models`, `/subagents-generate-profiles`, `/subagents-check-profile`
 - Fleet inspection: `/subagents-fleet`
 - Diagnostics and guides: `/subagents-doctor`, `/subagents-guide`
 - Models: `/subagents-models`
 
 Trusted RPC retains only one-release passive `schedule.list`, `schedule.show`, and `schedule.history` compatibility readers. Schedule mutation and execution are removed. RPC spawn still accepts only current direct or workflow execution and rejects removed public execution shapes.
 
-Package 2a removed mission administration and all new mission writes; only bounded legacy reading and completion synchronization remain for one release. Lane merge/supersession policy, broad cleanup, and optional pane administration still have no supported human replacement. Do not invent or recommend a mission slash interface.
+Package 2a removed mission administration and all new mission writes; only bounded legacy reading and completion synchronization remain for one release. Lane merge/supersession policy and broad cleanup still have no supported human replacement. Do not invent or recommend mission, provider profile/catalog, or Herdr pane administration interfaces.
 
 `append-step` remains internal executor compatibility only. Model, slash, and RPC normalizers reject it.
 

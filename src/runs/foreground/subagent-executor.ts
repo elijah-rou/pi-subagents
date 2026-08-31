@@ -22,7 +22,6 @@ import { persistForegroundRunHistory, MAX_REMEMBERED_FOREGROUND_RUNS } from "./f
 import { invalidateFleetViews } from "../../shared/fleet-invalidation.ts";
 import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
-import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { normalizePublicSubagentExecution, normalizeTrustedHostSubagentExecution } from "../../extension/public-execution.ts";
@@ -181,8 +180,8 @@ import {
 } from "../../shared/types.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 
-const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.rollback", "dismiss"]);
-const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "worktree.discard", "refine.rollback", "stop", "interrupt"]);
+const MUTATING_MANAGEMENT_ACTIONS = new Set(["create", "update", "delete", "eject", "disable", "enable", "reset", "grant-spawn-budget", "worktree.discard", "worktree.cleanup", "lane.recordMerge", "lane.recordSupersession", "dismiss"]);
+const DESTRUCTIVE_MANAGEMENT_ACTIONS = new Set(["delete", "eject", "disable", "reset", "worktree.discard", "stop", "interrupt"]);
 
 function resolveSteerDeliveryMode(mode: SubagentParamsLike["mode"]): SteerDeliveryMode | undefined {
 	return mode === "steer" || mode === "follow_up" || mode === "auto" ? mode : undefined;
@@ -5499,29 +5498,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 			}
 
-			if (action === "refine" || action === "refine.show" || action === "refine.rollback") {
-				if (deps.allowMutatingManagementActions === false && MUTATING_MANAGEMENT_ACTIONS.has(action)) {
-					return {
-						content: [{ type: "text", text: `Action '${action}' is not available from child-safe subagent fanout mode.` }],
-						isError: true,
-						details: { mode: "management", results: [] },
-					};
-				}
-				return handleRefinementAction(action, paramsWithResolvedCwd, {
-					cwd: requestCwd,
-					state: deps.state,
-					signal,
-					launchProposalChild: (task, outputSchema, proposalSignal) => execute(randomUUID(), {
-						agent: "reviewer",
-						task,
-						context: "fresh",
-						async: false,
-						artifacts: false,
-						outputSchema,
-						toolBudget: { hard: 1, block: ["write", "edit", "bash"] },
-					}, proposalSignal, undefined, ctx, true),
-				});
-			}
 			if (action === "grant-spawn-budget") {
 				if (deps.allowMutatingManagementActions === false || !ctx.hasUI) {
 					return {

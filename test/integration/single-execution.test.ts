@@ -168,6 +168,8 @@ interface MockPiCallRecord {
 	systemPrompts?: Array<{ mode?: string; path?: string; text?: string; error?: string }>;
 }
 
+const VALID_LEGACY_REFINEMENT_V1_PATH = new URL("../fixtures/retired-refinement-v1/worker.md", import.meta.url);
+
 function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "stop") {
 	return {
 		type: "message_end",
@@ -224,9 +226,16 @@ interface ExecutorModule {
 	DEFAULT_FOREGROUND_TIMEOUT_MS?: number;
 }
 
+interface AsyncExecutionModule {
+	buildAsyncRunnerSteps(id: string, params: Record<string, unknown>):
+		| { steps: Array<{ systemPrompt?: string | null }> }
+		| { error: string };
+}
+
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
+const asyncExecutionMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
 const available = !!(execution && utils);
 
 const runSync = execution?.runSync;
@@ -308,6 +317,34 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
 			.sort()
 			.map((name) => (JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord).args);
+	}
+
+	function readAllCalls(): MockPiCallRecord[] {
+		return fs.readdirSync(mockPi.dir)
+			.filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.sort()
+			.map((name) => JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")) as MockPiCallRecord);
+	}
+
+	function writeValidLegacyRefinement(): { filePath: string; bytes: Buffer } {
+		const filePath = path.join(tempDir, ".pi", "subagents", "refinements", "worker.md");
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		const bytes = fs.readFileSync(VALID_LEGACY_REFINEMENT_V1_PATH);
+		fs.writeFileSync(filePath, bytes);
+		return { filePath, bytes };
+	}
+
+	async function waitForAsyncTerminal(asyncDir: string): Promise<AsyncStatus> {
+		const statusPath = path.join(asyncDir, "status.json");
+		const deadline = Date.now() + 10_000;
+		while (Date.now() < deadline) {
+			if (fs.existsSync(statusPath)) {
+				const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+				if (status.state === "complete" || status.state === "failed") return status;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		assert.fail(`Timed out waiting for async run at ${asyncDir}`);
 	}
 
 	function makeExecutor(
@@ -6831,6 +6868,57 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const prompt = readCall().systemPrompts.map((record) => record.text ?? "").join("\n");
 		assert.match(prompt, /local skill description/);
 		assert.match(prompt, new RegExp(escapeRegExp(skillFile)));
+	});
+
+	it("leaves a valid retired refinement inert during foreground prompt assembly", async () => {
+		const legacy = writeValidLegacyRefinement();
+		mockPi.onCall({ output: "foreground completed" });
+
+		const result = await runSync(tempDir, [makeAgent("worker")], "worker", "Task", {});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(getFinalOutput(result.messages), "foreground completed");
+		assert.doesNotMatch(readCall().systemPrompts.map((record) => record.text ?? "").join("\n"), /VALID_LEGACY_OVERLAY_MUST_REMAIN_INERT/);
+		assert.deepEqual(fs.readFileSync(legacy.filePath), legacy.bytes);
+	});
+
+	it("leaves a valid retired refinement inert during async single prompt assembly", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const legacy = writeValidLegacyRefinement();
+		mockPi.onCall({ output: "async single completed" });
+
+		const launch = await makeExecutor([makeAgent("worker")]).execute(
+			"legacy-refinement-async-single",
+			{ agent: "worker", task: "Task", async: true },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "async launch failed");
+		assert.ok(launch.details.asyncDir);
+		const status = await waitForAsyncTerminal(launch.details.asyncDir);
+		assert.equal(status.state, "complete", status.error);
+		assert.equal(mockPi.callCount(), 1);
+		assert.doesNotMatch(readAllCalls().flatMap((call) => call.systemPrompts ?? []).map((record) => record.text ?? "").join("\n"), /VALID_LEGACY_OVERLAY_MUST_REMAIN_INERT/);
+		assert.deepEqual(fs.readFileSync(legacy.filePath), legacy.bytes);
+	});
+
+	it("leaves a valid retired refinement inert during async chain prompt assembly", { skip: !asyncExecutionMod ? "async execution module not importable" : undefined }, () => {
+		const legacy = writeValidLegacyRefinement();
+		assert.ok(asyncExecutionMod);
+
+		const built = asyncExecutionMod.buildAsyncRunnerSteps("legacy-refinement-async-chain", {
+			chain: [{ agent: "worker", task: "Task" }],
+			agents: [makeAgent("worker")],
+			ctx: { pi: {}, cwd: tempDir, currentSessionId: "legacy-refinement-session" },
+			maxSubagentDepth: 1,
+			asyncDir: path.join(tempDir, ".pi", "subagents", "async", "legacy-refinement-async-chain"),
+		});
+
+		assert.ok("steps" in built, "error" in built ? built.error : "async chain assembly failed");
+		assert.equal(built.steps.length, 1);
+		assert.doesNotMatch(built.steps[0]?.systemPrompt ?? "", /VALID_LEGACY_OVERLAY_MUST_REMAIN_INERT/);
+		assert.deepEqual(fs.readFileSync(legacy.filePath), legacy.bytes);
 	});
 
 	it("falls back to the runtime cwd when the task cwd lacks a skill", async () => {

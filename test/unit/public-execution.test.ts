@@ -18,14 +18,34 @@ describe("public subagent execution normalization", () => {
 			"list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status",
 			"status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor",
 		]);
-		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 30);
+		assert.equal(SUBAGENT_INTERNAL_ACTIONS.length, 27);
 		assert.deepEqual(SUBAGENT_INTERNAL_ACTIONS.filter((action) => action.startsWith("schedule.")), []);
 		assert.ok(!SUBAGENT_INTERNAL_ACTIONS.includes("append-step"));
-		for (const action of ["inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close"]) {
+		for (const action of ["inspector.open", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "refine", "refine.show", "refine.rollback"]) {
 			assert.equal(normalizePublicSubagentExecution({ action }).ok, false);
 			assert.equal(normalizeTrustedHostSubagentExecution({ action }).ok, false);
 		}
+	});
 
+	it("returns action-appropriate retirement guidance for refinement actions on every host surface", () => {
+		const expectedGuidance = {
+			refine: /Refinement overlays are retired[\s\S]*explicit reviewer workflow[\s\S]*human \/subagents interface/,
+			"refine.show": /Refinement overlay display is retired[\s\S]*inert unknown files[\s\S]*historical reference/,
+			"refine.rollback": /Refinement overlay rollback is retired[\s\S]*rollback is unavailable[\s\S]*human \/subagents interface/,
+		} as const;
+
+		for (const [action, expected] of Object.entries(expectedGuidance)) {
+			const casingVariants = [action, action.toUpperCase(), action.replace("refine", "ReFiNe")];
+			for (const requestedAction of casingVariants) {
+				for (const normalize of [normalizePublicSubagentExecution, normalizeTrustedHostSubagentExecution]) {
+					const result = normalize({ action: requestedAction });
+					assert.equal(result.ok, false, requestedAction);
+					if (result.ok) continue;
+					assert.match(result.error, expected, requestedAction);
+					assert.doesNotMatch(result.error, /subagents-refine|RPC bridge/i, requestedAction);
+				}
+			}
+		}
 	});
 
 	it("accepts structured single-child, workflow, and retained management", () => {

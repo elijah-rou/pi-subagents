@@ -11,6 +11,8 @@
 - Add a parent-only `/candidate-panel` recipe for independent structured proposals and advisory comparison.
 
 ### Changed
+- Remove refinement overlays from core, including trusted dispatch, `/subagents-refine`, proposal children, prompt injection, evidence readers, and artifact writers. Explicit reviewer workflows and human `/subagents` agent authoring remain. Existing refinement artifacts remain untouched inert unknown data for one published Package 3e release.
+- Remove provider profile/catalog administration from core, including five slash commands, saved-profile settings application, catalog writers, and live model probes. Existing saved JSON remains untouched unknown data for one published Package 3d release; already-applied settings remain current settings.
 - Remove the full Herdr integration from core: inspectors, project panes, passive metadata/events, process execution, bindings, Fleet rows/actions, trusted actions, and lifecycle restoration. Fleet, status, transcripts, native controls, and recovery remain authoritative. Old Herdr artifacts and inputs are inert and untouched for one published Package 3c release.
 - Remove Orca observer integration from core, including process discovery/spawn, native and external mirroring hooks, manifests, temporary logs, counters, locks, and cleanup writers. The old `orcaProgressTabs` config key is inert for one published Package 3b release, and existing observer artifacts remain untouched.
 - Remove the optional main and child model-review watchdog from core, including startup hooks, child tail delays, model/configuration actions, slash UI, LSP review coupling, and settings writers. Explicit reviewer workflows remain. Child permission `ask` now deterministically denies rather than delegating authority to a model. Old watchdog settings, result fields, and status events are accepted inert for one published Package 3a release.
@@ -32,7 +34,6 @@
 - Clarify portable subagent orchestration guidance: keep the parent on the ordinary strong default model, route bounded workers/scouts to a fast worker tier, and reserve a top-reasoning model for bounded read-only critique or escalation without requiring a specific provider.
 - Trim duplicated orchestration recipes from the packaged skill while keeping policy in `constraints-and-recipes.md` and execution details in `execution-controls.md`.
 - Clarify workflowScript portability and runs.host working-directory limits, including the outer workflow cwd and trusted `cd ... && command` patterns (#1679).
-- Rank high-signal refinement evidence before output context and bound each complete serialized evidence item.
 - Reject parent-orchestrated prompt templates in the child `/prompt-workflow` wrapper.
 
 ### Fixed

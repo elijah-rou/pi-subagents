@@ -48,7 +48,7 @@ describe("registered subagent tool description", () => {
 		assert.doesNotMatch(description, /codex-exec|claude-code|cursor-agent/);
 		assert.equal(metadata.promptSnippet, SUBAGENT_TOOL_PROMPT_SNIPPET);
 		assert.equal(Buffer.byteLength(metadata.promptSnippet!), 62);
-		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3640);
+		assert.equal(Buffer.byteLength(metadata.promptGuidelines!.join("\n")), 3574);
 		assert.deepEqual(metadata.promptGuidelines, SUBAGENT_TOOL_PROMPT_GUIDELINES);
 		assert.match(metadata.promptGuidelines!.join("\n"), /Use subagent only when delegation is needed/i);
 		assert.match(metadata.promptGuidelines!.join("\n"), /action: \"list\".*executable, non-disabled/i);
@@ -75,8 +75,9 @@ describe("registered subagent tool description", () => {
 		for (const description of [FULL_SUBAGENT_TOOL_DESCRIPTION, COMPACT_SUBAGENT_TOOL_DESCRIPTION]) {
 			assert.match(description, /Model actions are exactly list, get, models, children\.list, guide, validate, worktree\.discard, lane\.status, status, debug\.run, interrupt, resume, steer, stop, and doctor/i);
 			assert.doesNotMatch(description, /schedule\.create|mission\.create|watchdog\.configure|lane\.recordMerge|lane\.recordSupersession|worktree\.cleanup|grant-spawn-budget/i);
-			assert.match(description, /\/subagents for agent authoring.*\/subagents-refine.*profile slash commands.*\/subagents-fleet.*passive legacy schedule list\/show\/history readers/i);
-			assert.match(description, /Missions, schedule execution, lane merge\/supersession, broad cleanup, and panes have no supported replacement pending Package 3/i);
+			assert.match(description, /\/subagents for agent authoring and \/subagents-fleet.*passive legacy schedule list\/show\/history readers/i);
+			assert.match(description, /Missions, schedule execution, lane merge\/supersession, broad cleanup, and panes have no supported replacement/i);
+			assert.doesNotMatch(description, /pending Package 3/i);
 		}
 	});
 
@@ -116,7 +117,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
-		assert.match(description, /\/subagents for agent authoring.*\/subagents-refine.*profile slash commands.*\/subagents-fleet.*passive legacy schedule list\/show\/history readers/i);
+		assert.match(description, /\/subagents for agent authoring and \/subagents-fleet.*passive legacy schedule list\/show\/history readers/i);
 	});
 
 	it("offers a compact mode that keeps the two-tier contract and safety guidance", () => {
@@ -145,7 +146,7 @@ describe("registered subagent tool description", () => {
 		assert.match(description, /no per-step cwd.*workflow cwd.*outer subagent request.*cd \/path\/to\/worktree/i);
 		assert.match(description, /Per-run thinking is a suffix on the model string.*off\/minimal\/low\/medium\/high\/xhigh\/max/i);
 		assert.match(description, /suffix wins over the agent's thinking default/i);
-		assert.match(description, /\/subagents for agent authoring.*\/subagents-refine.*profile slash commands.*\/subagents-fleet.*passive legacy schedule list\/show\/history readers/i);
+		assert.match(description, /\/subagents for agent authoring and \/subagents-fleet.*passive legacy schedule list\/show\/history readers/i);
 		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length);
 	});
 

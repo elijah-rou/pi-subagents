@@ -1279,7 +1279,7 @@ describe("subagent extension child mode", () => {
 			);
 			await assert.rejects(
 				registeredTool.execute("refine-check", { action: "refine", agent: "worker" }, new AbortController().signal, undefined, ctx),
-				/removed from the model surface/,
+				/Refinement overlays are retired/,
 			);
 			await assert.rejects(
 				registeredTool.execute("grant-check", { action: "grant-spawn-budget", additional: 1 }, new AbortController().signal, undefined, { ...ctx, hasUI: true }),
