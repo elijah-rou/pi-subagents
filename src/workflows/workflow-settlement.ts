@@ -6,6 +6,7 @@ import type {
 	Usage,
 } from "../shared/types.ts";
 import type { WorkflowReceipt } from "./workflow-receipt.ts";
+import { decideChildTerminal } from "../runs/shared/terminal-decision.ts";
 import { workflowChildSummary } from "./workflow-child-summary.ts";
 
 export const UNSUPPORTED_DETACHED_WORKFLOW_CONTINUATION = "unsupported-continuation: detached workflow child settled, but JavaScript workflow continuation was not persisted. Resume the workflow explicitly instead of treating the completed child as top-level workflow completion.";
@@ -108,7 +109,13 @@ export function applyDetachedChildSettlement(
 	const step = findWorkflowSettlementStep(next, input.childRunId, input.workflowKey, input.result.sessionFile);
 	if (!step) return undefined;
 	step.runId ??= input.childRunId;
-	const succeeded = input.result.exitCode === 0 && !input.result.error && !input.result.interrupted;
+	const terminal = decideChildTerminal({
+		exitCode: input.result.exitCode ?? 1,
+		error: input.result.error,
+		interrupted: input.result.interrupted,
+		stopped: input.result.stopped,
+	});
+	const succeeded = terminal.success;
 	const failedSiblingError = next.steps?.find((candidate) => {
 		const candidateStep = candidate as WorkflowStatusStep;
 		return candidateStep !== step && candidateStep.status === "failed" && !candidateStep.interrupted && candidateStep.error;

@@ -6,7 +6,6 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { Message } from "@earendil-works/pi-ai";
 import {
-	acceptanceBlocksRun,
 	acceptanceFailureMessage,
 	aggregateAcceptanceReport,
 	evaluateAcceptance,
@@ -90,7 +89,6 @@ describe("acceptance gates", () => {
 			assert.ok(inferred.inferredReason.length > 0);
 			const ledger = await evaluateAcceptance({ acceptance: inferred, output: "done", cwd: process.cwd() });
 			assert.equal(ledger.status, "rejected");
-			assert.equal(acceptanceBlocksRun(ledger), true);
 		}
 	});
 
@@ -157,23 +155,6 @@ describe("acceptance gates", () => {
 			const commandLedger = await evaluateAcceptance({ acceptance: commandBound, output: "", cwd, deadlineAt: Date.now() + 5_000 });
 			assert.equal(commandLedger.verifyRuns[0]?.status, "timed-out");
 			assert.ok((commandLedger.verifyRuns[0]?.durationMs ?? 1_000) < 1_000);
-		} finally {
-			fs.rmSync(cwd, { recursive: true, force: true });
-		}
-	});
-
-	it("blocks only rejected fail-policy contracts", async () => {
-		const cwd = tempRepo();
-		try {
-			for (const [onFailure, blocks] of [["fail", true], ["warn", false]] as const) {
-				const acceptance = resolveEffectiveAcceptance({
-					agentName: "worker",
-					explicit: { verify: [{ id: "fail", command: "node -e \"process.exit(1)\"" }], onFailure },
-				});
-				const ledger = await evaluateAcceptance({ acceptance, output: "", cwd });
-				assert.equal(ledger.status, "rejected");
-				assert.equal(acceptanceBlocksRun(ledger), blocks);
-			}
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}
@@ -1060,7 +1041,6 @@ describe("acceptance gates", () => {
 			const ledger = await evaluateAcceptance({ acceptance, output: "done", cwd });
 			assert.equal(ledger.reviewResult?.status, "needs-parent-decision");
 			assert.notEqual(ledger.status, "reviewed");
-			assert.equal(acceptanceBlocksRun(ledger), false);
 		} finally {
 			fs.rmSync(cwd, { recursive: true, force: true });
 		}

@@ -105,9 +105,9 @@ import {
 	shouldEscalateMutatingFailures,
 	summarizeRecentMutatingFailures,
 } from "../shared/long-running-guard.ts";
-import { acceptanceBlocksRun, acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
+import { buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport, validateAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";
 import { PROMPT_REDACTED } from "../../shared/utils.ts";
-import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
+import { isAgentContractV1, settleChildResult } from "../shared/agent-contract.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
 import { consumeWorkflowChildPermit } from "../../shared/workflow-child-permit.ts";
@@ -2199,10 +2199,9 @@ async function runSyncCompletionInner(
 		const message = `Acceptance evaluation failed: ${error instanceof Error ? error.message : String(error)}`;
 		result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "acceptance-evaluation", message });
 	}
-	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
 	stripAcceptanceReportsFromMessages(result.messages);
-	if (acceptanceFailure && acceptanceBlocksRun(result.acceptance) && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut && (!isAgentContractV1(options.agentContract) || !effectiveAcceptance.explicit)) {
-		result.exitCode = 1;
+	const terminalDecision = settleChildResult(result);
+	if (terminalDecision.status === "failed") {
 		if (result.savedOutputPath) {
 			result.finalOutput = finalizeSingleOutput({
 				fullOutput: result.finalOutput ?? "",
@@ -2215,7 +2214,6 @@ async function runSyncCompletionInner(
 			}).displayOutput;
 			artifactOutputByResult.set(result, result.finalOutput);
 		}
-		result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
 		if (artifactPathsResult && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
 			try {
 				writeArtifact(artifactPathsResult.outputPath, formatOutputArtifactContent({
@@ -2234,7 +2232,6 @@ async function runSyncCompletionInner(
 			result.progress.error = result.error;
 		}
 	}
-	if (isAgentContractV1(options.agentContract)) attachContractProjections(result);
 	redactResultPrompt(result);
 	try {
 		persistResultMetadata(result);
@@ -2349,7 +2346,7 @@ export async function runSync(
 				? buildSkippedAcceptanceLedger(publishedReceipt.acceptance.effectiveAcceptance, { id: "completion-pipeline", message: failureMessage })
 				: undefined,
 		});
-		if (strictContract) attachContractProjections(failedResult);
+		settleChildResult(failedResult);
 		try {
 			// Replace the provisional detach receipt metadata with the authoritative
 			// terminal failure. Persistence remains best-effort and cannot orphan work.

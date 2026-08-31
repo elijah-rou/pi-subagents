@@ -130,8 +130,9 @@ import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceBlocksRun, acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
-import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
+import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { buildReviewProjection, isAgentContractV1 } from "../shared/agent-contract.ts";
+import { decideChildTerminal } from "../shared/terminal-decision.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { statusStepDescription } from "./status-step-description.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
@@ -2021,18 +2022,24 @@ async function runSingleStepInner(
 				: acceptance
 		: undefined;
 	const acceptanceFailure = effectiveAcceptance ? acceptanceFailureMessage(effectiveAcceptance) : undefined;
-	const acceptanceCanFailRun = Boolean(effectiveAcceptance && acceptanceBlocksRun(effectiveAcceptance) && acceptanceFailure && (finalResult?.exitCode ?? 1) === 0 && !finalResult?.interrupted && !timedOutAfterAcceptance && !stoppedAfterAcceptance && (!isAgentContractV1(step.agentContract) || !step.effectiveAcceptance?.explicit));
-	const effectiveFinalExitCode = timedOutAfterAcceptance || stoppedAfterAcceptance ? 1 : acceptanceCanFailRun ? 1 : finalResult?.exitCode ?? 1;
 	const intercomDetachReceipt = finalResult?.finalOutput === INTERCOM_DETACH_RECEIPT;
 	const baseFinalError = stoppedAfterAcceptance
 		? ctx.stopMessage ?? "Subagent stopped by user."
 		: timedOutAfterAcceptance
 			? finalResult?.error ?? ctx.timeoutMessage ?? "Subagent timed out."
-			: acceptanceCanFailRun
-					? (finalResult?.error ? `${finalResult.error}\n${acceptanceFailure}` : acceptanceFailure)
-					: finalResult?.error ?? (intercomDetachReceipt ? INTERCOM_DETACH_RECEIPT : undefined);
-	const effectiveFinalError = formatChildFailureDiagnostic({
+			: finalResult?.error ?? (intercomDetachReceipt ? INTERCOM_DETACH_RECEIPT : undefined);
+	const terminalDecision = decideChildTerminal({
+		exitCode: finalResult?.exitCode ?? 1,
 		error: baseFinalError,
+		interrupted: timedOutAfterAcceptance || stoppedAfterAcceptance ? false : finalResult?.interrupted,
+		timedOut: timedOutAfterAcceptance,
+		stopped: stoppedAfterAcceptance,
+		...(effectiveAcceptance ? { acceptance: { status: effectiveAcceptance.status, diagnostic: acceptanceFailure, required: effectiveAcceptance.effectiveAcceptance.onFailure === "fail" } } : {}),
+		effects: finalResult?.effects,
+	});
+	const effectiveFinalExitCode = terminalDecision.exitCode;
+	const effectiveFinalError = formatChildFailureDiagnostic({
+		error: terminalDecision.error,
 		afterCompactionSettlement: effectiveFinalExitCode !== 0 ? finalResult?.afterCompactionSettlement : undefined,
 		abortRecoveryDiagnostic: effectiveFinalExitCode !== 0 ? finalResult?.abortRecoveryDiagnostic : undefined,
 		requiredOutput: effectiveFinalExitCode !== 0 ? finalResult?.effects?.settlementDiagnostic?.requiredOutput : undefined,
@@ -2107,6 +2114,10 @@ async function runSingleStepInner(
 		toolBudgetBlocked: toolBudgetBlocked || undefined,
 		completionGuardTriggered: completionGuardTriggeredFinal,
 		...((finalResult as (RunPiStreamingResult & { effects?: import("../../shared/types.ts").EffectsProjection }) | undefined)?.effects ? { effects: (finalResult as RunPiStreamingResult & { effects?: import("../../shared/types.ts").EffectsProjection }).effects } : {}),
+		...(isAgentContractV1(step.agentContract) ? {
+			execution: terminalDecision.execution,
+			review: buildReviewProjection({ acceptance: effectiveAcceptance }),
+		} : {}),
 		structuredOutput: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : (finalResult as (RunPiStreamingResult & { structuredOutput?: unknown }) | undefined)?.structuredOutput,
 		structuredOutputPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.outputPath,
 		structuredOutputSchemaPath: timedOutAfterAcceptance || stoppedAfterAcceptance ? undefined : effectiveStructuredOutput?.schemaPath,
@@ -2118,7 +2129,7 @@ async function runSingleStepInner(
 		writerProcesses,
 		writerAttemptCount,
 	});
-	return isAgentContractV1(step.agentContract) ? attachContractProjections(result as unknown as import("../../shared/types.ts").SingleResult) as unknown as typeof result : result;
+	return result;
 }
 
 async function runSingleStep(
@@ -2313,6 +2324,40 @@ function resolveAsyncStepTranscriptPath(input: {
 }
 
 type SingleStepResult = Awaited<ReturnType<typeof runSingleStep>>;
+
+function decideWorkflowChildTerminal(result: SingleStepResult, lifecycle?: { timedOut?: boolean; stopped?: boolean }) {
+	const stopped = lifecycle?.stopped === true || result.stopped === true;
+	const timedOut = !stopped && (lifecycle?.timedOut === true || result.timedOut === true);
+	return decideChildTerminal({
+		exitCode: result.exitCode ?? 1,
+		error: stopped ? "Subagent stopped by user." : timedOut ? result.error ?? "Subagent timed out." : result.error,
+		interrupted: stopped || timedOut ? false : result.interrupted,
+		timedOut,
+		stopped,
+		...(result.acceptance ? { acceptance: { status: result.acceptance.status, diagnostic: acceptanceFailureMessage(result.acceptance), required: result.acceptance.effectiveAcceptance.onFailure === "fail" } } : {}),
+		effects: result.effects,
+	});
+}
+
+function workflowStatusFromTerminal(status: ReturnType<typeof decideWorkflowChildTerminal>["status"]): "complete" | "failed" | "paused" | "stopped" {
+	switch (status) {
+		case "completed": return "complete";
+		case "paused": return "paused";
+		case "stopped": return "stopped";
+		case "detached": return "paused";
+		case "failed": return "failed";
+	}
+}
+
+function handoffStatusFromTerminal(status: ReturnType<typeof decideWorkflowChildTerminal>["status"]): "completed" | "failed" | "paused" | "stopped" {
+	switch (status) {
+		case "completed": return "completed";
+		case "paused": return "paused";
+		case "stopped": return "stopped";
+		case "detached": return "paused";
+		case "failed": return "failed";
+	}
+}
 
 function missingRequiredOutputAfterUsefulMutation(result: SingleStepResult): boolean {
 	const effects = result.effects;
@@ -3863,27 +3908,28 @@ async function runSubagentInner(
 				const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
 				const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
 				if (placeholder && effectiveGroupAcceptance) placeholder.acceptance = effectiveGroupAcceptance;
-				const groupAcceptanceFailure = effectiveGroupAcceptance
-					&& acceptanceBlocksRun(effectiveGroupAcceptance)
-					&& (!isAgentContractV1(step.agentContract) || !effectiveDynamicGroupAcceptance.explicit || step.gateOn === "acceptance")
-					? acceptanceFailureMessage(effectiveGroupAcceptance)
-					: undefined;
-				if (groupTimedOut || groupStopped || groupAcceptanceFailure) {
-					const errorMessage = groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure!;
-					statusPayload.state = groupStopped ? "stopped" : "failed";
-					statusPayload.error = errorMessage;
-					setOptionalProperty(statusPayload, "stopped", groupStopped ? true : statusPayload.stopped);
+				const groupTerminal = decideChildTerminal({
+					exitCode: 0,
+					error: groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : undefined,
+					timedOut: groupTimedOut,
+					stopped: groupStopped,
+					...(effectiveGroupAcceptance ? { acceptance: { status: effectiveGroupAcceptance.status, diagnostic: acceptanceFailureMessage(effectiveGroupAcceptance), required: effectiveGroupAcceptance.effectiveAcceptance.onFailure === "fail" } } : {}),
+				});
+				if (!groupTerminal.success) {
+					statusPayload.state = groupTerminal.status === "stopped" ? "stopped" : "failed";
+					statusPayload.error = groupTerminal.error;
+					setOptionalProperty(statusPayload, "stopped", groupTerminal.execution.stopped ? true : statusPayload.stopped);
 					if (placeholder) {
-						placeholder.status = groupStopped ? "stopped" : "failed";
-						placeholder.error = errorMessage;
-						placeholder.exitCode = 1;
-						setOptionalProperty(placeholder, "timedOut", groupTimedOut ? true : undefined);
-						setOptionalProperty(placeholder, "stopped", groupStopped ? true : undefined);
+						placeholder.status = groupTerminal.status === "stopped" ? "stopped" : "failed";
+						placeholder.error = groupTerminal.error;
+						placeholder.exitCode = groupTerminal.exitCode;
+						setOptionalProperty(placeholder, "timedOut", groupTerminal.execution.timedOut);
+						setOptionalProperty(placeholder, "stopped", groupTerminal.execution.stopped);
 					}
-					markDynamicGraphGroup(stepIndex, groupStopped ? "stopped" : "failed", errorMessage, effectiveGroupAcceptance);
+					markDynamicGraphGroup(stepIndex, groupTerminal.status === "stopped" ? "stopped" : "failed", groupTerminal.error, effectiveGroupAcceptance);
 					statusPayload.lastUpdate = Date.now();
 					writeStatusPayload();
-					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: errorMessage, error: errorMessage, success: false, exitCode: 1, timedOut: groupTimedOut ? true : undefined, stopped: groupStopped ? true : undefined, acceptance: effectiveGroupAcceptance }));
+					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: groupTerminal.error, error: groupTerminal.error, success: false, exitCode: groupTerminal.exitCode, timedOut: groupTerminal.execution.timedOut, stopped: groupTerminal.execution.stopped, acceptance: effectiveGroupAcceptance }));
 					break;
 				}
 				flatIndex++;
@@ -4126,12 +4172,12 @@ async function runSubagentInner(
 					usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
 				}), config.deadlineAt);
 				const taskEndTime = Date.now();
-				const childInterrupted = singleResult.interrupted === true;
-				const childStopped = singleResult.stopped === true;
-				requiredStatusStep(statusPayload, fi).status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+				const childTerminal = decideWorkflowChildTerminal(singleResult, { stopped, timedOut });
+				const childStopped = childTerminal.status === "stopped";
+				requiredStatusStep(statusPayload, fi).status = workflowStatusFromTerminal(childTerminal.status);
 				requiredStatusStep(statusPayload, fi).endedAt = taskEndTime;
 				requiredStatusStep(statusPayload, fi).durationMs = taskEndTime - taskStartTime;
-				requiredStatusStep(statusPayload, fi).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+				requiredStatusStep(statusPayload, fi).exitCode = childTerminal.exitCode;
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
@@ -4154,7 +4200,7 @@ async function runSubagentInner(
 					};
 					refreshUsageBudget();
 				}
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error);
+				setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", childTerminal.error);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, fi).transcriptPath);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptError", singleResult.transcriptError);
 				setOptionalProperty(requiredStatusStep(statusPayload, fi), "agentContract", singleResult.agentContract);
@@ -4178,18 +4224,28 @@ async function runSubagentInner(
 				writeStatusPayload();
 				appendCapabilityCeilingAppliedEvent(eventsPath, id, fi, task.agent, singleResult);
 		appendJsonl(eventsPath, JSON.stringify({
-			type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+			type: childTerminal.status === "stopped" ? "subagent.step.stopped" : childTerminal.status === "paused" ? "subagent.step.paused" : childTerminal.success ? "subagent.step.completed" : "subagent.step.failed",
 			ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
-			exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskEndTime - taskStartTime,
+			exitCode: childTerminal.exitCode, durationMs: taskEndTime - taskStartTime,
 		}));
-		if (stopped || childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
-		if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
-				return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: singleResult.output || (timeoutMessage ?? "Subagent timed out."), error: singleResult.error ?? timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
+		if (childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
+		if (!childTerminal.success && childTerminal.status === "failed" && failFast) aborted = true;
+				return {
+					...singleResult,
+					output: childStopped ? stopMessage : childTerminal.execution.timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
+					error: childTerminal.error,
+					exitCode: childTerminal.exitCode,
+					interrupted: childTerminal.status === "paused",
+					timedOut: childTerminal.execution.timedOut,
+					stopped: childStopped,
+					skipped: false,
+				};
 			}, globalSemaphore);
 			for (const entry of dynamicOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
 
 			flatIndex += dynamicSteps.length;
 			for (const [itemIndex, pr] of parallelResults.entries()) {
+				const terminal = decideWorkflowChildTerminal(pr);
 				results.push(omitUndefinedProperties({
 					agent: pr.agent,
 					...(pr.sessionName ? { sessionName: pr.sessionName } : {}),
@@ -4203,8 +4259,8 @@ async function runSubagentInner(
 					outputState: pr.outputState,
 					error: pr.error,
 					protocolError: pr.protocolError,
-					success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
-					exitCode: pr.interrupted === true ? 0 : pr.exitCode,
+					success: terminal.success,
+					exitCode: terminal.exitCode,
 					skipped: pr.skipped,
 					interrupted: pr.interrupted,
 					timedOut: pr.timedOut,
@@ -4239,18 +4295,7 @@ async function runSubagentInner(
 			refreshUsageBudget();
 			const collection = collectDynamicResults(step as Parameters<typeof collectDynamicResults>[0], materialized.items, parallelResults);
 			const failures = parallelResults.filter((result) => result.exitCode !== 0 && result.exitCode !== -1);
-			const acceptanceFailures = parallelResults
-				.map((result, originalIndex) => ({ result, originalIndex, task: dynamicSteps[originalIndex] }))
-				.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? step.agentContract) && task?.gateOn === "acceptance" && result.acceptance?.status === "rejected");
-			if (acceptanceFailures.length > 0) {
-				const message = acceptanceFailures
-					.map(({ result, originalIndex }) => `Dynamic item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}) acceptance rejected: ${(result.acceptance ? acceptanceFailureMessage(result.acceptance) : undefined) ?? "acceptance rejected"}`)
-					.join("\n");
-				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection }));
-				statusPayload.error = message;
-				markDynamicGraphGroup(stepIndex, "failed", message);
-			}
-			if (failures.length === 0 && acceptanceFailures.length === 0) {
+			if (failures.length === 0) {
 				try {
 					await validateDynamicCollection(step.collect.outputSchema, collection);
 					outputs[step.collect.as] = {
@@ -4278,27 +4323,28 @@ async function runSubagentInner(
 					const groupStopped = stopped || stopAbortController.signal.aborted;
 					const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
 					const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
-					const groupAcceptanceFailure = effectiveGroupAcceptance
-						&& acceptanceBlocksRun(effectiveGroupAcceptance)
-						&& (!isAgentContractV1(step.agentContract) || !effectiveDynamicGroupAcceptance.explicit || step.gateOn === "acceptance")
-						? acceptanceFailureMessage(effectiveGroupAcceptance)
-						: undefined;
-					const groupError = groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : groupAcceptanceFailure;
-					markDynamicGraphGroup(stepIndex, groupError ? groupStopped ? "stopped" : "failed" : "completed", groupError, effectiveGroupAcceptance);
-					if (groupError) {
+					const groupTerminal = decideChildTerminal({
+						exitCode: 0,
+						error: groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : undefined,
+						timedOut: groupTimedOut,
+						stopped: groupStopped,
+						...(effectiveGroupAcceptance ? { acceptance: { status: effectiveGroupAcceptance.status, diagnostic: acceptanceFailureMessage(effectiveGroupAcceptance), required: effectiveGroupAcceptance.effectiveAcceptance.onFailure === "fail" } } : {}),
+					});
+					markDynamicGraphGroup(stepIndex, groupTerminal.status === "stopped" ? "stopped" : groupTerminal.success ? "completed" : "failed", groupTerminal.error, effectiveGroupAcceptance);
+					if (!groupTerminal.success) {
 						results.push(omitUndefinedProperties({
 							agent: step.parallel.agent,
-							output: groupError,
-							error: groupError,
+							output: groupTerminal.error,
+							error: groupTerminal.error,
 							success: false,
-							exitCode: 1,
-							timedOut: groupTimedOut ? true : undefined,
-							stopped: groupStopped ? true : undefined,
+							exitCode: groupTerminal.exitCode,
+							timedOut: groupTerminal.execution.timedOut,
+							stopped: groupTerminal.execution.stopped,
 							structuredOutput: collection,
 							acceptance: effectiveGroupAcceptance,
 						}));
-						statusPayload.error = groupError;
-						setOptionalProperty(statusPayload, "stopped", groupStopped ? true : statusPayload.stopped);
+						statusPayload.error = groupTerminal.error;
+						setOptionalProperty(statusPayload, "stopped", groupTerminal.execution.stopped ? true : statusPayload.stopped);
 					}
 				} catch (error) {
 					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
@@ -4322,7 +4368,7 @@ async function runSubagentInner(
 				ts: Date.now(),
 				runId: id,
 				stepIndex,
-				success: failures.length === 0 && acceptanceFailures.length === 0,
+				success: failures.length === 0,
 			}));
 			if (failures.length > 0) markDynamicGraphGroup(stepIndex, "failed", failures[0]?.error ?? "Dynamic fanout child failed.");
 			statusPayload.lastUpdate = Date.now();
@@ -4531,13 +4577,13 @@ async function runSubagentInner(
 
 						const taskEndTime = Date.now();
 						const taskDuration = taskEndTime - taskStartTime;
-						const childInterrupted = singleResult.interrupted === true;
-						const childStopped = singleResult.stopped === true;
+						const childTerminal = decideWorkflowChildTerminal(singleResult, { stopped, timedOut });
+						const childStopped = childTerminal.status === "stopped";
 
-						requiredStatusStep(statusPayload, fi).status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+						requiredStatusStep(statusPayload, fi).status = workflowStatusFromTerminal(childTerminal.status);
 						requiredStatusStep(statusPayload, fi).endedAt = taskEndTime;
 						requiredStatusStep(statusPayload, fi).durationMs = taskDuration;
-						requiredStatusStep(statusPayload, fi).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+						requiredStatusStep(statusPayload, fi).exitCode = childTerminal.exitCode;
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
@@ -4560,7 +4606,7 @@ async function runSubagentInner(
 							};
 							refreshUsageBudget();
 						}
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error);
+						setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", childTerminal.error);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, fi).transcriptPath);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptError", singleResult.transcriptError);
 						setOptionalProperty(requiredStatusStep(statusPayload, fi), "agentContract", singleResult.agentContract);
@@ -4584,11 +4630,11 @@ async function runSubagentInner(
 						appendCapabilityCeilingAppliedEvent(eventsPath, id, fi, task.agent, singleResult);
 
 						appendJsonl(eventsPath, JSON.stringify({
-							type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+							type: childTerminal.status === "stopped" ? "subagent.step.stopped" : childTerminal.status === "paused" ? "subagent.step.paused" : childTerminal.success ? "subagent.step.completed" : "subagent.step.failed",
 							ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
-							exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode, durationMs: taskDuration,
+							exitCode: childTerminal.exitCode, durationMs: taskDuration,
 						}));
-						if (stopped || childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
+						if (childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
 						if (singleResult.completionGuardTriggered) {
 							const event = buildControlEvent(omitUndefinedProperties({
 								from: requiredStatusStep(statusPayload, fi).activityState,
@@ -4603,8 +4649,17 @@ async function runSubagentInner(
 							appendControlEvent(event);
 						}
 
-						if (singleResult.exitCode !== 0 && failFast && !childStopped) aborted = true;
-						return stopped || childStopped ? { ...singleResult, output: stopMessage, error: stopMessage, exitCode: 1, interrupted: false, timedOut: false, stopped: true, skipped: false } : timedOut ? { ...singleResult, output: singleResult.output || (timeoutMessage ?? "Subagent timed out."), error: singleResult.error ?? timeoutMessage ?? "Subagent timed out.", exitCode: 1, interrupted: false, timedOut: true, skipped: false } : { ...singleResult, skipped: false };
+						if (!childTerminal.success && childTerminal.status === "failed" && failFast) aborted = true;
+						return {
+							...singleResult,
+							output: childStopped ? stopMessage : childTerminal.execution.timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
+							error: childTerminal.error,
+							exitCode: childTerminal.exitCode,
+							interrupted: childTerminal.status === "paused",
+							timedOut: childTerminal.execution.timedOut,
+							stopped: childStopped,
+							skipped: false,
+						};
 					},
 					globalSemaphore,
 				);
@@ -4638,6 +4693,7 @@ async function runSubagentInner(
 				writeStatusPayload();
 
 				for (const pr of parallelResults) {
+					const terminal = decideWorkflowChildTerminal(pr);
 					results.push(omitUndefinedProperties({
 						agent: pr.agent,
 						context: pr.context,
@@ -4649,8 +4705,8 @@ async function runSubagentInner(
 						outputState: pr.outputState,
 						error: pr.error,
 						protocolError: pr.protocolError,
-						success: pr.stopped !== true && pr.interrupted !== true && pr.exitCode === 0,
-						exitCode: pr.interrupted === true ? 0 : pr.exitCode,
+						success: terminal.success,
+						exitCode: terminal.exitCode,
 						skipped: pr.skipped,
 						interrupted: pr.interrupted,
 						timedOut: pr.timedOut,
@@ -4716,23 +4772,27 @@ async function runSubagentInner(
 						flatStartIndex: groupStartFlatIndex,
 						setup: worktreeSetup,
 						diffs: captured.diffs,
-						results: parallelResults.map((result) => ({
-							agent: result.agent,
-							...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
-							...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
-							...(config.lane ? { lane: config.lane } : {}),
-							status: result.stopped || (result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
+						results: parallelResults.map((result) => {
+							const processStopped = result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
 								processSignal: result.processSignal,
 								interrupted: result.interrupted,
 								timedOut: result.timedOut,
 								stopped: result.stopped,
-							}))) ? "stopped" as const : result.interrupted ? "paused" as const : result.exitCode === 0 ? "completed" as const : "failed" as const,
-							summary: result.output || result.error || "(no output)",
-							...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
-							...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
-							...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
-							...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
-						})),
+							}));
+							const terminal = decideWorkflowChildTerminal(result, { stopped: result.stopped === true || processStopped });
+							return {
+								agent: result.agent,
+								...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
+								...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
+								...(config.lane ? { lane: config.lane } : {}),
+								status: handoffStatusFromTerminal(terminal.status),
+								summary: result.output || result.error || "(no output)",
+								...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
+								...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
+								...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
+								...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
+							};
+						}),
 					};
 					try {
 						writeParallelHandoffGroup(handoff);
@@ -4750,19 +4810,10 @@ async function runSubagentInner(
 					ts: Date.now(),
 					runId: id,
 					stepIndex,
-					success: parallelResults.every((r) => r.exitCode === 0 || r.exitCode === -1)
-						&& parallelResults.every((result, index) => !(isAgentContractV1(group.parallel[index]?.agentContract) && group.parallel[index]?.gateOn === "acceptance" && result.acceptance?.status === "rejected")),
+					success: parallelResults.every((result) => result.exitCode === -1 || decideWorkflowChildTerminal(result).success),
 				}));
 
-				const acceptanceGateFailure = parallelResults
-					.map((result, index) => ({ result, index, task: group.parallel[index] }))
-					.find(({ result, task }) => isAgentContractV1(task?.agentContract) && task?.gateOn === "acceptance" && result.acceptance?.status === "rejected");
-				if (acceptanceGateFailure) {
-					statusPayload.error = (acceptanceGateFailure.result.acceptance ? acceptanceFailureMessage(acceptanceGateFailure.result.acceptance) : undefined) ?? "Parallel acceptance gate rejected the step.";
-					writeStatusPayload();
-					break;
-				}
-				if (parallelResults.some((r) => r.exitCode !== 0 && r.exitCode !== -1)) {
+				if (parallelResults.some((result) => result.exitCode !== -1 && !decideWorkflowChildTerminal(result).success)) {
 					break;
 				}
 			} finally {
@@ -4894,7 +4945,8 @@ async function runSubagentInner(
 			}
 
 			previousOutput = singleResult.output;
-			const childStopped = singleResult.stopped === true;
+			const singleTerminal = decideWorkflowChildTerminal(singleResult, { stopped, timedOut });
+			const childStopped = singleTerminal.status === "stopped";
 			results.push(omitUndefinedProperties({
 				agent: singleResult.agent,
 				...(singleResult.sessionName ? { sessionName: singleResult.sessionName } : {}),
@@ -4906,10 +4958,10 @@ async function runSubagentInner(
 				runtimeAcknowledgedExtensions: singleResult.runtimeAcknowledgedExtensions,
 				output: stopped || childStopped ? stopMessage : timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
 				outputState: singleResult.outputState,
-				error: stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error,
+				error: singleTerminal.error,
 				protocolError: singleResult.protocolError,
-				success: !stopped && !childStopped && !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
-				exitCode: stopped || childStopped ? 1 : timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
+				success: singleTerminal.success,
+				exitCode: singleTerminal.exitCode,
 				sessionFile: singleResult.sessionFile,
 				intercomTarget: singleResult.intercomTarget,
 				model: singleResult.model,
@@ -4982,11 +5034,10 @@ async function runSubagentInner(
 			}
 
 			const stepEndTime = Date.now();
-			const childInterrupted = singleResult.interrupted === true;
-			requiredStatusStep(statusPayload, flatIndex).status = stopped || childStopped ? "stopped" : timedOut ? "failed" : childInterrupted ? "paused" : singleResult.exitCode === 0 ? "complete" : "failed";
+			requiredStatusStep(statusPayload, flatIndex).status = workflowStatusFromTerminal(singleTerminal.status);
 			requiredStatusStep(statusPayload, flatIndex).endedAt = stepEndTime;
 			requiredStatusStep(statusPayload, flatIndex).durationMs = stepEndTime - stepStartTime;
-			requiredStatusStep(statusPayload, flatIndex).exitCode = stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+			requiredStatusStep(statusPayload, flatIndex).exitCode = singleTerminal.exitCode;
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "stopped", stopped || childStopped ? true : undefined);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudget", singleResult.toolBudget);
@@ -5001,7 +5052,7 @@ async function runSubagentInner(
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "modelAttempts", singleResult.modelAttempts);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "contextOverflow", singleResult.contextOverflow);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "totalCost", singleResult.totalCost);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "error", stopped || childStopped ? stopMessage : timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error);
+			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "error", singleTerminal.error);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, flatIndex).transcriptPath);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptError", singleResult.transcriptError);
 			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "agentContract", singleResult.agentContract);
@@ -5029,12 +5080,12 @@ async function runSubagentInner(
 			appendCapabilityCeilingAppliedEvent(eventsPath, id, flatIndex, seqStep.agent, singleResult);
 
 			appendJsonl(eventsPath, JSON.stringify({
-				type: stopped || childStopped ? "subagent.step.stopped" : timedOut ? "subagent.step.failed" : childInterrupted ? "subagent.step.paused" : singleResult.exitCode === 0 ? "subagent.step.completed" : "subagent.step.failed",
+				type: singleTerminal.status === "stopped" ? "subagent.step.stopped" : singleTerminal.status === "paused" ? "subagent.step.paused" : singleTerminal.success ? "subagent.step.completed" : "subagent.step.failed",
 				ts: stepEndTime,
 				runId: id,
 				stepIndex: flatIndex,
 				agent: seqStep.agent,
-				exitCode: stopped || childStopped ? 1 : timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
+				exitCode: singleTerminal.exitCode,
 				durationMs: stepEndTime - stepStartTime,
 				tokens: stepTokens,
 			}));
@@ -5058,7 +5109,7 @@ async function runSubagentInner(
 						...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
 						...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
 						...(config.lane ? { lane: config.lane } : {}),
-						status: singleResult.stopped ? "stopped" as const : singleResult.interrupted ? "paused" as const : singleResult.exitCode === 0 ? "completed" as const : "failed" as const,
+						status: handoffStatusFromTerminal(singleTerminal.status),
 						summary: singleResult.output || singleResult.error || "(no output)",
 						...(singleResult.artifactPaths?.outputPath ? { outputPath: singleResult.artifactPaths.outputPath } : {}),
 						...(singleResult.structuredOutput !== undefined ? { structuredOutput: singleResult.structuredOutput } : {}),
@@ -5099,12 +5150,7 @@ async function runSubagentInner(
 			}
 
 			flatIndex++;
-			if (isAgentContractV1(seqStep.agentContract) && seqStep.gateOn === "acceptance" && singleResult.acceptance?.status === "rejected") {
-				statusPayload.error = acceptanceFailureMessage(singleResult.acceptance) ?? "Chain acceptance gate rejected the step.";
-				writeStatusPayload();
-				break;
-			}
-			if (singleResult.exitCode !== 0) {
+			if (!singleTerminal.success && singleTerminal.status === "failed") {
 				break;
 			}
 		}

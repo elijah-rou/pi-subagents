@@ -8,7 +8,6 @@ import {
 } from "../api/delegation.ts";
 import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
-import { acceptanceControlBlocksRun } from "../runs/shared/acceptance.ts";
 
 export interface PromptTemplateDelegationRequest {
 	requestId: string;
@@ -338,7 +337,6 @@ function resolveSubagentDelegationStatus(
 	if (result.details?.timedOut || child.timedOut) return "timed_out";
 	if (child?.structuredOutputFailed) return "structured_output_failed";
 	if (child?.toolBudgetBlocked) return "tool_budget_exhausted";
-	if (child.acceptance && acceptanceControlBlocksRun(child.acceptance)) return "acceptance_failed";
 	if (result.details?.stopped || child?.stopped || child?.interrupted) return "interrupted";
 	if (result.isError || child?.error || (typeof child?.exitCode === "number" && child.exitCode !== 0)) return "failed";
 	return "completed";

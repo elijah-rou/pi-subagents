@@ -1,5 +1,6 @@
 import { isDynamicParallelStep, isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
 import type { SingleResult, SubagentRunMode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../shared/types.ts";
+import { decideChildTerminal } from "./terminal-decision.ts";
 
 export interface WorkflowGraphBuildInput {
 	runId: string;
@@ -50,11 +51,9 @@ function normalizeStatus(status: string | undefined): WorkflowNodeStatus | undef
 	}
 }
 
-function resultStatus(result: Pick<SingleResult, "exitCode" | "detached" | "interrupted"> | undefined): WorkflowNodeStatus | undefined {
+function resultStatus(result: Pick<SingleResult, "exitCode" | "detached" | "interrupted" | "error"> | undefined): WorkflowNodeStatus | undefined {
 	if (!result) return undefined;
-	if (result.detached) return "detached";
-	if (result.interrupted) return "paused";
-	return result.exitCode === 0 ? "completed" : "failed";
+	return decideChildTerminal(result).status;
 }
 
 function nodeStatus(input: WorkflowGraphBuildInput, flatIndex: number): WorkflowNodeStatus {

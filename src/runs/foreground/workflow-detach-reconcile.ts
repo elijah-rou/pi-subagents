@@ -18,6 +18,7 @@ import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "..
 import { outputPathMappingFromTask } from "../shared/single-output.ts";
 import { readWorkflowReceipt, workflowReceiptPath, writeWorkflowReceipt, type WorkflowReceipt } from "../../workflows/workflow-receipt.ts";
 import { removeSettledWorkflowState } from "../../workflows/workflow-state.ts";
+import { decideSingleResultTerminal } from "../shared/terminal-decision.ts";
 import {
 	applyDetachedChildSettlement,
 	classifyWorkflowSettlement,
@@ -48,11 +49,12 @@ function usageWithValue(usage: SingleResult["usage"] | undefined): SingleResult[
 		: undefined;
 }
 
-function workflowResultChildren(status: AsyncStatus, childRunId: string, result: SingleResult, existingResults: unknown, receipt?: WorkflowReceipt): unknown {
+export function workflowResultChildren(status: AsyncStatus, childRunId: string, result: SingleResult, existingResults: unknown, receipt?: WorkflowReceipt): unknown {
 	const output = getSingleResultOutput(result);
 	const outputReference = result.savedOutputPath ?? result.outputReference?.path;
 	const outputPathMapping = outputPathMappingFromTask(result.task, outputReference);
 	const terminalOutcome = workflowTerminalOutcomeForResult(result);
+	const terminal = decideSingleResultTerminal(result);
 	const usage = usageWithValue(result.usage);
 	if (Array.isArray(existingResults)) {
 		return existingResults.map((entry) => {
@@ -61,7 +63,7 @@ function workflowResultChildren(status: AsyncStatus, childRunId: string, result:
 			if (child.runId !== childRunId) return child;
 			return {
 				...child,
-				success: result.exitCode === 0 && !result.error && !result.interrupted,
+				success: terminal.success,
 				output,
 				outputState: output.trim() ? "present" : "absent",
 				detached: undefined,

@@ -38,6 +38,10 @@ import {
 	type SubagentDelegationStarted,
 } from "../../src/api/delegation.ts";
 import { CHAIN_RUNS_DIR, DIRS, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, SUBAGENT_CONTROL_EVENT, TEMP_ARTIFACTS_DIR, type AsyncStatus, type ControlEvent, type SubagentState } from "../../src/shared/types.ts";
+import { terminalDecisionCases } from "../fixtures/terminal-decision-cases.ts";
+
+const rejectedTerminalFixture = terminalDecisionCases.find((fixture) => fixture.name === "explicit acceptance rejection fails closed")!;
+const missingMutationTerminalFixture = terminalDecisionCases.find((fixture) => fixture.name === "missing mutation evidence fails closed")!;
 import { getActiveAsyncCapacitySnapshot, inspectActiveAsyncCapacityOwner } from "../../src/runs/background/active-async-capacity.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
@@ -4935,10 +4939,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 		const [missingCall, validCall] = readAllCallArgs();
 
-		assert.equal(missing.exitCode, 1);
-		assert.equal(missing.execution?.status, "failed");
-		assert.equal(missing.execution?.success, false);
-		assert.equal(missing.execution?.exitCode, 1);
+		assert.equal(missing.exitCode, rejectedTerminalFixture.expected.exitCode);
+		assert.equal(missing.execution?.status, "completed");
+		assert.equal(missing.execution?.success, true);
+		assert.equal(missing.execution?.exitCode, 0);
 		assert.equal(missing.acceptance?.status, "rejected");
 		assert.equal(missing.acceptance?.effectiveAcceptance.explicit, false);
 		assert.match(missing.error ?? "", /Acceptance rejected/);
@@ -5022,7 +5026,42 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(result.details.results[0]?.error ?? "", /Acceptance rejected/);
 	});
 
-	it("agent contract v1 keeps explicitly supplied acceptance rejection out of execution status", async () => {
+	it("runs.run, runs.all, and dynamic children share fail-closed terminal fixtures", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const rejectedOutput = "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```";
+		for (let index = 0; index < 5; index++) mockPi.onCall({ output: rejectedOutput });
+		const acceptance = `{ level: "checked", criteria: ["Return required proof"] }`;
+		const executor = makeExecutor([makeAgent("reviewer", { tools: ["read"], completionGuard: false })]);
+		const scripts = [
+			`return runs.run("direct", { agent: "reviewer", task: "Review direct", agentContract: { version: 1 }, acceptance: ${acceptance} });`,
+			`return runs.all([
+				{ key: "static-a", agent: "reviewer", task: "Review static A", agentContract: { version: 1 }, acceptance: ${acceptance} },
+				{ key: "static-b", agent: "reviewer", task: "Review static B", agentContract: { version: 1 }, acceptance: ${acceptance} }
+			]);`,
+			`const targets = ["dynamic-a", "dynamic-b"];
+			return runs.all(targets.map((target) => ({ key: target, agent: "reviewer", task: "Review " + target, agentContract: { version: 1 }, acceptance: ${acceptance} })));`,
+		];
+		const results = [];
+		for (const [index, workflowScript] of scripts.entries()) {
+			results.push(await executor.execute(
+				`shared-terminal-workflow-fixtures-${index}`,
+				{ async: false, workflowScript },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			));
+		}
+
+		const children = results.flatMap((result) => result.details.results);
+		assert.equal(children.length, 5);
+		for (const child of children) {
+			assert.equal(child.exitCode, rejectedTerminalFixture.expected.exitCode);
+			assert.equal(child.acceptance?.status, "rejected");
+			assert.equal(child.execution?.status, "completed");
+			assert.match(child.error ?? "", /Acceptance rejected/);
+		}
+	});
+
+	it("agent contract v1 fails closed on explicitly supplied acceptance rejection", async () => {
 		mockPi.onCall({ output: "Done\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
 		const agents = [makeAgent("worker", { tools: ["read"], completionGuard: false })];
 
@@ -5032,15 +5071,15 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			acceptance: { level: "checked", criteria: ["Return required proof"] },
 		});
 
-		assert.equal(result.exitCode, 0);
-		assert.equal(result.error, undefined);
+		assert.equal(result.exitCode, rejectedTerminalFixture.expected.exitCode);
+		assert.match(result.error ?? "", /Acceptance rejected/);
 		assert.equal(result.execution?.status, "completed");
 		assert.equal(result.execution?.success, true);
 		assert.equal(result.acceptance?.status, "rejected");
 		assert.match(result.acceptance.runtimeChecks?.[0]?.message ?? "", /not-satisfied/);
 	});
 
-	it("agent contract v1 records explicit completion guard as an effect", async () => {
+	it("agent contract v1 fails closed when the completion effect lacks mutation evidence", async () => {
 		mockPi.onCall({ output: "Plan only" });
 		const agents = [makeAgent("worker", { tools: ["read", "write"], completionGuard: true })];
 
@@ -5049,7 +5088,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			agentContract: { version: 1 },
 		});
 
-		assert.equal(result.exitCode, 0);
+		assert.equal(result.exitCode, missingMutationTerminalFixture.expected.exitCode);
+		assert.match(result.error ?? "", /without making edits/);
 		assert.equal(result.execution?.status, "completed");
 		assert.equal(result.effects?.fileMutation?.status, "missing");
 		assert.equal(result.effects?.fileMutation?.expected, true);

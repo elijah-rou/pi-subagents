@@ -63,6 +63,7 @@ import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig
 import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { applySubagentChildProfiles } from "../shared/child-profile-routing.ts";
 import { isAgentContractV1 } from "../shared/agent-contract.ts";
+import { decideSingleResultTerminal } from "../shared/terminal-decision.ts";
 import { normalizeExtensionBindings, type ExtensionBindings } from "../shared/extension-bindings.ts";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -786,7 +787,6 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	run.updatedAt = updatedAt;
 	const terminalStatus = resolveSubagentResultStatus(omitUndefinedProperties({
 		exitCode: input.result.exitCode,
-		...(input.result.acceptance?.status === "rejected" ? { success: false } : {}),
 		interrupted: input.result.interrupted,
 		detached: false,
 		processSignal: input.result.processSignal,
@@ -1909,7 +1909,6 @@ function createForegroundControlNotifier(data: Pick<ExecutionContextData, "contr
 export function foregroundResultIntercomStatus(result: SingleResult): ReturnType<typeof resolveSubagentResultStatus> {
 	return resolveSubagentResultStatus(omitUndefinedProperties({
 		exitCode: result.exitCode,
-		...(result.acceptance?.status === "rejected" ? { success: false } : {}),
 		interrupted: result.interrupted,
 		detached: result.detached,
 		processSignal: result.processSignal,
@@ -1917,6 +1916,16 @@ export function foregroundResultIntercomStatus(result: SingleResult): ReturnType
 		stopped: result.stopped,
 		turnBudgetExceeded: result.turnBudgetExceeded,
 	}));
+}
+
+export function foregroundStepStatus(result: SingleResult): "complete" | "failed" | "paused" | "stopped" {
+	switch (decideSingleResultTerminal(result).status) {
+		case "completed": return "complete";
+		case "failed": return "failed";
+		case "paused":
+		case "detached": return "paused";
+		case "stopped": return "stopped";
+	}
 }
 
 export function shouldSuppressRoutineResultIntercom(input: { suppressRoutineResultIntercom?: boolean; results: SingleResult[] }): boolean {
@@ -6107,7 +6116,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 								? { steps: details.results.map((child) => ({
 									agent: child.agent,
 									...(child.sessionName ? { sessionName: child.sessionName } : {}),
-									status: child.interrupted || child.detached ? "paused" as const : child.exitCode === 0 ? "complete" as const : "failed" as const,
+									status: foregroundStepStatus(child),
 									...(child.model ? { model: child.model } : {}),
 									...(child.thinking ? { thinking: child.thinking } : {}),
 									...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),

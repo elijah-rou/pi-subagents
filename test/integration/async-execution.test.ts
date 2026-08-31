@@ -26,6 +26,10 @@ import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey } from "../../src/runs/background/active-async-capacity.ts";
 import { deriveForkPromptCacheKey, SUBAGENT_FORK_CACHE_KEY_ENV } from "../../src/runs/shared/pi-args.ts";
+import { terminalDecisionCases } from "../fixtures/terminal-decision-cases.ts";
+
+const rejectedTerminalFixture = terminalDecisionCases.find((fixture) => fixture.name === "explicit acceptance rejection fails closed")!;
+const missingMutationTerminalFixture = terminalDecisionCases.find((fixture) => fixture.name === "missing mutation evidence fails closed")!;
 
 interface LaunchResolvedExtensions {
 	version?: number;
@@ -2836,7 +2840,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(statusPayload.state, "failed");
 	});
 
-	it("agent contract v1 keeps explicitly supplied async acceptance and file-mutation effects separate from execution", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+	it("agent contract v1 fails closed on explicit async rejection and missing mutation evidence", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		mockPi.onCall({ output: "I’ll do that now and report back after implementing.\n```acceptance-report\n{\"criteriaSatisfied\":[{\"id\":\"criterion-1\",\"status\":\"not-satisfied\",\"evidence\":\"no proof\"}]}\n```" });
 		const id = `async-v1-separate-${Date.now().toString(36)}`;
 
@@ -2862,20 +2866,22 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 		const resultPath = await waitForAsyncResultFile(id, 10_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "complete");
+		const statusPayload = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
 
-		assert.equal(payload.success, true);
-		assert.equal(payload.state, "complete");
-		assert.equal(payload.exitCode, 0);
+		assert.equal(payload.success, rejectedTerminalFixture.expected.success);
+		assert.equal(payload.state, rejectedTerminalFixture.expected.status);
+		assert.equal(payload.exitCode, rejectedTerminalFixture.expected.exitCode);
 		assert.equal(payload.results[0]?.agentContract?.version, 1);
 		assert.equal(payload.results[0]?.execution?.status, "completed");
 		assert.equal(payload.results[0]?.execution?.success, true);
 		assert.equal(payload.results[0]?.acceptance?.status, "rejected");
-		assert.equal(payload.results[0]?.effects?.fileMutation?.status, "missing");
-		assert.equal(statusPayload.state, "complete");
+		assert.equal(payload.results[0]?.effects?.fileMutation?.status, missingMutationTerminalFixture.expected.effect);
+		assert.match(payload.results[0]?.error ?? "", /Acceptance rejected/);
+		assert.match(payload.results[0]?.error ?? "", /without making edits/);
+		assert.equal(statusPayload.state, rejectedTerminalFixture.expected.status);
 		assert.equal(statusPayload.steps?.[0]?.agentContract?.version, 1);
 		assert.equal(statusPayload.steps?.[0]?.execution?.status, "completed");
-		assert.equal(statusPayload.steps?.[0]?.effects?.fileMutation?.status, "missing");
+		assert.equal(statusPayload.steps?.[0]?.effects?.fileMutation?.status, missingMutationTerminalFixture.expected.effect);
 	});
 
 	it("background single runs support outputSchema", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {

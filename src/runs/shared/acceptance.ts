@@ -1384,7 +1384,7 @@ export function aggregateAcceptanceReport(input: {
 	notes?: string;
 }): AcceptanceReport {
 	const childReports = input.results.map((result) => result.acceptance?.childReport).filter((report): report is AcceptanceReport => Boolean(report));
-	const blockers = input.results.filter((result) => result.exitCode !== 0 || (result.acceptance ? acceptanceBlocksRun(result.acceptance) : false));
+	const blockers = input.results.filter((result) => result.exitCode !== 0);
 	const successfulChildren = input.results.length > 0 && blockers.length === 0;
 	const requiredCriteria = (input.criteria ?? []).filter((criterion) => criterion.severity !== "recommended");
 	const childEvidence = input.results.map((result, index) =>
@@ -1773,22 +1773,6 @@ export function buildSkippedAcceptanceLedger(acceptance: ResolvedAcceptanceConfi
 			: [{ id: input.id, status: "failed", message: input.message }],
 		verifyRuns: [],
 	};
-}
-
-function rejectedAcceptanceBlocksRun(status: string, _explicit: boolean, onFailure: "fail" | "warn"): boolean {
-	return status === "rejected" && onFailure === "fail";
-}
-
-export function acceptanceBlocksRun(ledger: AcceptanceLedger): boolean {
-	return rejectedAcceptanceBlocksRun(ledger.status, ledger.explicit, ledger.effectiveAcceptance.onFailure);
-}
-
-export function acceptanceControlBlocksRun(acceptance: {
-	status: string;
-	explicit?: boolean;
-	effectiveAcceptance?: { onFailure: "fail" | "warn" };
-}): boolean {
-	return rejectedAcceptanceBlocksRun(acceptance.status, acceptance.explicit === true, acceptance.effectiveAcceptance?.onFailure ?? "fail");
 }
 
 export function acceptanceFailureMessage(ledger: AcceptanceLedger): string | undefined {

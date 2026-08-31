@@ -408,7 +408,7 @@ describe("workflow chat progress rendering", () => {
 	it("suppresses only successful routine child result intercom for live-card workflows", () => {
 		const completed = { agent: "delegate", exitCode: 0, outputState: "present" } as SingleResult;
 		const failed = { agent: "delegate", exitCode: 1, outputState: "present" } as SingleResult;
-		const rejected = { agent: "delegate", exitCode: 0, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
+		const rejected = { agent: "delegate", exitCode: 1, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
 
 		assert.equal(shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: true, results: [completed] }), true);
 		assert.equal(shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: true, results: [failed] }), false);
@@ -416,8 +416,8 @@ describe("workflow chat progress rendering", () => {
 		assert.equal(shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: false, results: [completed] }), false);
 	});
 
-	it("marks acceptance-rejected foreground intercom results as failed", () => {
-		const rejected = { agent: "delegate", exitCode: 0, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
+	it("preserves the shared terminal failure in foreground intercom results", () => {
+		const rejected = { agent: "delegate", exitCode: 1, acceptance: { status: "rejected" }, outputState: "present" } as SingleResult;
 
 		assert.equal(foregroundResultIntercomStatus(rejected), "failed");
 	});
