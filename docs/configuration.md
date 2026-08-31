@@ -93,10 +93,6 @@ Pi binds `Ctrl+B` to editor cursor-left by default. The extension shortcut takes
 
 Package 3d removed provider profile/catalog administration and its model probes. Existing files under `~/.pi/agent/profiles/pi-subagents/` remain untouched unknown artifacts for one published release. Core does not read, write, migrate, or delete them. Already-applied `subagents` values in `~/.pi/agent/settings.json` remain ordinary settings and continue through the normal settings precedence described above.
 
-## Retired `orcaProgressTabs` key
-
-The Orca observer was removed in Package 3b. The `orcaProgressTabs` key is accepted as inert unknown configuration for one published Package 3b release, regardless of its value. It cannot launch a process or create, update, or delete observer artifacts. Remove the key from current configuration. Existing `.pi/subagents/views/orca` files and old temporary files are left untouched as unknown user artifacts.
-
 ## `asyncByDefault`
 
 ```json
@@ -165,7 +161,7 @@ Customizes only the full Fleet inspector opened by `/subagents-fleet` or FleetVi
 
 Each action accepts a non-empty array of key strings. Configured actions replace their defaults. Unset actions keep the defaults: `selectUp` is `up`/`k`, `selectDown` is `down`/`j`, `scrollUp` is `K`, `scrollDown` is `J`, `pageUp` is `pageUp`, `pageDown` is `pageDown`, `selectFirst` is `home`, `selectLast` is `end`, `toggleTools` is `x`/`X`/`ctrl+o`, `refresh` is `r`/`R`, `steer` is `s`, `stop` is `D`, and `close` is `escape`/`ctrl+c`/`q`.
 
-For one published Package 3c release, an existing `fleetKeybindings.inspect` array remains valid and is preserved by unrelated config updates. It is inert: it has no default, runtime action, or help entry. Malformed values still fail config validation.
+`fleetKeybindings.inspect` is retired and produces the same actionable migration diagnostic as other removed feature keys.
 
 Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text or stop confirmation even when the Fleet-level close binding is changed.
 
@@ -229,13 +225,31 @@ Without a configured value, Pi still applies a five-minute hard timeout to known
 
 The tool timer tracks each active `toolCallId` separately and never extends the run-level deadline: when the remaining run budget is shorter, the ordinary run-level timeout wins. `contact_supervisor`, `intercom`, and `subagent_wait` are exempt because their legitimate purpose can be to wait for a human, supervisor, or child run. Use hard tool timeouts only for wedge protection; an elapsed timeout is not a mutation-safe boundary. Configured values must be positive integers no greater than `2147483647`; invalid or out-of-range values are rejected with a visible error rather than silently ignored.
 
-## Per-run child concurrency (`globalConcurrencyLimit`)
+## Per-run child concurrency (`perRunConcurrencyLimit`)
 
 ```json
-{ "globalConcurrencyLimit": 20 }
+{ "perRunConcurrencyLimit": 20 }
 ```
 
 Caps simultaneously running children inside each top-level `workflowScript` launch through `runs.run`/`runs.all`. The key name is retained for compatibility; this is not a cross-run, parent-session-wide, machine-wide, or cross-process semaphore. Every top-level run receives its own allowance. Queued workflow children retain their stable keys and begin when a running sibling in that run releases capacity. The default remains `20`.
+
+Legacy `globalConcurrencyLimit` remains a read-only alias for one published release. Loads warn and normalize it to `perRunConcurrencyLimit`; updates write only the canonical key. Conflicting old and new values fail.
+
+## `workflowDynamicFanoutMaxItems`
+
+```json
+{ "workflowDynamicFanoutMaxItems": 32 }
+```
+
+Bounds a dynamic `workflowScript` expansion when the step omits `expand.maxItems`. Zero disables implicit expansion. Legacy `chain.dynamicFanout.maxItems` remains a read-only alias for one published release with the same warning, normalization, and conflict rules.
+
+## Retired feature keys
+
+`missions`, `orcaProgressTabs`, `parallel`, and `fleetKeybindings.inspect` no longer change runtime behavior. Config load/update returns one bounded diagnostic naming the present retired keys and directs the user to remove them.
+
+## `scheduledRuns`
+
+Package 2b retains this object through its one-release compatibility horizon. `enabled` and `maxPending` are accepted and preserved but inert. `storeRoot` remains lookup-only and must be absolute or start with `~/`; it lets the bounded RPC `schedule.list`, `schedule.show`, and `schedule.history` readers locate custom-root legacy artifacts. No key can create, mutate, execute, or retain schedules. See [Legacy schedules](schedules.md).
 
 ## `maxSubagentSpawnsPerSession`
 
@@ -255,7 +269,7 @@ Optionally caps the total number of direct child launches during one parent sess
 
 Caps cumulative logical child admissions in one top-level run tree. The default is `64`. `PI_SUBAGENT_MAX_SPAWNS_PER_RUN` overrides the config when it is a positive integer. Invalid, zero, or missing values fall back to the configured positive value or `64`.
 
-The budget counts direct launches, `workflowScript` children, and nested child calls. A `runs.all` batch is admitted atomically. Startup retries, model fallback, and retained-child resume reuse the original logical child claim. Claims are never released or refunded. This cap is independent from the session-wide cumulative spawn budget and `globalConcurrencyLimit`.
+The budget counts direct launches, `workflowScript` children, and nested child calls. A `runs.all` batch is admitted atomically. Startup retries, model fallback, and retained-child resume reuse the original logical child claim. Claims are never released or refunded. This cap is independent from the session-wide cumulative spawn budget and `perRunConcurrencyLimit`.
 
 ## `maxActiveAsyncRunsPerSession`
 
@@ -275,9 +289,9 @@ When the runner is gone but process cleanup proof remains unknown, configure a b
 
 The default is `1200000` milliseconds (20 minutes). The policy releases only a failed terminal run whose runner PID is dead and whose last activity is older than the threshold. A live or unknown PID, a non-failed terminal state, a recent run, or missing activity timestamp retains the slot. Set the value to `false` to keep strict retention. Valid configured durations range from 5 minutes through 24 hours. Policy release is reported as `abandoned-timeout` with `processProof: unknown`; it is not observed process-terminal proof and may reclaim capacity while an orphan child still exists.
 
-This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, the default-`64` cumulative `maxSubagentSpawnsPerRun`, and per-run child concurrency (`globalConcurrencyLimit`, default `20`). `maxSubagentSpawnsPerSession` remains unlimited by default.
+This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, the default-`64` cumulative `maxSubagentSpawnsPerRun`, and per-run child concurrency (`perRunConcurrencyLimit`, default `20`). `maxSubagentSpawnsPerSession` remains unlimited by default.
 
-`subagent({ action: "status" })`, fleet status, and the `subagent({ action: "doctor" })` doctor action expose used and effective top-level async capacity for the current parent session, explicitly excluding foreground and nested/workflow children. Status and the doctor action also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. A `workflowScript` `runs.all` batch fails before starting partial work when its declared capacity cannot fit. Later retries are not guaranteed by that preflight.
+`subagent({ action: "status" })`, fleet status, and the `subagent({ action: "doctor" })` doctor action expose used and effective top-level async capacity for the current parent session, explicitly excluding foreground and nested/workflow children. Status and the doctor action also identify `perRunConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. A `workflowScript` `runs.all` batch fails before starting partial work when its declared capacity cannot fit. Later retries are not guaranteed by that preflight.
 
 ### Migration: retaining unlimited active async runs
 
@@ -287,11 +301,7 @@ Before this release, omitting `maxActiveAsyncRunsPerSession` left top-level asyn
 { "maxActiveAsyncRunsPerSession": 0 }
 ```
 
-This override affects only active top-level async runs in one parent session. It does not change the per-run child concurrency default (`globalConcurrencyLimit: 20`), the cumulative per-run child limit (`maxSubagentSpawnsPerRun: 64`), or the unlimited-by-default cumulative session spawn policy.
-
-## `scheduledRuns`
-
-Package 2b accepts this object only for one-release legacy read compatibility. `storeRoot` locates existing project-keyed schedule records and must be absolute or start with `~/`. `enabled` and `maxPending` are accepted but inert. No key enables scheduling, timers, writes, launches, or retention. When `storeRoot` is omitted, passive lookup uses `<cwd>/.pi/subagents/schedules`. See [Legacy schedules](schedules.md).
+This override affects only active top-level async runs in one parent session. It does not change the per-run child concurrency default (`perRunConcurrencyLimit: 20`), the cumulative per-run child limit (`maxSubagentSpawnsPerRun: 64`), or the unlimited-by-default cumulative session spawn policy.
 
 ## `defaultSessionDir`
 
@@ -385,26 +395,6 @@ stdin is a JSON object with `repoRoot`, `worktreePath`, `agentCwd`, `branch`, `i
 ```
 
 `syntheticPaths` must be relative to the worktree root. They are removed before diff capture so helper files do not pollute patches. Tracked files are never excluded; marking a tracked path as synthetic fails setup. Default timeout is `30000` ms.
-
-## `missions`
-
-```json
-{
-  "missions": {
-    "enabled": true,
-    "globalIndex": true,
-    "retainTerminal": 200
-  }
-}
-```
-
-Deprecated compatibility setting. Package 2a stopped mission creation and mission actions. Only `directory` changes where passive Fleet/status readers look for records created before Package 2a. Remove the setting after old runs are no longer needed. Compatibility may be removed no earlier than after one published release containing Package 2a; see [Package 2a](deep-simplification-package-2a.md).
-
-- Legacy mission records default to a project-keyed directory under pi's agent directory (`~/.pi/agent/missions/projects/<project-hash>/`). This keeps the project worktree clean.
-- `directory` may be absolute, `~/...`, or project-relative. It is only a passive lookup location for existing records.
-- The legacy `enabled`, `globalIndex`, `globalIndexDir`, and `retainTerminal` config shapes remain accepted but inert.
-- Persisted legacy bindings may also contain `writeGlobalIndex` and `retainTerminal`. They are accepted for schema-v1 compatibility and do not enable writes.
-- Compatibility readers never prune records, heal pointers, or write global indexes.
 
 ## `authorityPolicy`
 

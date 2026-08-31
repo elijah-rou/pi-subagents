@@ -193,13 +193,13 @@ export function validateDynamicStepShape(step: DynamicParallelStep, stepIndex: n
 	const itemName = step.expand.item ?? "item";
 	if (!ITEM_NAME_PATTERN.test(itemName)) throw new DynamicFanoutError(`${prefix} has invalid expand.item '${itemName}'.`);
 	if (step.expand.maxItems === undefined && config.maxItems === undefined) {
-		throw new DynamicFanoutError(`${prefix} requires expand.maxItems or config.chain.dynamicFanout.maxItems.`);
+		throw new DynamicFanoutError(`${prefix} requires expand.maxItems or config.workflowDynamicFanoutMaxItems.`);
 	}
 	if (step.expand.maxItems !== undefined && (!Number.isInteger(step.expand.maxItems) || step.expand.maxItems < 0)) {
 		throw new DynamicFanoutError(`${prefix} expand.maxItems must be an integer >= 0.`);
 	}
 	if (config.maxItems !== undefined && (!Number.isInteger(config.maxItems) || config.maxItems < 0)) {
-		throw new DynamicFanoutError("config.chain.dynamicFanout.maxItems must be an integer >= 0.");
+		throw new DynamicFanoutError("config.workflowDynamicFanoutMaxItems must be an integer >= 0.");
 	}
 	if (!step.parallel || Array.isArray(step.parallel)) throw new DynamicFanoutError(`${prefix} requires a single parallel template object and cannot mix dynamic expand/collect with static parallel arrays.`);
 	assertOnlyKeys(step.parallel, config.allowRunnerFields ? RUNNER_DYNAMIC_PARALLEL_KEYS : DYNAMIC_PARALLEL_KEYS, `${prefix} parallel`);

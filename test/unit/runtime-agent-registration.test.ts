@@ -4,11 +4,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { RUNTIME_AGENT_REGISTER_EVENT, registerAgent, registerAgentViaEvents, type RuntimeAgentRegistrationRequest } from "../../src/api/agents.ts";
-import { registerRuntimeAgentEventListener } from "../../src/agents/runtime-agent-events.ts";
+import { RUNTIME_AGENT_REGISTER_EVENT, registerAgentViaEvents, registerRuntimeAgentEventListener, type RuntimeAgentRegistrationRequest } from "../../src/agents/runtime-agent-events.ts";
 import { handleList } from "../../src/agents/agent-management.ts";
 import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
-import { clearRuntimeAgentsForPi, mergeRuntimeAgents } from "../../src/agents/runtime-agent-registry.ts";
+import { clearRuntimeAgentsForPi, mergeRuntimeAgents, registerRuntimeAgent } from "../../src/agents/runtime-agent-registry.ts";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
@@ -80,7 +79,7 @@ describe("runtime agent registration", () => {
 
 	it("adds runtime agents to extension discovery without writing config", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
-		const registration = registerAgent({
+		const registration = registerRuntimeAgent({
 			pi,
 			name: "runtime-helper",
 			definition: {
@@ -105,7 +104,7 @@ describe("runtime agent registration", () => {
 
 	it("resolves runtime global-context inheritance from project context unless explicit", () => {
 		const registrations = [
-			registerAgent({
+			registerRuntimeAgent({
 				pi,
 				name: "runtime-project-helper",
 				definition: {
@@ -114,7 +113,7 @@ describe("runtime agent registration", () => {
 					inheritProjectContext: true,
 				},
 			}),
-			registerAgent({
+			registerRuntimeAgent({
 				pi,
 				name: "runtime-isolated-helper",
 				definition: {
@@ -123,7 +122,7 @@ describe("runtime agent registration", () => {
 					inheritProjectContext: false,
 				},
 			}),
-			registerAgent({
+			registerRuntimeAgent({
 				pi,
 				name: "runtime-explicit-global-isolation",
 				definition: {
@@ -221,7 +220,7 @@ describe("runtime agent registration", () => {
 	});
 
 	it("lists runtime agents for the matching Pi runtime", () => {
-		registerAgent({
+		registerRuntimeAgent({
 			pi,
 			name: "runtime-helper",
 			definition: { description: "Runtime helper", systemPrompt: "Help at runtime.", aliases: ["helper"] },
@@ -234,31 +233,31 @@ describe("runtime agent registration", () => {
 
 	it("fails closed for builtin and duplicate runtime identities", () => {
 		assert.throws(
-			() => registerAgent({ pi, name: "claude-code", definition: { description: "Unsafe", systemPrompt: "Write.", runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
+			() => registerRuntimeAgent({ pi, name: "claude-code", definition: { description: "Unsafe", systemPrompt: "Write.", runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
 			/reserved for the read-only 'claude-code' adapter/,
 		);
 		assert.throws(
-			() => registerAgent({ pi, name: "runtime-writer", definition: { description: "Unsafe alias", systemPrompt: "Write.", aliases: ["claude-code"], runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
+			() => registerRuntimeAgent({ pi, name: "runtime-writer", definition: { description: "Unsafe alias", systemPrompt: "Write.", aliases: ["claude-code"], runner: { type: "external-cli", adapter: "claude-code-writer", command: "claude" } } }),
 			/Selection name 'claude-code' is reserved/,
 		);
 		for (const [readOnly, writer, command] of [["codex-exec", "codex-exec-writer", "codex"], ["cursor-agent", "cursor-agent-writer", "cursor-agent"]] as const) {
 			assert.throws(
-				() => registerAgent({ pi, name: readOnly, definition: { description: "Unsafe", systemPrompt: "Write.", runner: { type: "external-cli", adapter: writer, command } } }),
+				() => registerRuntimeAgent({ pi, name: readOnly, definition: { description: "Unsafe", systemPrompt: "Write.", runner: { type: "external-cli", adapter: writer, command } } }),
 				/reserved for the read-only/,
 			);
 			assert.throws(
-				() => registerAgent({ pi, name: `runtime-${writer}`, definition: { description: "Unsafe alias", systemPrompt: "Write.", aliases: [readOnly], runner: { type: "external-cli", adapter: writer, command } } }),
+				() => registerRuntimeAgent({ pi, name: `runtime-${writer}`, definition: { description: "Unsafe alias", systemPrompt: "Write.", aliases: [readOnly], runner: { type: "external-cli", adapter: writer, command } } }),
 				/Selection name .* is reserved/,
 			);
 		}
 		assert.throws(
-			() => registerAgent({ pi, name: "worker", definition: { description: "Bad", systemPrompt: "Bad." } }),
+			() => registerRuntimeAgent({ pi, name: "worker", definition: { description: "Bad", systemPrompt: "Bad." } }),
 			/Worker|builtin agent 'worker'|collides with builtin agent 'worker'/i,
 		);
 
-		registerAgent({ pi, name: "runtime-a", definition: { description: "A", systemPrompt: "A.", aliases: ["shared"] } });
+		registerRuntimeAgent({ pi, name: "runtime-a", definition: { description: "A", systemPrompt: "A.", aliases: ["shared"] } });
 		assert.throws(
-			() => registerAgent({ pi, name: "runtime-b", definition: { description: "B", systemPrompt: "B.", aliases: ["shared"] } }),
+			() => registerRuntimeAgent({ pi, name: "runtime-b", definition: { description: "B", systemPrompt: "B.", aliases: ["shared"] } }),
 			/collides with runtime agent 'runtime-a' on name or alias 'shared'/,
 		);
 	});
@@ -273,14 +272,14 @@ describe("runtime agent registration", () => {
 
 		for (const [name, extra, pattern] of cases) {
 			assert.throws(
-				() => registerAgent({ pi, name: `runtime-${name}`, definition: { description: "Bad", systemPrompt: "Bad.", ...extra } }),
+				() => registerRuntimeAgent({ pi, name: `runtime-${name}`, definition: { description: "Bad", systemPrompt: "Bad.", ...extra } }),
 				pattern,
 			);
 		}
 	});
 
 	it("fails closed when cwd discovery introduces a configured collision", () => {
-		registerAgent({ pi, name: "runtime-helper", definition: { description: "Runtime helper", systemPrompt: "Help.", aliases: ["helper"] } });
+		registerRuntimeAgent({ pi, name: "runtime-helper", definition: { description: "Runtime helper", systemPrompt: "Help.", aliases: ["helper"] } });
 		writeProjectAgent("project-helper", ["helper"]);
 
 		assert.throws(
@@ -290,7 +289,7 @@ describe("runtime agent registration", () => {
 	});
 
 	it("fails closed against configured definitions hidden by scope precedence", () => {
-		registerAgent({ pi, name: "hidden-user", definition: { description: "Runtime helper", systemPrompt: "Help." } });
+		registerRuntimeAgent({ pi, name: "hidden-user", definition: { description: "Runtime helper", systemPrompt: "Help." } });
 		writeUserAgent("hidden-user");
 		writeProjectAgent("hidden-user");
 		const discovered = discoverAgents(tempProject, "both");
@@ -305,7 +304,7 @@ describe("runtime agent registration", () => {
 	});
 
 	it("fails closed against configured definitions hidden by explicit scope", () => {
-		registerAgent({ pi, name: "hidden-user", definition: { description: "Runtime helper", systemPrompt: "Help." } });
+		registerRuntimeAgent({ pi, name: "hidden-user", definition: { description: "Runtime helper", systemPrompt: "Help." } });
 		writeUserAgent("hidden-user");
 		const projectScoped = discoverAgents(tempProject, "project");
 		const allProject = discoverAgentsAll(tempProject);
@@ -317,7 +316,7 @@ describe("runtime agent registration", () => {
 	});
 
 	it("fails closed for management lists when scoped discovery hides a configured collision", () => {
-		registerAgent({ pi, name: "hidden-user", definition: { description: "Runtime hidden", systemPrompt: "Help." } });
+		registerRuntimeAgent({ pi, name: "hidden-user", definition: { description: "Runtime hidden", systemPrompt: "Help." } });
 		writeUserAgent("hidden-user");
 
 		assert.throws(

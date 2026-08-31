@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { snapshotExternalRuns } from "../api/external-runs.ts";
+import { snapshotExternalRuns } from "../shared/external-runs.ts";
 import { formatModelThinking } from "../shared/formatters.ts";
 import type { AsyncJobState, AsyncJobStep, FleetViewPlacement, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
 import { projectAsyncWorkflowRows, projectLifecycleState, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";

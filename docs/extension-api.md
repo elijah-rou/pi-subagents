@@ -1,6 +1,6 @@
 # Extension and integration APIs
 
-Public seams for other Pi extensions and host integrations: the in-process RPC, the structured delegation API, launch preflight, capability ceilings, the background-work provider contract, and external run integration.
+Supported seams for other Pi extensions and host integrations: in-process RPC, structured delegation, launch preflight, capability ceilings, child-profile resolution, durable control, and Surf external jobs.
 
 ## In-process event-bus RPC
 
@@ -23,11 +23,11 @@ pi.events.emit("subagents:rpc:v1:request", {
 });
 ```
 
-The RPC methods are `ping`, `status`, `manage`, `spawn`, `steer`, `interrupt`, `stop`, and `resume`. `status`, `manage`, `steer`, `interrupt`, and `resume` reuse normal package-owned actions.
+The RPC methods are `ping`, `status`, `manage`, `spawn`, `steer`, `interrupt`, `stop`, and `resume`. `status`, `steer`, `interrupt`, and `resume` reuse normal package-owned actions.
 
 Method notes:
 
-- `manage` exposes only the one-release passive legacy schedule readers: `schedule.list`, `schedule.show`, and `schedule.history`. Show and history require `id`. Schedule mutation/execution and all unrelated management actions are rejected before executor dispatch. `ping.capabilities.managementActions` advertises the exact allowlist.
+- `manage` exposes only bounded, read-only `schedule.list`, `schedule.show`, and `schedule.history` during the one-published-release Package 2b support horizon. It cannot mutate or execute a schedule.
 - `spawn` accepts structured single-child execution (`agent`, `task?`), inline `workflowScript`, or `workflowScriptPath` and is async-only: omit `async` or set `async: true`, omit `clarify`, and do not pass management `action` values. Relative script paths resolve against the request `cwd`. It goes through the same executor as the `subagent` tool, so agent discovery, validation, session attribution, configured spawn caps, child-safety depth, artifacts, and async status all behave the same.
 - `steer` requires an async run `id` (plus optional child `index`) and a non-empty `message`; its reply preserves the normal acknowledged-delivery result. Optional `mode` values are `steer` (default), `follow_up`, and `auto`, and receipts include `deliveryStatus: "delivered" | "queued"`. RPC steering disables the direct tool's pause-and-revive recovery in every mode so an extension keeps authority over the exact child it spawned; `ping.capabilities.nonRecoveringSteer` advertises this guarantee.
 - `resume` requires a run target and non-empty `message`. It delegates to the existing revival path, which validates current-session ownership, persisted session/recovery metadata, stopped/live state, capability ceilings, and the exclusive session lease before returning the new async run details. Callers may request a `file-only` output path for the revived result without overriding its model, tools, or budgets. `ping.capabilities.resume` advertises this seam.
@@ -36,7 +36,7 @@ Method notes:
 Capability advertisements on `ping`:
 
 - `events.asyncComplete` — exact process-local completion correlation after RPC `spawn`.
-- `managementActions` — exact passive legacy schedule readers accepted by RPC `manage`.
+- `managementActions` — the three passive Package 2b schedule readers accepted during the support horizon.
 - `launchResolvedExtensions` — the optional launch-resolved extension projection in status details.
 - `runtimeAcknowledgedExtensions` — the optional child-runtime acknowledgement projection and event name.
 - `processTerminalProof` — the process-terminal proof status (see [observability.md](observability.md#process-terminal-proof)).
@@ -58,80 +58,9 @@ The DTO intentionally never exposes run, async, or tool IDs. Clients must ignore
 
 `pi.events` is in-process only. It does not reach separate Pi processes or child subagents; use the file lifecycle artifacts or `pi-intercom` for cross-process coordination.
 
-## Runtime agent registration from independent extensions
+## Package export migration
 
-An independently installed Pi extension can register an agent with the installed `pi-subagents` owner through the process-local `pi-subagents:runtime-agent-register:v1` event. Emit after extension setup, such as during `session_start`. Event delivery is synchronous, so the owner writes the result onto the request before `emit()` returns.
-
-```typescript
-const request: {
-  version: 1;
-  name: string;
-  definition: {
-    description: string;
-    systemPrompt: string;
-    tools?: readonly string[];
-  };
-  result?:
-    | { ok: true; registration: { dispose(): void } }
-    | { ok: false; error: Error };
-} = {
-  version: 1,
-  name: "runtime-probe-agent",
-  definition: {
-    description: "Agent registered by an independent extension",
-    systemPrompt: "Return the words runtime probe.",
-    tools: [],
-  },
-};
-
-pi.events.emit("pi-subagents:runtime-agent-register:v1", request);
-if (!request.result) throw new Error("pi-subagents is not installed or not ready");
-if (!request.result.ok) throw request.result.error;
-const registration = request.result.registration;
-// Call registration.dispose() during your extension cleanup.
-```
-
-If `pi-subagents` is a resolvable dependency of the consumer package, `pi-subagents/agents` exports `RUNTIME_AGENT_REGISTER_EVENT`, the request/result types, and `registerAgentViaEvents()` for the same contract. A separately installed Pi package is not automatically a Node dependency of another package. In that case, use the event contract directly instead of a runtime import. A type-only development dependency is optional.
-
-The installed owner applies the existing runtime-agent validation, collision checks, limits, runtime source metadata, and cleanup. If more than one owner listens, the first handler that writes `request.result` wins. Unsupported versions, malformed requests, and registration failures return `{ ok: false, error }`. No result means no compatible owner handled the event.
-
-This contract is process-local. It does not register agents in child processes or other Pi processes, and it does not change package discovery or package resolution.
-
-## External jobs in FleetView
-
-Use `pi-subagents/external-runs` to publish display-only current-session jobs owned by another extension:
-
-```ts
-import {
-  registerExternalRun,
-  updateExternalRun,
-  unregisterExternalRun,
-} from "pi-subagents/external-runs";
-
-registerExternalRun({
-  id: "dependency-review",
-  sessionId: ctx.sessionManager.getSessionId(),
-  source: "interactive-shell",
-  label: "Dependency review",
-  state: "running",
-  startedAt: Date.now(),
-  currentAction: "Inspecting package metadata",
-});
-
-updateExternalRun(ctx.sessionManager.getSessionId(), "dependency-review", {
-  state: "completed",
-  updatedAt: Date.now(),
-  endedAt: Date.now(),
-  preview: "No dependency blockers found.",
-  reportPath: "/tmp/dependency-review.md",
-});
-
-unregisterExternalRun(ctx.sessionManager.getSessionId(), "dependency-review");
-```
-
-The API validates and caches bounded display fields when the caller registers or updates a job. FleetView reads that cache only. It does not poll caller code. `snapshotExternalRuns(sessionId)` and `listExternalRuns(sessionId)` return bounded current-session snapshots. By default, malformed cached records throw with the validation error. Display-only Fleet callers can pass `{ ignoreMalformed: true, onMalformedRecord }` to remove bad records and keep rendering with a programmatic diagnostic.
-
-External jobs are observational. The caller owns execution, persistence, cancellation, and result delivery. FleetView does not expose stop, steer, resume, or cancel controls for them. Supplied report and transcript paths are shown as bounded text only; FleetView does not read arbitrary external paths.
+Package 7 removed the unsupported `agents`, `background-work`, `external-runs`, `intercom-bridge`, `pi-args`, and `shared-types` subpaths. No named production consumer was found. Integrations must use the retained versioned `delegation`, `capability-ceiling`, `child-profile-resolver`, `preflight`, or `control-channel` contracts. Surf continues to own the retained `external-job-provider` contract.
 
 ## Launch contract preflight
 
@@ -294,33 +223,6 @@ Semantics:
 `denyExtensions` suppresses ambient, configured, and MCP provider extensions while retaining the package runtime needed for child protocol enforcement. This is a same-process policy boundary, not a sandbox against malicious code already running in the parent process.
 
 Core no longer creates or fires schedules. Historical capability audit status remains bounded and never exposes full extension paths.
-
-## Background-work provider API
-
-Other Pi extensions can make their current-session jobs visible to `subagent_wait` through the process-local provider contract:
-
-```ts
-import { registerBackgroundWorkProvider } from "pi-subagents/background-work";
-
-const dispose = registerBackgroundWorkProvider({
-  name: "my-background-extension",
-  wakeChannels: ["my-extension:job-finished"],
-  listActiveWork: () => jobs
-    .filter((job) => job.status === "running")
-    .map((job) => ({ id: job.id, sessionId: job.ownerSessionId })),
-  reconcile: ({ sessionId, nowMs }) => reconcileJobs(sessionId, nowMs),
-});
-```
-
-Semantics:
-
-- Each item needs a stable provider-local ID and the exact Pi session ID that owns it. `subagent_wait` captures those identities rather than a count, so one job finishing while another starts still satisfies first-completion waits without losing the replacement.
-- It filters snapshots to the active session, fails closed if a provider disappears while its work is tracked, and surfaces malformed snapshots or provider errors with provider context.
-- Wake channels only shorten polling; validated snapshots remain authoritative.
-- Providers share a registry through `Symbol.for("pi-subagents.background-work.v1")`, allowing independently loaded extension modules to meet in one Pi process.
-- Registration is reload-safe: a new provider with the same name replaces the old callback, and the old disposer cannot remove the replacement. Call the disposer during extension shutdown when possible.
-
-Child processes do not gain provider tools or extensions automatically. Add `subagent_wait` to the child agent's `tools` allowlist and load each provider through `extensions` or `subagentOnlyExtensions`. The parent's effective `waitTool` setting is serialized through direct, `workflowScript`, async, resume, and nested child launch paths; `PI_SUBAGENT_WAIT_TOOL_ENABLED` keeps precedence.
 
 ## External job provider bridge
 

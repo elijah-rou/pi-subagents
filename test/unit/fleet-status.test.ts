@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { Editor, type EditorComponent, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { SubagentState } from "../../src/shared/types.ts";
-import { EXTERNAL_RUN_REGISTRY_KEY, EXTERNAL_RUN_REGISTRY_VERSION, registerExternalRun, updateExternalRun } from "../../src/api/external-runs.ts";
+import { EXTERNAL_RUN_REGISTRY_KEY, EXTERNAL_RUN_REGISTRY_VERSION, registerExternalRun, updateExternalRun } from "../../src/shared/external-runs.ts";
 import { collectFleetSnapshot } from "../../src/tui/fleet.ts";
 import {
 	FLEET_STATUS_WIDGET_KEY,

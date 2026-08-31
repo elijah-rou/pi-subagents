@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Key } from "@earendil-works/pi-tui";
 import { FLEET_KEYBINDING_ACTIONS, type ArtifactDirPreference, type ExtensionConfig } from "../shared/types.ts";
-import { validateMissionStoreConfig } from "../missions/store.ts";
 import { validateAuthorityPolicy } from "../policy/authority.ts";
 import { getAgentDir } from "../shared/utils.ts";
 import { DEFAULT_MODEL_EXCLUSION_TTL_MS, MAX_MODEL_EXCLUSION_TTL_MS, setDefaultTTL } from "../runs/shared/model-exclusions.ts";
@@ -54,7 +53,10 @@ export function resolveScheduledStoreRoot(value: string): string {
 function validateScheduledRunsConfig(value: unknown): void {
 	if (value === undefined) return;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.scheduledRuns must be a JSON object");
-	const storeRoot = (value as Record<string, unknown>).storeRoot;
+	const record = value as Record<string, unknown>;
+	const unsupported = Object.keys(record).find((key) => key !== "enabled" && key !== "maxPending" && key !== "storeRoot");
+	if (unsupported) throw new Error(`config.scheduledRuns.${unsupported} is not supported during the Package 2b compatibility horizon`);
+	const storeRoot = record.storeRoot;
 	if (storeRoot === undefined) return;
 	if (typeof storeRoot !== "string" || !storeRoot.trim()) throw new Error("config.scheduledRuns.storeRoot must be a non-empty string");
 	resolveScheduledStoreRoot(storeRoot);
@@ -64,8 +66,7 @@ function validateFleetKeybindingsConfig(value: unknown): void {
 	if (value === undefined) return;
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("config.fleetKeybindings must be a JSON object");
 	for (const [action, bindings] of Object.entries(value)) {
-		// Preserve the retired binding for one release without restoring it to runtime actions.
-		if (action !== "inspect" && !FLEET_KEYBINDING_ACTION_SET.has(action)) throw new Error(`config.fleetKeybindings.${action} is not a supported Fleet action`);
+		if (!FLEET_KEYBINDING_ACTION_SET.has(action)) throw new Error(`config.fleetKeybindings.${action} is not a supported Fleet action`);
 		if (!Array.isArray(bindings) || bindings.length === 0) throw new Error(`config.fleetKeybindings.${action} must be a non-empty array of strings`);
 		for (const binding of bindings) {
 			if (typeof binding !== "string" || !binding.trim()) throw new Error(`config.fleetKeybindings.${action} entries must be non-empty strings`);
@@ -126,7 +127,59 @@ function validateMainWindowRendererConfig(value: unknown): void {
 	}
 }
 
-function validateConfig(config: Record<string, unknown>): void {
+const RETIRED_CONFIG_KEYS = ["missions", "orcaProgressTabs", "parallel"] as const;
+
+function validatePositiveInteger(value: unknown, label: string, minimum = 1): void {
+	if (value !== undefined && (typeof value !== "number" || !Number.isInteger(value) || value < minimum)) {
+		throw new Error(`${label} must be an integer >= ${minimum}`);
+	}
+}
+
+function normalizeConfigAliases(config: Record<string, unknown>): ExtensionConfig {
+	const retired: string[] = RETIRED_CONFIG_KEYS.filter((key) => config[key] !== undefined);
+	const fleetInspect = (config.fleetKeybindings as Record<string, unknown> | undefined)?.inspect;
+	if (fleetInspect !== undefined) retired.push("fleetKeybindings.inspect");
+	if (retired.length > 0) {
+		throw new Error(`Retired subagent config ${retired.slice(0, 8).join(", ")} is no longer supported. Remove ${retired.length === 1 ? "this key" : "these keys"}; use workflowScript, Fleet status, and current lifecycle artifacts instead.`);
+	}
+
+	const legacyConcurrency = config.globalConcurrencyLimit;
+	const canonicalConcurrency = config.perRunConcurrencyLimit;
+	if (legacyConcurrency !== undefined && canonicalConcurrency !== undefined && legacyConcurrency !== canonicalConcurrency) {
+		throw new Error("config.globalConcurrencyLimit conflicts with config.perRunConcurrencyLimit; keep only perRunConcurrencyLimit");
+	}
+	const chain = config.chain;
+	if (chain !== undefined && (!chain || typeof chain !== "object" || Array.isArray(chain))) {
+		throw new Error("config.chain is supported only as the legacy chain.dynamicFanout.maxItems alias");
+	}
+	const chainRecord = chain as Record<string, unknown> | undefined;
+	if (chainRecord && (Object.keys(chainRecord).some((key) => key !== "dynamicFanout") || !chainRecord.dynamicFanout || typeof chainRecord.dynamicFanout !== "object" || Array.isArray(chainRecord.dynamicFanout))) {
+		throw new Error("config.chain is supported only as the legacy chain.dynamicFanout.maxItems alias");
+	}
+	const dynamicFanout = chainRecord?.dynamicFanout as Record<string, unknown> | undefined;
+	if (dynamicFanout && (Object.keys(dynamicFanout).some((key) => key !== "maxItems") || dynamicFanout.maxItems === undefined)) {
+		throw new Error("config.chain is supported only as the legacy chain.dynamicFanout.maxItems alias");
+	}
+	const legacyFanout = dynamicFanout?.maxItems;
+	const canonicalFanout = config.workflowDynamicFanoutMaxItems;
+	if (legacyFanout !== undefined && canonicalFanout !== undefined && legacyFanout !== canonicalFanout) {
+		throw new Error("config.chain.dynamicFanout.maxItems conflicts with config.workflowDynamicFanoutMaxItems; keep only workflowDynamicFanoutMaxItems");
+	}
+	if (legacyConcurrency !== undefined || legacyFanout !== undefined) {
+		console.warn("Subagent config migration: replace globalConcurrencyLimit with perRunConcurrencyLimit and chain.dynamicFanout.maxItems with workflowDynamicFanoutMaxItems; compatibility aliases expire after one published release.");
+	}
+
+	const { globalConcurrencyLimit: _legacyConcurrency, chain: _legacyChain, ...canonical } = config;
+	return {
+		...canonical,
+		...(canonicalConcurrency === undefined && legacyConcurrency !== undefined ? { perRunConcurrencyLimit: legacyConcurrency as number } : {}),
+		...(canonicalFanout === undefined && legacyFanout !== undefined ? { workflowDynamicFanoutMaxItems: legacyFanout as number } : {}),
+	} as ExtensionConfig;
+}
+
+function validateConfig(input: Record<string, unknown>): ExtensionConfig {
+	const normalized = normalizeConfigAliases(input);
+	const config = normalized as Record<string, unknown>;
 	if (config.defaultSubagentContext !== undefined && config.defaultSubagentContext !== "fresh" && config.defaultSubagentContext !== "fork") {
 		throw new Error('config.defaultSubagentContext must be "fresh" or "fork"');
 	}
@@ -144,16 +197,11 @@ function validateConfig(config: Record<string, unknown>): void {
 			|| config.maxActiveAsyncRunsPerSession < 0)) {
 		throw new Error("config.maxActiveAsyncRunsPerSession must be a non-negative integer");
 	}
-	if (config.globalConcurrencyLimit !== undefined
-		&& (typeof config.globalConcurrencyLimit !== "number"
-			|| !Number.isInteger(config.globalConcurrencyLimit)
-			|| config.globalConcurrencyLimit < 1)) {
-		throw new Error("config.globalConcurrencyLimit (per-run child concurrency) must be a positive integer");
-	}
+	validatePositiveInteger(config.perRunConcurrencyLimit, "config.perRunConcurrencyLimit");
+	validatePositiveInteger(config.workflowDynamicFanoutMaxItems, "config.workflowDynamicFanoutMaxItems", 0);
 	if (config.resultScanLogging !== undefined && config.resultScanLogging !== "all" && config.resultScanLogging !== "activity" && config.resultScanLogging !== "off") {
 		throw new Error('config.resultScanLogging must be "all", "activity", or "off"');
 	}
-	validateMissionStoreConfig(config.missions);
 	validateAuthorityPolicy(config.authorityPolicy);
 	validatePermissionConfig(config.permissions);
 	validateScheduledRunsConfig(config.scheduledRuns);
@@ -162,6 +210,7 @@ function validateConfig(config: Record<string, unknown>): void {
 	validateCapacityConfig(config.capacity);
 	validateModelExclusionsConfig(config.modelExclusions);
 	validateMainWindowRendererConfig(config.mainWindowRenderer);
+	return normalized;
 }
 
 export function getConfigPath(): string {
@@ -174,8 +223,7 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 		throw new Error(`Subagent config at '${configPath}' must be a JSON object`);
 	}
-	validateConfig(parsed as Record<string, unknown>);
-	return parsed as ExtensionConfig;
+	return validateConfig(parsed as Record<string, unknown>);
 }
 
 export function saveConfig(config: ExtensionConfig, configPath = getConfigPath()): void {
@@ -186,9 +234,9 @@ export function saveConfig(config: ExtensionConfig, configPath = getConfigPath()
 export function updateConfig(updater: (config: ExtensionConfig) => ExtensionConfig): ExtensionConfig {
 	const configPath = getConfigPath();
 	const next = updater(readConfigForUpdate(configPath));
-	validateConfig(next as Record<string, unknown>);
-	saveConfig(next, configPath);
-	return next;
+	const canonical = validateConfig(next as Record<string, unknown>);
+	saveConfig(canonical, configPath);
+	return canonical;
 }
 
 /**

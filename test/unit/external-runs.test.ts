@@ -9,7 +9,7 @@ import {
 	snapshotExternalRuns,
 	unregisterExternalRun,
 	updateExternalRun,
-} from "../../src/api/external-runs.ts";
+} from "../../src/shared/external-runs.ts";
 
 function clearRegistry(): void {
 	delete (globalThis as Record<PropertyKey, unknown>)[Symbol.for(EXTERNAL_RUN_REGISTRY_KEY)];

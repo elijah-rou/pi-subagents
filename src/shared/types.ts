@@ -12,7 +12,7 @@ import type { ModelScopeRule } from "../runs/shared/model-scope.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
 import type { AuthorityPolicyConfig } from "../policy/authority.ts";
 import type { ThinkingLevel } from "./model-info.ts";
-import type { GlobalMissionIndexRecord, MissionRecord, MissionStoreConfig } from "../missions/types.ts";
+import type { GlobalMissionIndexRecord, MissionRecord } from "../missions/types.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
 
@@ -2368,17 +2368,6 @@ export interface IntercomBridgeConfig {
 	resultDelivery?: boolean;
 }
 
-interface TopLevelParallelConfig {
-	maxTasks?: number;
-	concurrency?: number;
-}
-
-interface ExtensionChainConfig {
-	dynamicFanout?: {
-		maxItems?: number;
-	};
-}
-
 export interface ProactiveSkillSubagentsConfig {
 	enabled?: boolean;
 	minReferences?: number;
@@ -2390,11 +2379,11 @@ export type ToolDescriptionMode = "full" | "compact" | "custom";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
-	/** Accepted but inert for one-release configuration compatibility. */
+	/** Accepted but inert through the Package 2b configuration compatibility horizon. */
 	enabled?: boolean;
-	/** Accepted but inert for one-release configuration compatibility. */
+	/** Accepted but inert through the Package 2b configuration compatibility horizon. */
 	maxPending?: number;
-	/** Absolute or `~/` root used only to locate legacy project-keyed schedule records. */
+	/** Absolute or `~/` root used only to locate legacy project-keyed schedule records during the support horizon. */
 	storeRoot?: string;
 }
 
@@ -2422,10 +2411,7 @@ export const FLEET_KEYBINDING_ACTIONS = [
 ] as const;
 
 export type FleetKeybindingAction = typeof FLEET_KEYBINDING_ACTIONS[number];
-export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>> & {
-	/** Deprecated inert compatibility field retained for one Package 3c release. */
-	inspect?: string[];
-};
+export type FleetKeybindingsConfig = Partial<Record<FleetKeybindingAction, string[]>>;
 
 export interface MainWindowRendererConfig {
 	/** Unit of horizontal space in main chat subagent call/result rows. Omit to preserve current spacing. Set 0 for no extra padding. */
@@ -2483,8 +2469,14 @@ export interface ExtensionConfig {
 	maxActiveAsyncRunsPerSession?: number;
 	/** Active-capacity cleanup policy. */
 	capacity?: ActiveAsyncCapacityConfig;
-	/** Per-run child concurrency. Compatibility key retained as globalConcurrencyLimit; defaults to 20. */
+	/** Per-run child concurrency. Defaults to 20. */
+	perRunConcurrencyLimit?: number;
+	/** Maximum items admitted by one dynamic workflow expansion. */
+	workflowDynamicFanoutMaxItems?: number;
+	/** @deprecated Read-only compatibility alias for one published release. */
 	globalConcurrencyLimit?: number;
+	/** @deprecated Read-only compatibility alias for one published release. */
+	chain?: { dynamicFanout?: { maxItems?: number } };
 	/**
 	 * Global default runtime deadline in milliseconds. It replaces the built-in
 	 * 30-minute backstop for single, parallel, and chain launches (foreground, plus
@@ -2510,8 +2502,6 @@ export interface ExtensionConfig {
 	/** Opt-in native tool permissions. Bash remains outside this policy. */
 	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
 	usageBudget?: UsageBudgetConfig;
-	parallel?: TopLevelParallelConfig;
-	chain?: ExtensionChainConfig;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;
 	worktreeBaseDir?: string;
@@ -2528,9 +2518,8 @@ export interface ExtensionConfig {
 	 *  - \"off\": never log slow result-index scans. */
 	resultScanLogging?: "all" | "activity" | "off";
 	proactiveSkillSubagents?: ProactiveSkillSubagentsConfig | false;
+	/** Passive legacy schedule lookup only; no execution or writer behavior. */
 	scheduledRuns?: ScheduledRunsConfig;
-	/** @deprecated Passive configuration for locating legacy mission records. Remove after one published release following Package 2a. */
-	missions?: MissionStoreConfig;
 	/** Small fixed authority policy for the supported operational actions. */
 	authorityPolicy?: AuthorityPolicyConfig;
 }

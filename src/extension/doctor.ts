@@ -221,10 +221,10 @@ function formatActiveAsyncCapacitySection(input: DoctorReportInput): string[] {
 }
 
 function formatPerRunChildConcurrencySection(input: DoctorReportInput): string[] {
-	const configured = input.config.globalConcurrencyLimit;
+	const configured = input.config.perRunConcurrencyLimit;
 	const limit = configured ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT;
 	return [
-		`- configured limit: ${limit} (${configured === undefined ? "default; " : ""}compatibility key: globalConcurrencyLimit)`,
+		`- configured limit: ${limit} (${configured === undefined ? "default; " : ""}config key: perRunConcurrencyLimit)`,
 		"- scope: children running within each top-level run; not shared across runs, parent sessions, or machines",
 		"- accounting: each top-level run owns its own semaphore; the 64-child per-run cumulative budget remains separate",
 	];

@@ -10,7 +10,7 @@ import {
 	registerBackgroundWorkProvider,
 	snapshotBackgroundWork,
 	type BackgroundWorkSnapshot,
-} from "../../src/api/background-work.ts";
+} from "../../src/runs/background/background-work-provider.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { waitForSubagents, type SubagentWaitDeps } from "../../src/runs/background/subagent-wait.ts";
 import type { AsyncStatus, SubagentState } from "../../src/shared/types.ts";

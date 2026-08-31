@@ -583,7 +583,7 @@ function withSpawnBudgetStatus(
 	return {
 		...result,
 		content: result.content.map((item, index) => index === 0 && item.type === "text"
-			? { ...item, text: `${formatSpawnBudget(spawnBudget)}\nTop-level async capacity (current parent session): ${activeAsyncCapacity.used}/${activeAsyncCapacity.limit || "unlimited"} used\nScope: async runs only; foreground and nested/workflow children excluded\nPer-run child concurrency: ${config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT} (globalConcurrencyLimit compatibility key; not shared across runs, parent sessions, or machines)\n${item.text}` }
+			? { ...item, text: `${formatSpawnBudget(spawnBudget)}\nTop-level async capacity (current parent session): ${activeAsyncCapacity.used}/${activeAsyncCapacity.limit || "unlimited"} used\nScope: async runs only; foreground and nested/workflow children excluded\nPer-run child concurrency: ${config.perRunConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT} (perRunConcurrencyLimit; not shared across runs, parent sessions, or machines)\n${item.text}` }
 			: item),
 		details: { ...result.details, spawnBudget, activeAsyncCapacity },
 	};
@@ -599,7 +599,7 @@ function countRequestedSubagentSpawns(params: SubagentParamsLike, config: Extens
 	if (params.tasks) return params.tasks.length;
 	if (params.chain) {
 		return params.chain.reduce((total, step) => {
-			if (isDynamicParallelStep(step)) return total + (step.expand.maxItems ?? config.chain?.dynamicFanout?.maxItems ?? 0);
+			if (isDynamicParallelStep(step)) return total + (step.expand.maxItems ?? config.workflowDynamicFanoutMaxItems ?? 0);
 			return total + getStepAgents(step).length;
 		}, 0);
 	}
@@ -4643,7 +4643,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					try {
 						const workflow = await runWorkflowScript({
 							script: workflowScript,
-							globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+							globalConcurrencyLimit: deps.config.perRunConcurrencyLimit,
 							timeoutMs: timeout,
 							signal: controller.signal,
 							registerStopChild: (stop) => {
@@ -4875,7 +4875,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const workflow = await runWorkflowScript({
 					script: requestParams.workflowScript,
 					...(delegatedWorkflowPermit ? { oneUsePermit: { claim: (key: string) => claimWorkflowChildPermit(delegatedWorkflowPermit, _id, key) } } : {}),
-					globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
+					globalConcurrencyLimit: deps.config.perRunConcurrencyLimit,
 					timeoutMs: timeout,
 					signal,
 					...(workflowState ? { state: workflowState } : {}),
@@ -5889,13 +5889,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			path.join(sessionDirForIndex(idx), "session.jsonl");
 		try {
 			if (!(effectiveParams.clarify === true && ctx.hasUI) || deps.config.forkContext?.mode === "pruned") {
-				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareForkSessionForTask, deps.config.chain?.dynamicFanout?.maxItems);
+				await preflightForkSessionsForStaticTasks(effectiveParams, contextPolicy, prepareForkSessionForTask, deps.config.workflowDynamicFanoutMaxItems);
 			}
 		} catch (error) {
 			activeAsyncCapacity?.rollback();
 			return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
 		}
-		const chainBindingsError = validateExecutionChainBindings(effectiveParams, deps.config.chain?.dynamicFanout?.maxItems);
+		const chainBindingsError = validateExecutionChainBindings(effectiveParams, deps.config.workflowDynamicFanoutMaxItems);
 		if (chainBindingsError) {
 			activeAsyncCapacity?.rollback();
 			return withResolvedContext(chainBindingsError, contextPolicy.contextSummary);
@@ -6065,7 +6065,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					currentProvider: requestParentModel?.provider,
 					modelScope,
 					thinkingOverrideForTask: forkThinkingOverrideForTask,
-					dynamicFanoutMaxItems: deps.config.chain?.dynamicFanout?.maxItems,
+					dynamicFanoutMaxItems: deps.config.workflowDynamicFanoutMaxItems,
 				});
 			} catch (error) {
 				console.error("Failed to resolve nested foreground launch metadata:", error);

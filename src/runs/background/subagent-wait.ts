@@ -45,7 +45,7 @@ import {
 	snapshotBackgroundWork,
 	type BackgroundWorkSnapshot,
 	type RegisteredBackgroundWorkItem,
-} from "../../api/background-work.ts";
+} from "./background-work-provider.ts";
 import { formatAsyncRunList, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 import {
 	DIRS,

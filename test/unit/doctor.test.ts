@@ -58,7 +58,7 @@ describe("buildDoctorReport", () => {
 				currentSessionId: "session-default-cap",
 			});
 			assert.match(report, /Active async capacity\n- usage: 0\/4 used/);
-			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; compatibility key: globalConcurrencyLimit\)/);
+			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; config key: perRunConcurrencyLimit\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -143,7 +143,7 @@ describe("buildDoctorReport", () => {
 			assert.match(report, /cumulative claims are never released; a new top-level run creates a new budget/);
 			assert.match(report, /Active async capacity\n- usage: 0\/2 used/);
 			assert.match(report, /scope: top-level async runs in the current parent session; foreground and nested\/workflow children are excluded/);
-			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; compatibility key: globalConcurrencyLimit\)/);
+			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; config key: perRunConcurrencyLimit\)/);
 			assert.match(report, /scope: children running within each top-level run; not shared across runs, parent sessions, or machines/);
 			assert.match(report, /terminal state plus matching observed process-terminal proof, or abandoned-timeout for failed runs with a dead runner PID and stale activity when enabled; false keeps unknown-proof slots/);
 			assert.match(report, /Workflow script\n- helpers: runs\.run, runs\.all, runs\.steer, runs\.status, runs\.ref\/refs, emit, console/);

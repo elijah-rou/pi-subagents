@@ -108,37 +108,21 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", "delegation.ts")), true);
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
-		"./agents": "./src/api/agents.ts",
-		"./background-work": "./src/api/background-work.ts",
 		"./external-job-provider": "./src/api/external-job-provider.ts",
-		"./external-runs": "./src/api/external-runs.ts",
 		"./capability-ceiling": "./src/api/capability-ceiling.ts",
 		"./child-profile-resolver": "./src/api/child-profile-resolver.ts",
 		"./delegation": "./src/api/delegation.ts",
 		"./preflight": "./src/api/preflight.ts",
 		"./control-channel": "./src/api/control-channel.ts",
-		"./intercom-bridge": "./src/api/intercom-bridge.ts",
-		"./pi-args": "./src/api/pi-args.ts",
-		"./shared-types": "./src/api/shared-types.ts",
 	});
-	assert.equal(packageJson.exports["./project-panes"], undefined);
-	const agents = await import("pi-subagents/agents");
-	assert.equal(agents.RUNTIME_AGENT_REGISTER_EVENT, "pi-subagents:runtime-agent-register:v1");
-	assert.equal(agents.RUNTIME_AGENT_REGISTER_VERSION, 1);
-	assert.equal(typeof agents.registerAgentViaEvents, "function");
-	const backgroundWork = await import("pi-subagents/background-work");
-	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
-	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
+	for (const retired of ["agents", "background-work", "external-runs", "intercom-bridge", "pi-args", "project-panes", "shared-types"]) {
+		assert.equal(packageJson.exports[`./${retired}`], undefined);
+		assert.equal(fs.existsSync(path.join(projectRoot, "src", "api", `${retired}.ts`)), false);
+	}
 	const externalJobProvider = await import("pi-subagents/external-job-provider");
 	assert.equal(externalJobProvider.EXTERNAL_JOB_PROVIDER_PROTOCOL_VERSION, 1);
 	assert.equal(externalJobProvider.EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, "pi-subagents.external-job-providers.v1");
 	assert.equal(typeof externalJobProvider.registerExternalJobProvider, "function");
-	const externalRuns = await import("pi-subagents/external-runs");
-	assert.equal(externalRuns.EXTERNAL_RUN_REGISTRY_VERSION, 2);
-	assert.equal(typeof externalRuns.registerExternalRun, "function");
-	assert.equal(typeof externalRuns.updateExternalRun, "function");
-	assert.equal(typeof externalRuns.snapshotExternalRuns, "function");
-	assert.equal(typeof externalRuns.unregisterExternalRun, "function");
 	const capability = await import("pi-subagents/capability-ceiling");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
@@ -152,15 +136,6 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof preflight.resolveSubagentLaunchContract, "function");
 	const controlChannel = await import("pi-subagents/control-channel");
 	assert.equal(typeof controlChannel.requestAsyncStop, "function");
-	const intercomBridge = await import("pi-subagents/intercom-bridge");
-	assert.equal(typeof intercomBridge.resolveIntercomSessionTarget, "function");
-	const piArgs = await import("pi-subagents/pi-args");
-	assert.equal(typeof piArgs.resolvePiLaunchToolPlan, "function");
-	assert.equal("buildPiArgs" in piArgs, false);
-	const sharedTypes = await import("pi-subagents/shared-types");
-	assert.equal(typeof sharedTypes.wrapForkTask, "function");
-	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");
-	assert.equal("TEMP_ROOT_DIR" in sharedTypes, false);
 });
 
 test("direct @earendil-works runtime imports are declared for CI installs", () => {

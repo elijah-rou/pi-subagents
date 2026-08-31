@@ -5,8 +5,7 @@ import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import { registerAgent } from "../../src/api/agents.ts";
-import { clearRuntimeAgentsForPi } from "../../src/agents/runtime-agent-registry.ts";
+import { clearRuntimeAgentsForPi, registerRuntimeAgent } from "../../src/agents/runtime-agent-registry.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { SUBAGENT_FANOUT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
@@ -864,7 +863,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 	it("/run accepts runtime-registered agents", async () => {
 		await withTempProject("pi-slash-runtime-agent-", async (root) => {
 			const run = await captureSlashCommandParams("run", "runtime-helper Inspect", root, (pi) => {
-				registerAgent({
+				registerRuntimeAgent({
 					pi: pi as never,
 					name: "runtime-helper",
 					definition: { description: "Runtime helper", systemPrompt: "Help at runtime." },

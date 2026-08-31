@@ -360,19 +360,48 @@ Package skill content.
 		assert.throws(() => updateConfig((config) => config), /config\.fleetKeybindings\.pageUp entries must be non-empty strings/);
 	});
 
-	it("preserves the retired Fleet inspect binding through unrelated updates", () => {
+	it("rejects retired feature config with one actionable migration diagnostic", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		const inspect = ["H", "ctrl+i"];
-		writeFile(configPath, JSON.stringify({ fleetKeybindings: { inspect }, asyncByDefault: true }));
-		assert.deepEqual(loadConfig().fleetKeybindings?.inspect, inspect);
+		writeFile(configPath, JSON.stringify({ missions: {}, orcaProgressTabs: {}, parallel: {}, fleetKeybindings: { inspect: ["H"] } }));
+		assert.throws(
+			() => updateConfig((config) => config),
+			/Retired subagent config missions, orcaProgressTabs, parallel, fleetKeybindings\.inspect is no longer supported\. Remove these keys/,
+		);
+	});
+
+	it("preserves inert scheduled run compatibility fields through unrelated updates", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		const scheduledRuns = { enabled: false, maxPending: 2 };
+		writeFile(configPath, JSON.stringify({ scheduledRuns, asyncByDefault: true }));
+		assert.deepEqual(loadConfig().scheduledRuns, scheduledRuns);
 
 		updateConfig((config) => ({ ...config, asyncByDefault: false }));
-		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")).fleetKeybindings.inspect, inspect);
+		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")).scheduledRuns, scheduledRuns);
+	});
 
-		for (const invalid of [[], [""], [1], "H", null]) {
-			writeFile(configPath, JSON.stringify({ fleetKeybindings: { inspect: invalid } }));
-			assert.throws(() => updateConfig((config) => config), /config\.fleetKeybindings\.inspect/);
+	it("canonicalizes one-release config aliases and rejects conflicts", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ globalConcurrencyLimit: 7, chain: { dynamicFanout: { maxItems: 0 } } }));
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		try {
+			assert.deepEqual(loadConfig(), { perRunConcurrencyLimit: 7, workflowDynamicFanoutMaxItems: 0 });
+			const updated = updateConfig((config) => ({ ...config, asyncByDefault: false }));
+			assert.deepEqual(updated, { perRunConcurrencyLimit: 7, workflowDynamicFanoutMaxItems: 0, asyncByDefault: false });
+			assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")), updated);
+		} finally {
+			console.warn = originalWarn;
 		}
+		assert.equal(warnings.length, 2);
+		assert.match(warnings[0]!, /replace globalConcurrencyLimit with perRunConcurrencyLimit/);
+
+		writeFile(configPath, JSON.stringify({ globalConcurrencyLimit: 7, perRunConcurrencyLimit: 8 }));
+		assert.throws(() => updateConfig((config) => config), /conflicts with config\.perRunConcurrencyLimit/);
+		writeFile(configPath, JSON.stringify({ chain: { dynamicFanout: { maxItems: 2 } }, workflowDynamicFanoutMaxItems: 3 }));
+		assert.throws(() => updateConfig((config) => config), /conflicts with config\.workflowDynamicFanoutMaxItems/);
+		writeFile(configPath, JSON.stringify({ chain: { unrelated: true } }));
+		assert.throws(() => updateConfig((config) => config), /supported only as the legacy chain\.dynamicFanout\.maxItems alias/);
 	});
 
 	it("loads and validates the foreground detach shortcut", () => {
@@ -394,15 +423,6 @@ Package skill content.
 
 		writeFile(configPath, JSON.stringify({ mainWindowRenderer: { compactResultMaxLines: 0 } }));
 		assert.throws(() => updateConfig((config) => config), /config\.mainWindowRenderer\.compactResultMaxLines must be a positive integer/);
-	});
-
-	it("tolerates the retired observer config key inertly for one release", () => {
-		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		const retiredConfig = { enabled: "formerly-invalid", nested: { preserve: true } };
-		writeFile(configPath, JSON.stringify({ orcaProgressTabs: retiredConfig }));
-		assert.deepEqual((loadConfig() as Record<string, unknown>).orcaProgressTabs, retiredConfig);
-		updateConfig((config) => ({ ...config, asyncByDefault: false }));
-		assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf-8")).orcaProgressTabs, retiredConfig);
 	});
 
 	it("hardens and redacts existing run history while recording", () => {
