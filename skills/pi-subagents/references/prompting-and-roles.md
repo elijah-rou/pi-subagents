@@ -72,7 +72,7 @@ Use this when the user wants adversarial review of a diff, plan, issue, file, or
 
 ### Proactive skill-specialist technique
 
-Use this when `{ action: "list" }` reports proactive skill subagent suggestions and the user's task would benefit from perspectives the parent regularly uses. These suggestions are conservative: a skill is recommended only when it is available and referenced repeatedly by configured agents or saved chains. Treat the list as an opt-in hint for the current task, not a command to always fan out.
+Use this when `{ action: "list" }` reports proactive skill subagent suggestions and the user's task would benefit from perspectives the parent regularly uses. These suggestions are conservative: a skill is recommended only when it is available and referenced repeatedly by configured agents. Treat the list as an opt-in hint for the current task, not a command to always fan out.
 
 Default guardrails:
 - Keep the fanout small: usually one or two skill-specialist children, never more than the listed recommendations or configured cap.

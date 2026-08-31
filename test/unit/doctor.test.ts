@@ -94,6 +94,12 @@ describe("buildDoctorReport", () => {
 				paths,
 				deps: {
 					isAsyncAvailable: () => true,
+					inspectLegacyChainDefinitions: () => ({
+						chains: [makeChain("user-flow", "user"), makeChain("project-flow", "project")],
+						chainDiagnostics: [{ source: "project", filePath: path.join(root, ".pi", "chains", "broken.chain.md"), error: "invalid legacy chain" }],
+						userChainDir: path.join(root, "home", ".pi", "agent", "chains"),
+						projectChainDir: path.join(root, ".pi", "chains"),
+					}),
 					discoverAgentsAll: () => ({
 						builtin: [makeAgent("builtin-a", "builtin")],
 						user: [makeAgent("user-a", "user")],
@@ -143,6 +149,10 @@ describe("buildDoctorReport", () => {
 			assert.match(report, /Workflow script\n- helpers: runs\.run, runs\.all, runs\.steer, runs\.status, runs\.ref\/refs, emit, console/);
 			assert.match(report, /if runs\.all is missing, reload or update pi-subagents; await Promise\.all\(\[runs\.run\(\.\.\.\)\]\) is also supported/);
 			assert.match(report, /- skills: total 2 \(project 1, user-package 1\)/);
+			assert.match(report, /Legacy chain migration\n- passive definitions: 2/);
+			assert.match(report, /- legacy definition \(user\): \/tmp\/user-flow\.chain\.md/);
+			assert.match(report, /- invalid legacy definition \(project\): .*broken\.chain\.md — invalid legacy chain/);
+			assert.match(report, /migrate each definition to direct \{ agent, task \} calls or workflowScript; legacy definitions cannot launch/);
 			assert.match(report, /- bridge: active/);
 			assert.match(report, /- supervisor channel: available \(native:pi-subagents-supervisor-channel\)/);
 			assert.doesNotMatch(report, /Companion packages/);

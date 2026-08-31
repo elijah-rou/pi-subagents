@@ -77,7 +77,7 @@ describe("slash subagent bridge requester context", () => {
     }
   });
 
-  it("rejects internal append-step compatibility before executor dispatch", async () => {
+  it("rejects removed append-step execution before executor dispatch", async () => {
     const events = eventBus();
     let executeCalls = 0;
     registerSlashSubagentBridge({
@@ -91,7 +91,7 @@ describe("slash subagent bridge requester context", () => {
     const done = new Promise<void>((resolve, reject) => events.on(RESPONSE, (data: any) => {
       try {
         assert.equal(data.isError, true);
-        assert.match(data.errorText, /internal executor compatibility.*unavailable through model, slash, or RPC/i);
+        assert.match(data.errorText, /append-step execution was removed.*artifacts are inert/i);
         assert.equal(executeCalls, 0);
         resolve();
       } catch (error) { reject(error); }

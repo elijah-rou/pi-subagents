@@ -110,7 +110,7 @@ function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(par
 	const normalizedAction = typeof action === "string" ? action.trim() : undefined;
 	if (normalizedAction !== undefined) {
 		if (normalizedAction.toLowerCase() === "append-step") {
-			return { ok: false, error: "Legacy append-step control is internal executor compatibility and is unavailable through model, slash, or RPC surfaces; use current workflowScript orchestration.", mode: "management" };
+			return { ok: false, error: "Legacy append-step execution was removed. Existing append-request artifacts are inert and remain untouched; use workflowScript orchestration.", mode: "management" };
 		}
 		const retirementGuidance = RETIRED_REFINEMENT_GUIDANCE.get(normalizedAction.toLowerCase());
 		if (retirementGuidance !== undefined) {

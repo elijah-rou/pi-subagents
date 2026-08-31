@@ -122,7 +122,7 @@ describe("public subagent execution normalization", () => {
 		for (const normalize of [normalizePublicSubagentExecution, normalizeTrustedHostSubagentExecution]) {
 			const appendStep = normalize({ action: "append-step", id: "run", step: { agent: "worker" } });
 			assert.equal(appendStep.ok, false);
-			if (!appendStep.ok) assert.match(appendStep.error, /internal executor compatibility.*unavailable through model, slash, or RPC/i);
+			if (!appendStep.ok) assert.match(appendStep.error, /append-step execution was removed.*artifacts are inert/i);
 		}
 		const unknownPublic = normalizePublicSubagentExecution({ action: "not-a-real-action" });
 		assert.equal(unknownPublic.ok, false);

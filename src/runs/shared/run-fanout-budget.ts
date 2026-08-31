@@ -267,10 +267,6 @@ export function claimRunFanoutBatch(descriptor: RunFanoutBudgetDescriptor, paths
 	return commitRunFanoutBatch(descriptor, paths, (snapshot) => snapshot);
 }
 
-export function claimRunFanoutBatchWithCommit<T>(descriptor: RunFanoutBudgetDescriptor, paths: string[], commit: () => T): T {
-	return commitRunFanoutBatch(descriptor, paths, commit);
-}
-
 export function formatRunFanoutBudget(snapshot: RunFanoutBudgetSnapshot): string {
 	return `Run fan-out: ${snapshot.used}/${snapshot.limit} used, ${snapshot.remaining} remaining`;
 }

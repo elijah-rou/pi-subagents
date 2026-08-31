@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
+import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import type { AcceptanceInput, AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, ModelAttempt, PersistedResolvedAcceptanceInput, Usage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
@@ -276,8 +276,4 @@ export async function waitForImportedAsyncRoot(
 		}
 		await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 	}
-}
-
-export function resolveAsyncRootResultPath(resultsDir: string, runId: string): string {
-	return resultFilePath(resultsDir, runId);
 }

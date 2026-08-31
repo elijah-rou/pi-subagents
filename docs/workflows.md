@@ -285,7 +285,7 @@ subagent({ workflowScript: `
 
 ### Migrating old chain shapes
 
-Legacy top-level `chain`, `tasks`, `parallel`, `chainDir`, `/chain`, `/parallel`, `/run-chain`, and durable `.chain.md` execution are no longer the public workflow API. Rewrite them as JavaScript:
+Legacy top-level `chain`, `tasks`, `parallel`, `chainDir`, `/chain`, `/parallel`, `/run-chain`, append-step execution, and durable `.chain.md` execution are removed. Rewrite them as JavaScript. Existing `.chain.md` and `.chain.json` definitions remain passive discovery inputs for one published release, but core cannot author or execute them. Run `subagent({ action: "doctor" })` or `/subagents-doctor` to list readable definitions and diagnostics before migrating them. Existing `append-requests/*.json` files are inert and remain untouched.
 
 ```js
 // Old shape, no longer supported:

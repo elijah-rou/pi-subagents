@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { discoverAgentsAll, type AgentSource } from "../agents/agents.ts";
+import { discoverAgentsAll, inspectLegacyChainDefinitions, type AgentSource } from "../agents/agents.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared/spawn-budget.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT } from "../runs/shared/parallel-utils.ts";
@@ -28,6 +28,7 @@ interface DoctorPaths {
 interface DoctorDeps {
 	isAsyncAvailable: () => boolean;
 	discoverAgentsAll: typeof discoverAgentsAll;
+	inspectLegacyChainDefinitions: typeof inspectLegacyChainDefinitions;
 	discoverAvailableSkills: typeof discoverAvailableSkills;
 	diagnoseIntercomBridge: typeof diagnoseIntercomBridge;
 }
@@ -59,6 +60,7 @@ function defaultPaths(): DoctorPaths {
 const DEFAULT_DEPS: DoctorDeps = {
 	isAsyncAvailable,
 	discoverAgentsAll,
+	inspectLegacyChainDefinitions,
 	discoverAvailableSkills,
 	diagnoseIntercomBridge,
 };
@@ -154,6 +156,16 @@ function formatDiscovery(input: DoctorReportInput, deps: DoctorDeps): string[] {
 			const skills = deps.discoverAvailableSkills(input.cwd);
 			return `- skills: total ${skills.length} (${formatSkillSourceCounts(skills)})`;
 		}),
+	];
+}
+
+function formatLegacyChainMigration(input: DoctorReportInput, deps: DoctorDeps): string[] {
+	const inspection = deps.inspectLegacyChainDefinitions(input.cwd);
+	return [
+		`- passive definitions: ${inspection.chains.length}`,
+		...inspection.chains.map((chain) => `- legacy definition (${chain.source}): ${chain.filePath}`),
+		...inspection.chainDiagnostics.map((diagnostic) => `- invalid legacy definition (${diagnostic.source}): ${diagnostic.filePath} — ${diagnostic.error}`),
+		"- migration: migrate each definition to direct { agent, task } calls or workflowScript; legacy definitions cannot launch",
 	];
 }
 
@@ -261,6 +273,9 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		"",
 		"Discovery",
 		...formatDiscovery(input, deps),
+		"",
+		"Legacy chain migration",
+		...lineFromCheck("legacy chain migration", () => formatLegacyChainMigration(input, deps).join("\n")).split("\n"),
 		"",
 		"Spawn budget",
 		...formatSpawnBudgetSection(input),

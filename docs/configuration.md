@@ -18,7 +18,7 @@ By default, project settings resolve from the nearest parent directory that cont
 }
 ```
 
-`"git-root"` keeps package discovery, project agents, chains, and `agentOverrides` anchored to the git worktree root when that root also has Pi project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.pi/settings.json`.
+`"git-root"` keeps package discovery, project agents, legacy-chain compatibility inspection, and `agentOverrides` anchored to the git worktree root when that root also has Pi project config. A nested project can still opt back into nearest-root behavior by setting `"projectRootResolution": "nearest"` in its own `.pi/settings.json`.
 
 ## `modelExclusions`
 
@@ -215,9 +215,7 @@ Forces depth-0 direct and `workflowScript` runs into background mode and bypasse
 
 Global default runtime deadline, in milliseconds, for subagent runs. It replaces the built-in 30-minute backstop for foreground direct and `workflowScript` launches and plain single-agent async runs whenever no call-level `timeoutMs`/`maxRuntimeMs` applies. For single-agent launches, selected agent frontmatter `timeoutMs` still wins. This only moves the *default*.
 
-Use it when foreground orchestration or plain async single-agent runs need a longer default than 30 minutes. It does not set async composite top-level deadlines, and it does not replace async fan-out child deadlines.
-
-Composite async runs (async chains, parallel tasks, and scripted workflows) stay unbounded at the top level by design. Their runner children are bounded individually by their own agent or runner defaults, so this value does not cap them. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
+Use it when foreground orchestration or an async direct run needs a longer default than 30 minutes. Scripted workflows stay unbounded at the top level by design; their direct children are bounded individually by their own agent or runner defaults. This value therefore does not cap a whole async `workflowScript`. Must be a positive integer no greater than `2147483647` (the largest delay a Node.js timer can honor, roughly 24.8 days); invalid or out-of-range values are ignored and the built-in defaults apply.
 
 ## `toolTimeoutMs`
 
@@ -237,7 +235,7 @@ The tool timer tracks each active `toolCallId` separately and never extends the 
 { "globalConcurrencyLimit": 20 }
 ```
 
-Caps simultaneously running children inside each top-level run, including durable legacy multi-child runs and `workflowScript` launches through `runs.run`/`runs.all`. The key name is retained for compatibility; this is not a cross-run, parent-session-wide, machine-wide, or cross-process semaphore. Every top-level run receives its own allowance. Queued workflow children retain their stable keys and begin when a running sibling in that run releases capacity. The default remains `20`.
+Caps simultaneously running children inside each top-level `workflowScript` launch through `runs.run`/`runs.all`. The key name is retained for compatibility; this is not a cross-run, parent-session-wide, machine-wide, or cross-process semaphore. Every top-level run receives its own allowance. Queued workflow children retain their stable keys and begin when a running sibling in that run releases capacity. The default remains `20`.
 
 ## `maxSubagentSpawnsPerSession`
 
@@ -245,7 +243,7 @@ Caps simultaneously running children inside each top-level run, including durabl
 { "maxSubagentSpawnsPerSession": 100 }
 ```
 
-Optionally caps the total number of child subagent launches during one parent session, including completed and failed children, parallel task counts, static chain steps, and bounded dynamic fanout children. Sessions are unlimited by default. Set this value to `0` to disable a configured cap. `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` overrides the config for a process and follows the same positive-cap/zero-unlimited semantics.
+Optionally caps the total number of direct child launches during one parent session, including completed and failed children launched directly or by `workflowScript`. Sessions are unlimited by default. Set this value to `0` to disable a configured cap. `PI_SUBAGENT_MAX_SPAWNS_PER_SESSION` overrides the config for a process and follows the same positive-cap/zero-unlimited semantics.
 
 `subagent({ action: "status" })`, Fleet status, and `subagent({ action: "doctor" })` expose used, effective limit, remaining capacity, and retained grant state. Package 1 removed spawn-budget grants from the model surface and provides no replacement command. Configure the session cap before launch and start a new parent session when a different cap is required. Compaction remains part of the same logical parent session and does not reset usage.
 
@@ -257,7 +255,7 @@ Optionally caps the total number of child subagent launches during one parent se
 
 Caps cumulative logical child admissions in one top-level run tree. The default is `64`. `PI_SUBAGENT_MAX_SPAWNS_PER_RUN` overrides the config when it is a positive integer. Invalid, zero, or missing values fall back to the configured positive value or `64`.
 
-The budget counts single launches, expanded `tasks`/`count`, static chain steps and parallel groups, actual dynamic `expand` items, appended chain steps, workflow children, and nested child calls. Static and materialized dynamic groups are admitted atomically. Startup retries, model fallback, and retained-child resume reuse the original logical child claim. Claims are never released or refunded. This cap is independent from the session-wide cumulative spawn budget and `globalConcurrencyLimit`.
+The budget counts direct launches, `workflowScript` children, and nested child calls. A `runs.all` batch is admitted atomically. Startup retries, model fallback, and retained-child resume reuse the original logical child claim. Claims are never released or refunded. This cap is independent from the session-wide cumulative spawn budget and `globalConcurrencyLimit`.
 
 ## `maxActiveAsyncRunsPerSession`
 
@@ -279,7 +277,7 @@ The default is `1200000` milliseconds (20 minutes). The policy releases only a f
 
 This limit bounds current top-level async load. It is separate from cumulative `maxSubagentSpawnsPerSession`, the default-`64` cumulative `maxSubagentSpawnsPerRun`, and per-run child concurrency (`globalConcurrencyLimit`, default `20`). `maxSubagentSpawnsPerSession` remains unlimited by default.
 
-`subagent({ action: "status" })`, fleet status, and the `subagent({ action: "doctor" })` doctor action expose used and effective top-level async capacity for the current parent session, explicitly excluding foreground and nested/workflow children. Status and the doctor action also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. Static chains and parallel calls fail before creating run artifacts or starting partial work when their declared capacity cannot fit. Later retries or unbounded dynamic work are not guaranteed by that preflight.
+`subagent({ action: "status" })`, fleet status, and the `subagent({ action: "doctor" })` doctor action expose used and effective top-level async capacity for the current parent session, explicitly excluding foreground and nested/workflow children. Status and the doctor action also identify `globalConcurrencyLimit` as per-run child concurrency and state that it is not shared across runs, parent sessions, or machines. A `workflowScript` `runs.all` batch fails before starting partial work when its declared capacity cannot fit. Later retries are not guaranteed by that preflight.
 
 ### Migration: retaining unlimited active async runs
 
@@ -294,19 +292,6 @@ This override affects only active top-level async runs in one parent session. It
 ## `scheduledRuns`
 
 Package 2b accepts this object only for one-release legacy read compatibility. `storeRoot` locates existing project-keyed schedule records and must be absolute or start with `~/`. `enabled` and `maxPending` are accepted but inert. No key enables scheduling, timers, writes, launches, or retention. When `storeRoot` is omitted, passive lookup uses `<cwd>/.pi/subagents/schedules`. See [Legacy schedules](schedules.md).
-
-## `parallel`
-
-```json
-{
-  "parallel": {
-    "maxTasks": 12,
-    "concurrency": 6
-  }
-}
-```
-
-`maxTasks` defaults to `8`; `concurrency` defaults to `4`. Per-call `concurrency` takes precedence.
 
 ## `defaultSessionDir`
 
@@ -450,9 +435,7 @@ Controls where subagent artifact files (inputs, outputs, transcripts, metadata) 
 - `"session"` (default): stores artifacts under pi's session directory (`~/.pi/agent/sessions/<session>/subagent-artifacts/`), keeping the working directory clean. It falls back to the OS temp directory when no session file exists.
 - `"temp"`: uses the OS temp directory.
 
-This preference also controls the default workflow artifact directory used by scripted chaining. `"project"` uses `<cwd>/.pi/subagents/chain-runs/`; the directory keeps its legacy name for compatibility. The default `"session"` and `"temp"` use the user-scoped temp workflow artifact directory.
-
-The `"session"` option uses the same directory that `cleanupAllArtifactDirs` already scans for age-based cleanup, so artifacts are still cleaned up automatically. Temporary workflow artifact directories are cleaned up separately after 24 hours.
+This preference applies equally to direct runs and scripted workflows. The `"session"` option uses the same directory that `cleanupAllArtifactDirs` scans for age-based cleanup. Historical `chain-runs` directories are passive compatibility artifacts and are not age-scanned or deleted at startup.
 
 When a project-scoped launch runs from an npm package directory, pi-subagents warns if package settings can include `.pi/subagents/` in the published package. Add `.pi/subagents/` to `.npmignore` (or `.gitignore` when no `.npmignore` exists), use a `files` allowlist that does not include `.pi/subagents/`, or select `"session"` or `"temp"`.
 

@@ -18,7 +18,6 @@ import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, prepareManagedSingleOutput, refreshManagedSingleOutputSnapshot, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type ActivityState,
-	type AcceptanceInput,
 	type ArtifactConfig,
 	type ExternalCliRunnerStatus,
 	type ExternalJobRunnerStatus,
@@ -101,7 +100,7 @@ import { markProcessTerminalCandidateLeaseRelease, writeProcessTerminalCandidate
 import { createOwnedProcessTreeController, type OwnedProcessTreeController } from "./owned-process-tree.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
-import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
+import { PROMPT_REDACTED, detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatEmptyTerminalAssistantResponseError, getFinalOutput, hasEmptyTerminalAssistantResponse } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard, expectsImplementationMutation, hasMutationToolCapability, validateImplementationToolContract } from "../shared/completion-guard.ts";
 import { planCompletionEvidence, projectSettlementDiagnostic } from "../shared/completion-evidence.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
@@ -130,13 +129,11 @@ import {
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
-import { writeInitialProgressFile } from "../../shared/settings.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { acceptanceBlocksRun, acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
-import { waitForImportedAsyncRoot } from "./chain-root-attachment.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
-import { appendRunnerStepsToStatus, consumeChainAppendRequests, countPendingChainAppendRequests, statusStepDescription } from "./chain-append.ts";
+import { statusStepDescription } from "./status-step-description.ts";
 import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { SOFT_CHECKPOINT_MESSAGE } from "../shared/duration-budget.ts";
@@ -158,7 +155,7 @@ const INTERCOM_DETACH_RECEIPT = "Detached for intercom coordination before task 
 
 interface SubagentRunConfig {
 	id: string;
-	steps: RunnerStep[];
+	steps: [SubagentStep];
 	resultPath: string;
 	cwd: string;
 	placeholder: string;
@@ -180,8 +177,8 @@ interface SubagentRunConfig {
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTargets?: Array<string | undefined>;
-	resultMode?: SubagentRunMode;
-	mode?: SubagentRunMode;
+	resultMode: "single";
+	mode?: "single";
 	dynamicFanoutMaxItems?: number;
 	workflowGraph?: WorkflowGraphSnapshot;
 	nestedRoute?: NestedRouteInfo;
@@ -1252,79 +1249,6 @@ async function runSingleStepInner(
 	step: SubagentStep,
 	ctx: SingleStepContext,
 ): Promise<StepResult & { completionGuardTriggered?: boolean }> {
-	if (step.importAsyncRoot) {
-		let importTimedOut = false;
-		let importStopped = false;
-		ctx.registerTimeout?.(() => {
-			importTimedOut = true;
-			let pid: number | undefined;
-			try {
-				pid = readStatus(step.importAsyncRoot!.asyncDir)?.pid;
-			} catch {
-				pid = undefined;
-			}
-			try {
-				deliverTimeoutRequest(omitUndefinedProperties({ asyncDir: step.importAsyncRoot!.asyncDir, pid, source: "ancestor-timeout" }));
-			} catch {
-				// The parent runner's own timeout result is authoritative for the attached step.
-			}
-		});
-		ctx.registerStop?.(() => {
-			importStopped = true;
-			let pid: number | undefined;
-			try {
-				pid = readStatus(step.importAsyncRoot!.asyncDir)?.pid;
-			} catch {
-				pid = undefined;
-			}
-			try {
-				deliverStopRequest(omitUndefinedProperties({ asyncDir: step.importAsyncRoot!.asyncDir, pid, source: "ancestor-stop" }));
-			} catch {
-				// The parent runner's own stopped result is authoritative for the attached step.
-			}
-		});
-		try {
-			const imported = await waitForImportedAsyncRoot(step.importAsyncRoot, omitUndefinedProperties({
-				shouldAbort: () => importTimedOut || importStopped || ctx.timeoutSignal?.aborted === true || ctx.stopSignal?.aborted === true || ctx.skipAcceptance?.() === true,
-				timeoutMessage: importStopped || ctx.stopSignal?.aborted === true ? ctx.stopMessage : ctx.timeoutMessage,
-			}));
-			try {
-				fs.writeFileSync(ctx.outputFile, imported.output, "utf-8");
-			} catch {
-				// Output files are observability only for imported roots.
-			}
-			const stopped = importStopped || imported.stopped === true || ctx.stopSignal?.aborted === true;
-			const timedOut = !stopped && (importTimedOut || imported.timedOut === true || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true);
-			const message = stopped ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.";
-			return omitUndefinedProperties({
-				agent: imported.agent,
-				output: timedOut || stopped ? message : imported.output,
-				exitCode: timedOut || stopped ? 1 : imported.exitCode,
-				error: timedOut || stopped ? message : imported.error,
-				timedOut: timedOut ? true : undefined,
-				stopped: stopped ? true : undefined,
-				sessionFile: imported.sessionFile,
-				intercomTarget: imported.intercomTarget,
-				model: imported.model,
-				childProfile: imported.childProfile,
-				attemptedModels: imported.attemptedModels,
-				modelAttempts: imported.modelAttempts,
-				contextOverflow: imported.contextOverflow,
-				totalCost: imported.totalCost,
-				usage: imported.usage,
-				structuredOutput: timedOut || stopped ? undefined : imported.structuredOutput,
-				structuredOutputPath: timedOut || stopped ? undefined : imported.structuredOutputPath,
-				structuredOutputSchemaPath: timedOut || stopped ? undefined : imported.structuredOutputSchemaPath,
-				acceptance: timedOut || stopped ? undefined : imported.acceptance,
-				execution: timedOut || stopped ? undefined : imported.execution,
-				effects: timedOut || stopped ? undefined : imported.effects,
-			});
-		} finally {
-			ctx.registerTimeout?.(undefined);
-			ctx.registerStop?.(undefined);
-		}
-	}
-
 	const effectiveStructuredOutput = step.structuredOutput ?? (step.structuredOutputSchema
 		? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(ctx.outputFile), "structured-output"))
 		: undefined);
@@ -2371,12 +2295,6 @@ function captureParallelWorktreeDiffs(
 	return { diffs, summary: formatWorktreeDiffSummary(diffs) };
 }
 
-function ensureParallelProgressFile(cwd: string, group: Extract<RunnerStep, { parallel: SubagentStep[] }>): void {
-	const progressPath = path.join(cwd, "progress.md");
-	if (!group.parallel.some((task) => task.task.includes(`Update progress at: ${progressPath}`))) return;
-	writeInitialProgressFile(cwd);
-}
-
 function resolveAsyncStepTranscriptPath(input: {
 	artifactsDir?: string;
 	artifactConfig?: Partial<ArtifactConfig>;
@@ -2630,7 +2548,7 @@ async function runSubagentInner(
 		runId: id,
 		...(config.sessionId ? { sessionId: config.sessionId } : {}),
 		...(config.completionOwnerId ? { completionOwnerId: config.completionOwnerId } : {}),
-		mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
+		mode: config.resultMode,
 		...(config.nestedSelf ? { isNested: true } : {}),
 		state: "running",
 		steering: createSteeringStatus(),
@@ -3123,45 +3041,7 @@ async function runSubagentInner(
 		exitCode: 1,
 		stopped: true,
 	});
-	const consumePendingAppendRequests = (): void => {
-		if (statusPayload.mode !== "chain" || statusPayload.state !== "running") return;
-		const requests = consumeChainAppendRequests(asyncDir);
-		if (requests.length === 0) {
-			const pendingAppends = countPendingChainAppendRequests(asyncDir);
-			if ((statusPayload.pendingAppends ?? 0) !== pendingAppends) {
-				statusPayload.pendingAppends = pendingAppends;
-				statusPayload.lastUpdate = Date.now();
-				writeStatusPayload();
-			}
-			return;
-		}
-		const appendedSteps = requests.flatMap((request) => request.steps);
-		steps.push(...appendedSteps);
-		const now = Date.now();
-		const pendingAppends = countPendingChainAppendRequests(asyncDir);
-		const added = appendRunnerStepsToStatus({
-			status: statusPayload,
-			steps: appendedSteps,
-			now,
-			pendingAppends,
-		});
-		mutatingFailureStates.push(...Array.from({ length: added.addedFlatSteps }, () => createMutatingFailureState()));
-		pendingToolResults.push(...Array.from({ length: added.addedFlatSteps }, () => undefined));
-		if (config.childIntercomTargets) {
-			config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
-		}
-		writeStatusPayload();
-		for (const request of requests) {
-			appendJsonl(eventsPath, JSON.stringify({
-				type: "subagent.chain.append.accepted",
-				ts: now,
-				runId: id,
-				requestId: request.id,
-				stepCount: request.steps.length,
-				pendingAppends,
-			}));
-		}
-	};
+
 	const markDynamicGraphGroup = (stepIndex: number, status: "completed" | "failed" | "running" | "stopped", error?: string, acceptance?: import("../../shared/types.ts").AcceptanceLedger): void => {
 		const groupNode = statusPayload.workflowGraph?.nodes.find((node) => node.id === `step-${stepIndex}`);
 		if (!groupNode) return;
@@ -3874,7 +3754,6 @@ async function runSubagentInner(
 	let stepCursor = 0;
 	while (true) {
 		if (interrupted || timedOut || stopped) break;
-		consumePendingAppendRequests();
 		if (stepCursor >= steps.length) break;
 		refreshUsageBudget();
 		if (statusPayload.usageBudget?.exhausted) {
@@ -4493,7 +4372,7 @@ async function runSubagentInner(
 							const pendingHandoff = writePendingParallelHandoff({
 								manifestPath: parallelHandoffPath(asyncDir),
 								runId: id,
-								mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" : "chain",
+								mode: statusPayload.mode === "parallel" ? "parallel" : "chain",
 								source: "async",
 								cwd,
 								stepIndex,
@@ -4529,7 +4408,6 @@ async function runSubagentInner(
 			}
 
 			try {
-				if (group.worktree) ensureParallelProgressFile(cwd, group);
 				const groupStartTime = Date.now();
 				markParallelGroupRunning({
 					statusPayload,
@@ -4831,7 +4709,7 @@ async function runSubagentInner(
 					const handoff = {
 						manifestPath,
 						runId: id,
-						mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" as const : "chain" as const,
+						mode: statusPayload.mode === "parallel" ? "parallel" as const : "chain" as const,
 						source: "async" as const,
 						cwd,
 						stepIndex,
@@ -5245,7 +5123,7 @@ async function runSubagentInner(
 		}
 	}
 
-	const resultMode = config.resultMode ?? statusPayload.mode;
+	const resultMode = config.resultMode;
 	const singleRuntimeAcknowledgedExtensions = results.length === 1 ? results[0]?.runtimeAcknowledgedExtensions : undefined;
 	const totalCost = results.reduce<CostSummary>((sum, result) => ({
 		inputTokens: sum.inputTokens + (result.totalCost?.inputTokens ?? 0),
@@ -5254,11 +5132,7 @@ async function runSubagentInner(
 	}), { inputTokens: 0, outputTokens: 0, costUsd: 0 });
 	const finalTotalCost = totalCost.inputTokens > 0 || totalCost.outputTokens > 0 || totalCost.costUsd > 0 ? totalCost : undefined;
 	const finalFlatAgents = statusPayload.steps.map((step) => step.agent);
-	const agentName = finalFlatAgents.length === 1
-		? finalFlatAgents[0]!
-		: resultMode === "parallel"
-			? `parallel:${finalFlatAgents.join("+")}`
-			: `chain:${finalFlatAgents.join("->")}`;
+	const agentName = finalFlatAgents[0]!;
 	let sessionFile: string | undefined;
 	let shareUrl: string | undefined;
 	let gistUrl: string | undefined;
@@ -5642,16 +5516,41 @@ function startConfiguredSubagent(config: SubagentRunConfig): void {
 	});
 }
 
+function decodeSubagentRunConfig(value: unknown): SubagentRunConfig {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new Error("Runner config must be an object.");
+	}
+	const config = value as Record<string, unknown>;
+	if (config.resultMode !== "single") {
+		throw new Error("Runner config resultMode must be 'single'. Use workflowScript for orchestration.");
+	}
+	if (config.mode !== undefined && config.mode !== "single") {
+		throw new Error("Runner config mode must be 'single'. Use workflowScript for orchestration.");
+	}
+	if (!Array.isArray(config.steps) || config.steps.length !== 1) {
+		throw new Error("Runner config must contain exactly one step. Use workflowScript for orchestration.");
+	}
+	const step = config.steps[0];
+	if (typeof step !== "object" || step === null || Array.isArray(step)) {
+		throw new Error("Runner config step must be an object.");
+	}
+	if ("parallel" in step || "expand" in step || "collect" in step || "importAsyncRoot" in step) {
+		throw new Error("Runner config step must not contain legacy orchestration. Use workflowScript for orchestration.");
+	}
+	return value as SubagentRunConfig;
+}
+
 const configArg = process.argv[2];
 if (configArg) {
 	try {
 		const configJson = fs.readFileSync(configArg, "utf-8");
-		const config = JSON.parse(configJson) as SubagentRunConfig;
+		const parsedConfig: unknown = JSON.parse(configJson);
 		try {
 			fs.unlinkSync(configArg);
 		} catch {
 			// Temp config cleanup is best effort.
 		}
+		const config = decodeSubagentRunConfig(parsedConfig);
 		startConfiguredSubagent(config);
 	} catch (err) {
 		console.error("Subagent runner error:", err);
@@ -5665,7 +5564,7 @@ if (configArg) {
 	});
 	process.stdin.on("end", () => {
 		try {
-			const config = JSON.parse(input) as SubagentRunConfig;
+			const config = decodeSubagentRunConfig(JSON.parse(input));
 			startConfiguredSubagent(config);
 		} catch (err) {
 			console.error("Subagent runner error:", err);

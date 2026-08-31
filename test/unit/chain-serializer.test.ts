@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseChain, parseJsonChain, serializeChain, serializeJsonChain } from "../../src/agents/chain-serializer.ts";
+import { parseChain, parseJsonChain } from "../../src/agents/chain-serializer.ts";
 
 const chainContent = `---
 name: review-chain
@@ -14,15 +14,14 @@ outputMode: file-only
 Review the diff
 `;
 
-describe("chain serializer", () => {
-	it("round-trips step outputMode", () => {
+describe("legacy chain compatibility reader", () => {
+	it("reads step outputMode", () => {
 		const parsed = parseChain(chainContent, "project", "/tmp/review-chain.md");
 
 		assert.equal(parsed.steps[0]?.outputMode, "file-only");
-		assert.match(serializeChain(parsed), /outputMode: file-only/);
 	});
 
-	it("round-trips phase, label, as, and path-based outputSchema", () => {
+	it("reads phase, label, as, and path-based outputSchema", () => {
 		const parsed = parseChain(`---
 name: review-chain
 description: Review chain
@@ -41,14 +40,9 @@ Review the diff
 		assert.equal(parsed.steps[0]?.label, "correctness pass");
 		assert.equal(parsed.steps[0]?.as, "correctnessFindings");
 		assert.equal(parsed.steps[0]?.outputSchema, "./schemas/finding.schema.json");
-		const serialized = serializeChain(parsed);
-		assert.match(serialized, /phase: Review/);
-		assert.match(serialized, /label: correctness pass/);
-		assert.match(serialized, /as: correctnessFindings/);
-		assert.match(serialized, /outputSchema: \.\/schemas\/finding\.schema\.json/);
 	});
 
-	it("round-trips markdown chain toolBudget", () => {
+	it("reads markdown chain toolBudget", () => {
 		const parsed = parseChain(`---
 name: review-chain
 description: Review chain
@@ -61,7 +55,6 @@ Review the diff
 `, "project", "/tmp/review-chain.md");
 
 		assert.deepEqual(parsed.steps[0]?.toolBudget, { soft: 3, hard: 5, block: ["read", "grep"] });
-		assert.match(serializeChain(parsed), /toolBudget: \{"soft":3,"hard":5,"block":\["read","grep"\]\}/);
 	});
 
 	it("rejects invalid markdown chain toolBudget", () => {
@@ -118,28 +111,6 @@ Review the diff
 		);
 	});
 
-	it("serializes JSON chains back to JSON", () => {
-		const parsed = parseJsonChain(JSON.stringify({
-			name: "dynamic-review",
-			package: "code-analysis",
-			description: "Review dynamic targets",
-			chain: [
-				{ agent: "scout", task: "Return targets", as: "targets", outputSchema: { type: "object" } },
-				{
-					expand: { from: { output: "targets", path: "/items" }, item: "target", key: "/path", maxItems: 4 },
-					parallel: { agent: "reviewer", task: "Review {target.path}", outputSchema: { type: "object" } },
-					collect: { as: "reviews" },
-				},
-			],
-		}), "project", "/tmp/dynamic-review.chain.json");
-
-		const serialized = serializeJsonChain(parsed);
-		assert.doesNotMatch(serialized, /^---/);
-		const reparsed = JSON.parse(serialized) as { name?: string; package?: string; chain?: Array<{ collect?: { as?: string } }> };
-		assert.equal(reparsed.name, "dynamic-review");
-		assert.equal(reparsed.package, "code-analysis");
-		assert.equal(reparsed.chain?.[1]?.collect?.as, "reviews");
-	});
 
 	it("parses declarative JSON chains with dynamic fanout toolBudget", () => {
 		const parsed = parseJsonChain(JSON.stringify({

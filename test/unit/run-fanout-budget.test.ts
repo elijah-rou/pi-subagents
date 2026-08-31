@@ -6,7 +6,6 @@ import { spawn } from "node:child_process";
 import { afterEach, describe, it } from "node:test";
 import {
 	claimRunFanoutBatch,
-	claimRunFanoutBatchWithCommit,
 	createRunFanoutBudget,
 	decodeRunFanoutBudgetDescriptor,
 	encodeRunFanoutBudgetDescriptor,
@@ -135,16 +134,6 @@ describe("run fan-out budget", () => {
 		const descriptor = budget(2);
 		claimRunFanoutBatch(descriptor, ["single"]);
 		assert.throws(() => claimRunFanoutBatch(descriptor, ["chain[0]", "chain[1]"]), RunFanoutLimitError);
-		assert.deepEqual(getRunFanoutBudgetSnapshot(descriptor), { used: 1, limit: 2, remaining: 1 });
-	});
-
-	it("rolls back a batch when its commit fails", () => {
-		const descriptor = budget(2);
-		claimRunFanoutBatch(descriptor, ["existing"]);
-		assert.throws(
-			() => claimRunFanoutBatchWithCommit(descriptor, ["append"], () => { throw new Error("enqueue failed"); }),
-			/enqueue failed/,
-		);
 		assert.deepEqual(getRunFanoutBudgetSnapshot(descriptor), { used: 1, limit: 2, remaining: 1 });
 	});
 

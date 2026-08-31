@@ -226,16 +226,9 @@ interface ExecutorModule {
 	DEFAULT_FOREGROUND_TIMEOUT_MS?: number;
 }
 
-interface AsyncExecutionModule {
-	buildAsyncRunnerSteps(id: string, params: Record<string, unknown>):
-		| { steps: Array<{ systemPrompt?: string | null }> }
-		| { error: string };
-}
-
 const execution = await tryImport<ExecutionModule>("./src/runs/foreground/execution.ts");
 const utils = await tryImport<UtilsModule>("./src/shared/utils.ts");
 const executorMod = await tryImport<ExecutorModule>("./src/runs/foreground/subagent-executor.ts");
-const asyncExecutionMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
 const available = !!(execution && utils);
 
 const runSync = execution?.runSync;
@@ -4098,22 +4091,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
-	it("rejects invalid verified async chain acceptance before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const executor = makeExecutor([makeAgent("echo")]);
-
-		const result = await executor.execute(
-			"invalid-verified-async-chain-acceptance",
-			{ chain: [{ agent: "echo", task: "Do work", acceptance: { level: "verified", verify: [] } }], async: true },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /verify.*at least one runtime command/i);
-		assert.equal(mockPi.callCount(), 0);
-	});
-
 	it("rejects unknown action strings at runtime", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 
@@ -4464,25 +4441,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
-	it("rejects an over-limit static run fan-out before creating session artifacts", async () => {
-		const sessionDir = path.join(tempDir, "run-fanout-preflight");
-		const executor = makeExecutor([makeAgent("echo"), makeAgent("second")], { maxSubagentSpawnsPerRun: 1 });
-		const result = await executor.execute(
-			"run-fanout-preflight",
-			{ tasks: [{ agent: "echo", task: "First" }, { agent: "second", task: "Second" }], sessionDir },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Run fan-out limit reached at tasks\[1\] \(0\/1 used; 2 requested, 1 remaining\)/);
-		assert.deepEqual(result.details.runFanoutBudget, { used: 0, limit: 1, remaining: 1 });
-		assert.equal(result.details.runFanoutRejection?.path, "tasks[1]");
-		assert.equal(fs.existsSync(sessionDir), false);
-		assert.equal(mockPi.callCount(), 0);
-	});
-
 	it("reports structured spawn-budget usage through status", async () => {
 		const spawnState = { sessionId: "session-123", count: 3, configuredLimit: 4, granted: 1, grantHistory: [] };
 		const executor = makeExecutor([makeAgent("echo")], { maxSubagentSpawnsPerSession: 4, maxActiveAsyncRunsPerSession: undefined }, false, spawnState);
@@ -4528,33 +4486,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const deadline = Date.now() + 10_000;
 		while (!fs.existsSync(resultPath) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
 		assert.equal(fs.existsSync(resultPath), true);
-	});
-
-	it("preflights static chains before creating run artifacts", async () => {
-		const sessionDir = path.join(tempDir, "preflight-session");
-		const executor = makeExecutor(
-			[makeAgent("echo"), makeAgent("second")],
-			{ maxSubagentSpawnsPerSession: 1 },
-		);
-		const result = await executor.execute(
-			"chain-preflight",
-			{
-				chain: [
-					{ agent: "echo", task: "First" },
-					{ agent: "second", task: "Second" },
-				],
-				sessionDir,
-			},
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /0\/1 used, 2 requested\).*1 remaining/);
-		assert.match(result.content[0]?.text ?? "", /no children were started/);
-		assert.equal(fs.existsSync(sessionDir), false);
-		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("applies bounded root-interactive spawn-budget grants", async () => {
@@ -6903,24 +6834,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(fs.readFileSync(legacy.filePath), legacy.bytes);
 	});
 
-	it("leaves a valid retired refinement inert during async chain prompt assembly", { skip: !asyncExecutionMod ? "async execution module not importable" : undefined }, () => {
-		const legacy = writeValidLegacyRefinement();
-		assert.ok(asyncExecutionMod);
-
-		const built = asyncExecutionMod.buildAsyncRunnerSteps("legacy-refinement-async-chain", {
-			chain: [{ agent: "worker", task: "Task" }],
-			agents: [makeAgent("worker")],
-			ctx: { pi: {}, cwd: tempDir, currentSessionId: "legacy-refinement-session" },
-			maxSubagentDepth: 1,
-			asyncDir: path.join(tempDir, ".pi", "subagents", "async", "legacy-refinement-async-chain"),
-		});
-
-		assert.ok("steps" in built, "error" in built ? built.error : "async chain assembly failed");
-		assert.equal(built.steps.length, 1);
-		assert.doesNotMatch(built.steps[0]?.systemPrompt ?? "", /VALID_LEGACY_OVERLAY_MUST_REMAIN_INERT/);
-		assert.deepEqual(fs.readFileSync(legacy.filePath), legacy.bytes);
-	});
-
 	it("falls back to the runtime cwd when the task cwd lacks a skill", async () => {
 		const taskCwd = path.join(tempDir, "nested");
 		fs.mkdirSync(taskCwd, { recursive: true });
@@ -7304,39 +7217,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /Write your findings to(?: exactly this path)?:/);
 	});
 
-	it("rejects explicit reviewed acceptance at every execution nesting level before spawning", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		const cases = [
-			{ agent: "echo", task: "Review", acceptance: "reviewed" },
-			{ agent: "echo", task: "Review", acceptance: { level: "reviewed" } },
-			{ tasks: [{ agent: "echo", task: "Review", acceptance: "reviewed" }] },
-			{ chain: [{ agent: "echo", task: "Review", acceptance: { level: "reviewed" } }] },
-			{ chain: [{ parallel: [{ agent: "echo", task: "Review", acceptance: "reviewed" }] }] },
-			{ chain: [{ expand: { from: { output: "targets", path: "/items" } }, parallel: { agent: "echo", acceptance: { level: "reviewed" } }, collect: { as: "reviews" } }] },
-		];
-		for (const [index, params] of cases.entries()) {
-			const executor = makeExecutor();
-			const result = await executor.execute(
-				`reviewed-acceptance-${index}`,
-				params,
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(tempDir),
-			);
-
-			assert.equal(result.isError, true);
-			assert.match(result.content[0]?.text ?? "", /achieved status.*omit acceptance.*acceptance\.review\.required/i);
-		}
-		assert.equal(mockPi.callCount(), 0);
-	});
-
-	it("rejects explicit reviewed acceptance before appending a chain step", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+	it("rejects removed append-step execution before reading a run", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([makeAgent("echo")]);
 		const result = await executor.execute(
-			"append-reviewed-acceptance",
+			"append-removed",
 			{
 				action: "append-step",
 				id: "missing-run",
-				step: { agent: "echo", task: "Review the previous work", acceptance: { level: "reviewed" } },
+				step: { agent: "echo", task: "Review the previous work" },
 			},
 			new AbortController().signal,
 			undefined,
@@ -7344,7 +7232,23 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		);
 
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Cannot append step:.*achieved status.*acceptance\.review\.required/i);
+		assert.match(result.content[0]?.text ?? "", /append-step execution was removed.*artifacts are inert/i);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects legacy composite execution at the internal executor boundary", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		for (const params of [
+			{ tasks: [{ agent: "echo", task: "Review" }] },
+			{ chain: [{ agent: "echo", task: "Review" }] },
+			{ parallel: [{ agent: "echo", task: "Review" }] },
+			{ agent: "echo", task: "Review", concurrency: 2 },
+			{ agent: "echo", task: "Review", chainDir: "/tmp/legacy" },
+		]) {
+			const result = await executor.execute("legacy-composite", params, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /top-level chain and parallel execution was removed.*workflowScript/i);
+		}
 		assert.equal(mockPi.callCount(), 0);
 	});
 

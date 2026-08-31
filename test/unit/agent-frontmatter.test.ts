@@ -6,8 +6,8 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
-import { parseChain, serializeChain } from "../../src/agents/chain-serializer.ts";
-import { discoverAgents, discoverAgentsAll, inspectAgentDefinitionDirectory, type AgentConfig } from "../../src/agents/agents.ts";
+import { parseChain } from "../../src/agents/chain-serializer.ts";
+import { discoverAgents, discoverAgentsAll, inspectAgentDefinitionDirectory, inspectLegacyChainDefinitions, type AgentConfig } from "../../src/agents/agents.ts";
 import { parseFrontmatter } from "../../src/agents/frontmatter.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
@@ -827,6 +827,66 @@ Do work
 });
 
 describe("chain discovery", () => {
+	it("does not follow symlinks or scan beyond the compatibility depth limit", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-bounds-"));
+		const external = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-external-"));
+		const ancestorSymlinkProject = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-ancestor-project-"));
+		const externalPi = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-external-pi-"));
+		tempDirs.push(dir, external, ancestorSymlinkProject, externalPi);
+		const chainsDir = path.join(dir, ".pi", "chains");
+		fs.mkdirSync(chainsDir, { recursive: true });
+		writeAgent(path.join(chainsDir, "direct.chain.md"), "---\nname: direct\ndescription: Direct\n---\n\n## worker\n\nInspect\n");
+		writeAgent(path.join(external, "linked.chain.md"), "---\nname: linked\ndescription: Linked\n---\n\n## worker\n\nInspect\n");
+		fs.symlinkSync(external, path.join(chainsDir, "linked-dir"), process.platform === "win32" ? "junction" : "dir");
+		if (process.platform !== "win32") fs.symlinkSync(path.join(external, "linked.chain.md"), path.join(chainsDir, "linked-file.chain.md"), "file");
+		writeAgent(path.join(chainsDir, ...Array.from({ length: 9 }, (_, index) => `level-${index}`), "deep.chain.md"), "---\nname: deep\ndescription: Deep\n---\n\n## worker\n\nInspect\n");
+		writeAgent(path.join(externalPi, "chains", "ancestor.chain.md"), "---\nname: ancestor\ndescription: Ancestor symlink\n---\n\n## worker\n\nInspect\n");
+		fs.symlinkSync(externalPi, path.join(ancestorSymlinkProject, ".pi"), process.platform === "win32" ? "junction" : "dir");
+
+		const result = inspectLegacyChainDefinitions(dir);
+		assert.ok(result.chains.some((chain) => chain.name === "direct"));
+		assert.equal(result.chains.some((chain) => chain.name === "linked"), false);
+		assert.equal(result.chains.some((chain) => chain.name === "deep"), false);
+		assert.match(result.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /depth limit/);
+
+		const ancestorResult = inspectLegacyChainDefinitions(ancestorSymlinkProject);
+		assert.equal(ancestorResult.chains.some((chain) => chain.name === "ancestor"), false);
+		assert.match(ancestorResult.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /symlink/);
+	}));
+
+	it("bounds compatibility candidates, directories, and file reads", () => withTempHome((home) => {
+		const candidateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-candidates-"));
+		const directoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-directories-"));
+		const entryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-entries-"));
+		const oversizedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-oversized-"));
+		tempDirs.push(candidateRoot, directoryRoot, entryRoot, oversizedRoot);
+		for (let index = 0; index < 200; index += 1) {
+			writeAgent(path.join(candidateRoot, ".pi", "chains", `${String(index).padStart(3, "0")}.chain.md`), `---\nname: project-chain-${index}\ndescription: Project chain ${index}\n---\n\n## worker\n\nInspect\n`);
+		}
+		for (let index = 0; index < 100; index += 1) {
+			writeAgent(path.join(home, ".pi", "agent", "chains", `${String(index).padStart(3, "0")}.chain.md`), `---\nname: user-chain-${index}\ndescription: User chain ${index}\n---\n\n## worker\n\nInspect\n`);
+		}
+		for (let index = 0; index < 257; index += 1) {
+			fs.mkdirSync(path.join(directoryRoot, ".pi", "chains", `dir-${String(index).padStart(3, "0")}`), { recursive: true });
+		}
+		for (let index = 0; index < 4097; index += 1) {
+			writeAgent(path.join(entryRoot, ".pi", "chains", `${String(index).padStart(4, "0")}.txt`), "ignored\n");
+		}
+		writeAgent(path.join(oversizedRoot, ".pi", "chains", "oversized.chain.md"), `---\nname: oversized\ndescription: Oversized\n---\n\n## worker\n\n${"x".repeat(256 * 1024)}\n`);
+
+		const candidates = inspectLegacyChainDefinitions(candidateRoot);
+		assert.equal(candidates.chains.filter((chain) => chain.source === "project").length, 200);
+		assert.equal(candidates.chains.filter((chain) => chain.source === "user").length, 56);
+		assert.match(candidates.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /candidate limit of 256/);
+		const directories = inspectLegacyChainDefinitions(directoryRoot);
+		assert.match(directories.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /directory limit of 256/);
+		const entries = inspectLegacyChainDefinitions(entryRoot);
+		assert.match(entries.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /entry limit of 4096/);
+		const oversized = inspectLegacyChainDefinitions(oversizedRoot);
+		assert.equal(oversized.chains.some((chain) => chain.name === "oversized"), false);
+		assert.match(oversized.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /262144-byte file limit/);
+	}));
+
 	it("prefers same-scope .chain.json over .chain.md for the same runtime name", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-format-precedence-"));
 		tempDirs.push(dir);
@@ -859,7 +919,7 @@ Run the markdown chain
 			],
 		}), "utf-8");
 
-		const result = discoverAgentsAll(dir);
+		const result = inspectLegacyChainDefinitions(dir);
 		const chain = result.chains.find((candidate) => candidate.name === "dynamic-review");
 		assert.equal(chain?.description, "JSON dynamic chain");
 		assert.equal(chain?.filePath.endsWith(".chain.json"), true);
@@ -868,6 +928,71 @@ Run the markdown chain
 });
 
 describe("package-provided agents and chains", () => {
+	it("does not inspect legacy chains through symlinked package entries", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-chain-symlink-"));
+		const external = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-external-chain-package-"));
+		tempDirs.push(dir, external);
+		writeJson(path.join(external, "package.json"), {
+			name: "linked-chain-package",
+			"pi-subagents": { chains: ["./chains"] },
+		});
+		writeAgent(path.join(external, "chains", "linked.chain.md"), `---
+name: linked
+package: linked-package
+description: Must remain outside compatibility discovery.
+---
+
+## worker
+
+Inspect
+`);
+		const nodeModules = path.join(dir, ".pi", "npm", "node_modules");
+		fs.mkdirSync(nodeModules, { recursive: true });
+		fs.symlinkSync(external, path.join(nodeModules, "linked-chain-package"), process.platform === "win32" ? "junction" : "dir");
+
+		const linkedManifestPackage = path.join(nodeModules, "linked-manifest-package");
+		fs.mkdirSync(path.join(linkedManifestPackage, "chains"), { recursive: true });
+		fs.symlinkSync(path.join(external, "package.json"), path.join(linkedManifestPackage, "package.json"), "file");
+		writeAgent(path.join(linkedManifestPackage, "chains", "manifest-linked.chain.md"), `---
+name: manifest-linked
+package: linked-package
+description: A symlinked manifest must not declare this chain.
+---
+
+## worker
+
+Inspect
+`);
+
+		const result = inspectLegacyChainDefinitions(dir);
+		assert.equal(result.chains.some((chain) => chain.name === "linked-package.linked"), false);
+		assert.equal(result.chains.some((chain) => chain.name === "linked-package.manifest-linked"), false);
+		assert.match(result.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /must not be a symlink/);
+	}));
+
+	it("rejects oversized package manifests during legacy compatibility discovery", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-chain-manifest-limit-"));
+		tempDirs.push(dir);
+		const packageRoot = path.join(dir, ".pi", "npm", "node_modules", "oversized-package");
+		fs.mkdirSync(packageRoot, { recursive: true });
+		fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ padding: "x".repeat(256 * 1024) }), "utf-8");
+
+		const result = inspectLegacyChainDefinitions(dir);
+		assert.match(result.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /262144-byte file limit/);
+	}));
+
+	it("bounds package-manifest enumeration within legacy compatibility discovery", () => withTempHome(() => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-chain-budget-"));
+		tempDirs.push(dir);
+		const nodeModules = path.join(dir, ".pi", "npm", "node_modules");
+		for (let index = 0; index < 300; index++) {
+			writeJson(path.join(nodeModules, `package-${index.toString().padStart(3, "0")}`, "package.json"), { name: `package-${index}` });
+		}
+
+		const result = inspectLegacyChainDefinitions(dir);
+		assert.match(result.chainDiagnostics.map((diagnostic) => diagnostic.error).join("\n"), /directory limit of 256/);
+	}));
+
 	it("discovers package agents and chains from installed package manifests", () => withTempHome(() => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-discovery-"));
 		tempDirs.push(dir);
@@ -918,7 +1043,7 @@ Review the task.
 		assert.equal(packagedAgent.filePath, path.join(workflowRoot, "agents", "reviewer.md"));
 		assert.equal(discoverAgents(dir, "both").agents.find((agent) => agent.name === "my-workflow.reviewer")?.source, "package");
 
-		const packagedChain = all.chains.find((chain) => chain.name === "my-workflow.review");
+		const packagedChain = inspectLegacyChainDefinitions(dir).chains.find((chain) => chain.name === "my-workflow.review");
 		assert.ok(packagedChain);
 		assert.equal(packagedChain.source, "package");
 		assert.equal(packagedChain.steps[0]?.agent, "my-workflow.reviewer");
@@ -1256,8 +1381,9 @@ Ignored
 		for (const name of ["node-modules-agent", "git-agent", "submodule-agent", "nested-project-agent"]) {
 			assert.equal(all.package.some((agent) => agent.name === name), false, `${name} should be pruned`);
 		}
-		assert.ok(all.chains.find((chain) => chain.name === "root-chain" && chain.filePath === path.join(dir, "root.chain.md")));
-		assert.equal(all.chains.some((chain) => chain.name === "node-modules-chain"), false);
+		const legacyChains = inspectLegacyChainDefinitions(dir).chains;
+		assert.ok(legacyChains.find((chain) => chain.name === "root-chain" && chain.filePath === path.join(dir, "root.chain.md")));
+		assert.equal(legacyChains.some((chain) => chain.name === "node-modules-chain"), false);
 	}));
 
 	it("keeps package definitions below user and project overrides", () => withTempHome((home) => {
@@ -1322,7 +1448,7 @@ Project chain.
 
 		assert.equal(discoverAgents(dir, "user").agents.find((agent) => agent.name === "scout")?.source, "user");
 		assert.equal(discoverAgents(dir, "project").agents.find((agent) => agent.name === "scout")?.source, "project");
-		const chainByName = new Map(discoverAgentsAll(dir).chains.map((chain) => [chain.name, chain]));
+		const chainByName = new Map(inspectLegacyChainDefinitions(dir).chains.map((chain) => [chain.name, chain]));
 		assert.equal(chainByName.get("shared")?.source, "project");
 	}));
 
@@ -1942,7 +2068,7 @@ Review
 
 		const result = discoverAgentsAll(dir);
 		assert.ok(result.project.find((agent) => agent.name === "scout" && agent.filePath === path.join(nestedDir, "scout.md")));
-		assert.ok(result.chains.find((chain) => chain.name === "review-flow" && chain.filePath === path.join(nestedChainDir, "review.chain.md")));
+		assert.ok(inspectLegacyChainDefinitions(dir).chains.find((chain) => chain.name === "review-flow" && chain.filePath === path.join(nestedChainDir, "review.chain.md")));
 		assert.equal(result.project.some((agent) => agent.filePath.endsWith("review.chain.md")), false);
 	});
 
@@ -1987,16 +2113,11 @@ Inspect {task}
 `;
 		fs.writeFileSync(path.join(nestedDir, "review.chain.md"), content, "utf-8");
 
-		const chain = discoverAgentsAll(dir).chains.find((candidate) => candidate.name === "code-analysis.review-flow");
+		const chain = inspectLegacyChainDefinitions(dir).chains.find((candidate) => candidate.name === "code-analysis.review-flow");
 		assert.ok(chain);
 		assert.equal(chain.localName, "review-flow");
 		assert.equal(chain.packageName, "code-analysis");
 		assert.equal(chain.steps[0]?.agent, "code-analysis.scout");
-		const serialized = serializeChain(chain);
-		assert.match(serialized, /^name: review-flow$/m);
-		assert.match(serialized, /^package: code-analysis$/m);
-		assert.match(serialized, /^## code-analysis\.scout$/m);
-		assert.doesNotMatch(serialized, /^name: code-analysis\.review-flow$/m);
 	});
 
 	it("keeps packaged and un-packaged runtime names distinct while preserving un-packaged precedence", () => {
@@ -2050,7 +2171,6 @@ Inspect
 		assert.equal(parsed.name, "code-analysis.review-flow");
 		assert.equal(parsed.localName, "review-flow");
 		assert.equal(parsed.packageName, "code-analysis");
-		assert.match(serializeChain(parsed), /^name: review-flow$/m);
 	});
 
 	it("normalizes package frontmatter consistently for agents and chains", () => {
@@ -2081,7 +2201,7 @@ Review
 
 		const result = discoverAgentsAll(dir);
 		assert.ok(result.project.find((agent) => agent.name === "code-analysis.scout"));
-		assert.ok(result.chains.find((chain) => chain.name === "code-analysis.review-flow"));
+		assert.ok(inspectLegacyChainDefinitions(dir).chains.find((chain) => chain.name === "code-analysis.review-flow"));
 	});
 
 	it("skips invalid package frontmatter that cannot be normalized", () => {
@@ -2113,7 +2233,7 @@ Review
 		const result = discoverAgentsAll(dir);
 		assert.equal(result.project.some((agent) => agent.filePath.endsWith("scout.md")), false);
 		assert.match(result.agentDiagnostics?.find((diagnostic) => diagnostic.filePath.endsWith("scout.md"))?.error ?? "", /Agent 'scout' package is invalid after sanitization/);
-		assert.equal(result.chains.some((chain) => chain.filePath.endsWith("review.chain.md")), false);
+		assert.equal(inspectLegacyChainDefinitions(dir).chains.some((chain) => chain.filePath.endsWith("review.chain.md")), false);
 	});
 });
 
@@ -2270,10 +2390,9 @@ description: Canonical chain
 Inspect canonical
 `, "utf-8");
 
-		const result = discoverAgentsAll(dir);
+		const result = inspectLegacyChainDefinitions(dir);
 		assert.equal(result.chains.some((chain) => chain.name === "ignored-chain"), false);
 		assert.ok(result.chains.find((chain) => chain.name === "canonical-chain" && chain.filePath === path.join(dir, ".pi", "chains", "flows", "canonical.chain.md")));
-		assert.equal(result.projectDir, path.join(dir, ".pi", "agents"));
 		assert.equal(result.projectChainDir, path.join(dir, ".pi", "chains"));
 	});
 
@@ -2308,7 +2427,7 @@ description: Project chain
 Inspect project
 `, "utf-8");
 
-			const sharedChains = discoverAgentsAll(dir).chains.filter((chain) => chain.name === "shared-chain");
+			const sharedChains = inspectLegacyChainDefinitions(dir).chains.filter((chain) => chain.name === "shared-chain");
 			assert.equal(sharedChains.length, 2);
 			assert.deepEqual(sharedChains.map((chain) => chain.source), ["user", "project"]);
 			const savedChainLookup = new Map(sharedChains.map((chain) => [chain.name, chain]));

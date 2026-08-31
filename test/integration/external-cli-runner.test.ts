@@ -23,6 +23,53 @@ function runProcess(command: string, args: string[], cwd: string, env: NodeJS.Pr
 }
 
 describe("external CLI async lifecycle", () => {
+	it("rejects legacy orchestration configs before spawning a child", async () => {
+		const repo = path.resolve(import.meta.dirname, "../..");
+		const runnerArgs = [path.join(repo, "node_modules/jiti/lib/jiti-cli.mjs"), path.join(repo, "src/runs/background/subagent-runner.ts")];
+		const cases = [
+			{ name: "multiple", steps: (step: object) => [step, step], resultMode: "single" },
+			{ name: "parallel", steps: (step: object) => [{ parallel: [step] }], resultMode: "single" },
+			{ name: "dynamic", steps: (step: object) => [{ expand: { from: "output" }, parallel: step, collect: { as: "items" } }], resultMode: "single" },
+			{ name: "import-async-root", steps: (step: object) => [{ ...step, importAsyncRoot: { runId: "legacy", asyncDir: "/tmp/legacy", resultPath: "/tmp/legacy-result.json", index: 0 } }], resultMode: "single" },
+			{ name: "chain-result-mode", steps: (step: object) => [step], resultMode: "chain" },
+			{ name: "chain-mode", steps: (step: object) => [step], resultMode: "single", mode: "chain" },
+		] as const;
+
+		for (const testCase of cases) {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), `pi-subagents-runner-reject-${testCase.name}-`));
+			tempDirs.push(dir);
+			const markerPath = path.join(dir, "child-spawned");
+			const command = writeNodeCommand(dir, "legacy-child", `require("fs").writeFileSync(${JSON.stringify(markerPath)}, "spawned")`);
+			const step = {
+				agent: "external",
+				task: "Must not run",
+				runner: { type: "external-cli", command },
+				inheritProjectContext: false,
+				inheritGlobalContext: false,
+				inheritSkills: false,
+			};
+			const asyncDir = path.join(dir, "async");
+			fs.mkdirSync(asyncDir);
+			const configPath = path.join(dir, "config.json");
+			fs.writeFileSync(configPath, JSON.stringify({
+				id: `reject-${testCase.name}`,
+				steps: testCase.steps(step),
+				resultPath: path.join(dir, "result.json"),
+				cwd: dir,
+				placeholder: "{previous}",
+				artifactConfig: { enabled: false },
+				asyncDir,
+				resultMode: testCase.resultMode,
+				...("mode" in testCase ? { mode: testCase.mode } : {}),
+			}));
+
+			const exitCode = await runProcess(process.execPath, [...runnerArgs, configPath], repo);
+			assert.equal(exitCode, 1, testCase.name);
+			assert.equal(fs.existsSync(markerPath), false, `${testCase.name} must be rejected before child spawn`);
+			assert.equal(fs.existsSync(path.join(asyncDir, "status.json")), false, `${testCase.name} must be rejected before run startup`);
+		}
+	});
+
 	it("discovers and lists an explicit custom profile without probing it, then executes it", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-explicit-external-"));
 		tempDirs.push(dir);

@@ -15,8 +15,6 @@ Trusted RPC retains only one-release passive `schedule.list`, `schedule.show`, a
 
 Package 2a removed mission administration and all new mission writes; only bounded legacy reading and completion synchronization remain for one release. Lane merge/supersession policy and broad cleanup still have no supported human replacement. Do not invent or recommend mission, provider profile/catalog, or Herdr pane administration interfaces.
 
-`append-step` remains internal executor compatibility only. Model, slash, and RPC normalizers reject it.
-
 ## Retained model discovery
 
 ```js

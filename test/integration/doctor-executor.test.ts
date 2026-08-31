@@ -63,6 +63,9 @@ describe("doctor action executor routing", { skip: !createSubagentExecutor ? "ex
 		const sessionFile = path.join(tempDir, "sessions", "parent.jsonl");
 		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
 		fs.writeFileSync(sessionFile, "");
+		const legacyChain = path.join(tempDir, ".pi", "chains", "review.chain.md");
+		fs.mkdirSync(path.dirname(legacyChain), { recursive: true });
+		fs.writeFileSync(legacyChain, "---\nname: review\ndescription: Legacy review\n---\n\n## worker\n\nReview\n", "utf-8");
 		const executor = createSubagentExecutor({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: makeState(tempDir),
@@ -89,6 +92,9 @@ describe("doctor action executor routing", { skip: !createSubagentExecutor ? "ex
 		const text = result.content[0]?.text ?? "";
 		assert.match(text, /^Subagents doctor report/);
 		assert.match(text, /- configured session dir: .*configured-sessions/);
+		assert.match(text, /Legacy chain migration\n- passive definitions: 1/);
+		assert.match(text, /- legacy definition \(project\): .*review\.chain\.md/);
+		assert.match(text, /legacy definitions cannot launch/);
 		assert.match(text, /- supervisor channel: available \(native:pi-subagents-supervisor-channel\)/);
 	});
 

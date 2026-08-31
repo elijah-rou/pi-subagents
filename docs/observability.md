@@ -10,7 +10,7 @@ Live progress shows compact detail for direct and `workflowScript` execution: a 
 
 Press Pi's configured expand key (`Ctrl+O` by default) to expand the full streaming view with complete output per step. Running-card hints also advertise `Ctrl+Alt+F` for the Fleet inspector.
 
-Sequential chains show a flow line like `done scout → running worker`. Chains with parallel steps show per-step cards instead. Chain status uses `label` and `phase` metadata when present, while falling back to agent names for older chains.
+A sequential `workflowScript` shows child progress in launch order. `runs.all` children show separate cards. Persisted older runs can still render legacy chain graph, `label`, and `phase` metadata for status compatibility.
 
 ## Background runs
 
@@ -34,7 +34,7 @@ async subagent worker · background
     Press configured-expand-key for live detail · Ctrl+Alt+F Fleet
 ```
 
-To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a parallel or chain run.
+To inspect one background child in text, use `subagent({ action: "status", id: "...", view: "transcript" })`; add `index` for a specific child in a multi-child workflow or persisted legacy run.
 
 ## FleetView
 
@@ -56,7 +56,7 @@ After you expand it:
 
 When the focused editor is empty, press `↓` or `←` to expand the summary into `main` plus active children with agent name, state, elapsed time, and token usage. When providers report usage, `window` is the latest assistant turn's input plus cache-read tokens, while `spent` keeps the cumulative input-plus-output total. Old run artifacts without window data keep the existing token-total label. The compact line counts active current-session work. Then use `↑`/`↓` or `j`/`k` to select a child and `Enter` to inspect it. Printable navigation keys are never intercepted before activation.
 
-FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Pi tabs are not marked unread, while failed or paused completions still notify the originating session. Parallel runs show every active child independently. Chains with parallel groups keep their grouped shape in progress and results, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent` or `allowNestedSubagents: true`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
+FleetView replaces the legacy above-editor async widget by default. Successful background completions stay quiet so inactive Pi tabs are not marked unread, while failed or paused completions still notify the originating session. A `workflowScript` using `runs.all` shows every active child independently, so failed or paused agents stay visible next to completed ones. When a child is explicitly allowed to fan out with `tools: subagent` or `allowNestedSubagents: true`, its nested runs appear under that parent child in the main status tree instead of being hidden inside the child process.
 
 ## The fleet inspector
 
@@ -213,15 +213,9 @@ Foreground and async runners share bounded child-protocol handling:
 
 ## Workflow and debug artifacts
 
-Each scripted workflow stores runtime artifacts under a workflow artifact directory. The on-disk directory is still named `chain-runs` for compatibility. With the default `artifactDir: "session"` or with `"temp"`, it is user-scoped temp storage. With `artifactDir: "project"`, the root is `<cwd>/.pi/subagents/chain-runs/`:
+Current direct and scripted workflow runs store artifacts under `{sessionDir}/subagent-artifacts/`, `.pi/subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Historical `chain-runs` directories are passive compatibility artifacts: extension startup does not scan, mutate, or delete them.
 
-```text
-<tmpdir>/pi-subagents-<scope>/chain-runs/{runId}/
-```
-
-A run directory may contain files such as `context.md`, `plan.md`, `progress.md`, and `parallel-{stepIndex}/.../output.md`. User-scoped temp workflow artifact directories older than 24 hours are cleaned up on extension startup; project-local and explicit persistent roots are not age-scanned.
-
-Debug artifacts live under `{sessionDir}/subagent-artifacts/`, `.pi/subagents/artifacts/` for project-scoped runs, or a user-scoped temp artifact directory. Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. For lane, review, council, and gate reports, prefer these managed artifacts or the aggregate workflow result instead of repo-root `reports/` files. Copy only final durable evidence to session memory, a workflow artifact, a PR/comment, or an approved docs path. Per task you may see:
+Single-run relative `output` files are saved under `{artifactsDir}/outputs/{runId}/` unless `singleRunOutputBaseDir` is configured. For lane, review, council, and gate reports, prefer these managed artifacts or the aggregate workflow result instead of repo-root `reports/` files. Copy only final durable evidence to session memory, a workflow artifact, a PR/comment, or an approved docs path. Per task you may see:
 
 - `{runId}_{agent}_input.md`
 - `{runId}_{agent}_output.md`

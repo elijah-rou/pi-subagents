@@ -11,8 +11,6 @@ Omit `action` for execution. Use one direct `{ agent, task? }` call for one chil
 
 Package 2a removed mission/goal administration and all new mission writes. One-release legacy readers and completion synchronization are not a callable workflow surface. Lane merge/supersession policy, broad worktree cleanup, and optional pane administration remain unavailable to models. Do not invent a mission slash command.
 
-`append-step` is internal executor compatibility. Models, slash commands, and RPC calls cannot use it.
-
 ## Discovery and direct execution
 
 Call `{ action: "list" }` before launch and select only an executable, non-disabled agent. Call `{ action: "models" }` before supplying an explicit provider/model id.

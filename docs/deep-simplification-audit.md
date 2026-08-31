@@ -325,6 +325,8 @@ Exit criteria:
 
 ### Package 4: Retire legacy orchestration writers
 
+Implementation evidence: [Deep simplification Package 4](deep-simplification-package-4.md).
+
 Goal: make direct execution and `workflowScript` the only newly written execution contracts.
 
 Actions:

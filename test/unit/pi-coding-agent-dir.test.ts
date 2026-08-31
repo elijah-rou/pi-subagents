@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { discoverAgentsAll } from "../../src/agents/agents.ts";
+import { discoverAgentsAll, inspectLegacyChainDefinitions } from "../../src/agents/agents.ts";
 import { handleCreate } from "../../src/agents/agent-management.ts";
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { applyModelExclusionsConfig, loadConfig, resolveModelExclusionTTL, updateConfig } from "../../src/extension/config.ts";
@@ -139,10 +139,11 @@ Inspect env.
 
 		const discovered = discoverAgentsAll(cwd);
 		assert.equal(discovered.userDir, path.join(agentDir, "agents"));
-		assert.equal(discovered.userChainDir, path.join(agentDir, "chains"));
 		assert.equal(discovered.userSettingsPath, settingsPath);
 		assert.ok(discovered.user.find((agent) => agent.name === "env-agent" && agent.filePath === path.join(agentDir, "agents", "env-agent.md")));
-		assert.ok(discovered.chains.find((chain) => chain.name === "env-chain" && chain.filePath === path.join(agentDir, "chains", "env-chain.chain.md")));
+		const legacyChains = inspectLegacyChainDefinitions(cwd);
+		assert.equal(legacyChains.userChainDir, path.join(agentDir, "chains"));
+		assert.ok(legacyChains.chains.find((chain) => chain.name === "env-chain" && chain.filePath === path.join(agentDir, "chains", "env-chain.chain.md")));
 
 		const worker = discovered.builtin.find((agent) => agent.name === "worker");
 		assert.equal(worker?.systemPrompt, "Use env-rooted settings.");

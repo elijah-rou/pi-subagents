@@ -82,7 +82,7 @@ The package includes `/candidate-panel` for one-pass proposal selection and `/co
 | Execute a plan carefully | "Have worker implement this approved plan, then run reviewers and apply the feedback." |
 | Scout before planning | "Use scout to inspect the auth flow before planning." |
 | Run in the background | "Run this in the background." |
-| Use a saved workflow | "Run the review chain on this branch." |
+| Use a workflow file | "Run the workflow script at `.pi/workflows/review.js` on this branch." |
 | Browse agents | "Show me the available subagents." |
 | See running work | "Show active async runs." or "Show the subagent fleet." |
 | Check setup | "Check whether subagents are configured correctly." |

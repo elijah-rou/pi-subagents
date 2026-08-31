@@ -14,7 +14,7 @@ Agent authoring uses the human `/subagents` interface. Fleet inspection uses `/s
 
 Package 2a removed mission and goal administration and all new mission writes. Only one-release passive legacy readers and completion merge remain. Lane merge/supersession policy and broad worktree cleanup still have no model-facing access. The provider profile/catalog administration product is retired. The Herdr inspector and project-pane products are retired, including their trusted actions, commands, RPC/package seams, runtime integration, and artifact writers. Models must not attempt removed action names or fields.
 
-`append-step` is internal executor compatibility only. Model, slash, and RPC normalization reject it.
+`append-step` execution is removed. Old `append-requests/*.json` files are inert, remain untouched, and are not consumed.
 
 ## Parameters
 

@@ -23,6 +23,7 @@ import { parseMemoryFrontmatter } from "./agent-memory.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
+import { assertNoSymlinkPathComponents } from "../shared/private-state.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -1732,51 +1733,344 @@ function shouldPruneDiscoveryDir(rootDir: string, dir: string, dirName: string):
 	return path.resolve(dir) !== path.resolve(rootDir) && isDiscoveryNestedProjectRoot(dir);
 }
 
-function listFilesRecursive(
-	dir: string,
-	predicate: (fileName: string) => boolean,
-	rootDir = dir,
-	visitedDirectories = new Set<string>(),
-): string[] {
-	const files: string[] = [];
-	if (!fs.existsSync(dir)) return files;
-	let realDir: string;
-	try {
-		realDir = fs.realpathSync(dir);
-	} catch {
-		return files;
-	}
-	if (visitedDirectories.has(realDir)) return files;
-	visitedDirectories.add(realDir);
+const LEGACY_CHAIN_DISCOVERY_MAX_DEPTH = 8;
+const LEGACY_CHAIN_DISCOVERY_MAX_DIRECTORIES = 256;
+const LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES = 4096;
+const LEGACY_CHAIN_DISCOVERY_MAX_CANDIDATES = 256;
+const LEGACY_CHAIN_FILE_MAX_BYTES = 256 * 1024;
 
-	let entries: fs.Dirent[];
-	try {
-		entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-	} catch {
-		return files;
-	}
+interface LegacyChainFileDiscovery {
+	files: string[];
+	diagnostics: Array<{ filePath: string; error: string }>;
+}
 
-	for (const entry of entries) {
-		const filePath = path.join(dir, entry.name);
-		let isDirectory = entry.isDirectory();
-		if (entry.isSymbolicLink()) {
+interface LegacyChainDiscoveryBudget {
+	directories: number;
+	entries: number;
+	candidates: number;
+}
+
+function createLegacyChainDiscoveryBudget(): LegacyChainDiscoveryBudget {
+	return { directories: 0, entries: 0, candidates: 0 };
+}
+
+function readLegacyCompatibilityJson(filePath: string): { value?: Record<string, unknown>; error?: string } {
+	let descriptor: number | undefined;
+	try {
+		assertNoSymlinkPathComponents(filePath);
+		const pathStat = fs.lstatSync(filePath);
+		if (pathStat.isSymbolicLink() || !pathStat.isFile()) return {};
+		if (pathStat.size > LEGACY_CHAIN_FILE_MAX_BYTES) {
+			return { error: `Legacy chain compatibility discovery rejected '${filePath}' above its ${LEGACY_CHAIN_FILE_MAX_BYTES}-byte file limit.` };
+		}
+		descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+		const openedStat = fs.fstatSync(descriptor);
+		if (!openedStat.isFile() || openedStat.size > LEGACY_CHAIN_FILE_MAX_BYTES) {
+			return { error: `Legacy chain compatibility discovery rejected '${filePath}' above its ${LEGACY_CHAIN_FILE_MAX_BYTES}-byte file limit.` };
+		}
+		const content = Buffer.alloc(openedStat.size);
+		let offset = 0;
+		while (offset < content.length) {
+			const count = fs.readSync(descriptor, content, offset, content.length - offset, offset);
+			if (count === 0) break;
+			offset += count;
+		}
+		if (offset !== content.length) return { error: `Legacy chain compatibility discovery could not read '${filePath}' completely.` };
+		const value: unknown = JSON.parse(content.toString("utf-8"));
+		if (!value || typeof value !== "object" || Array.isArray(value)) return { error: `Legacy chain compatibility discovery expected an object in '${filePath}'.` };
+		return { value: value as Record<string, unknown> };
+	} catch (error) {
+		const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+		if (code === "ENOENT") return {};
+		return { error: error instanceof Error ? error.message : String(error) };
+	} finally {
+		if (descriptor !== undefined) fs.closeSync(descriptor);
+	}
+}
+
+function legacyChainDiscoveryBudgetError(budget: LegacyChainDiscoveryBudget): string | undefined {
+	if (budget.directories >= LEGACY_CHAIN_DISCOVERY_MAX_DIRECTORIES) return `Legacy chain compatibility discovery reached its directory limit of ${LEGACY_CHAIN_DISCOVERY_MAX_DIRECTORIES}.`;
+	if (budget.entries >= LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES) return `Legacy chain compatibility discovery reached its entry limit of ${LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES}.`;
+	if (budget.candidates >= LEGACY_CHAIN_DISCOVERY_MAX_CANDIDATES) return `Legacy chain compatibility discovery reached its candidate limit of ${LEGACY_CHAIN_DISCOVERY_MAX_CANDIDATES}.`;
+	return undefined;
+}
+
+function collectLegacyPackageChainDirs(projectRoot: string | null, budget: LegacyChainDiscoveryBudget): { dirs: string[]; diagnostics: ChainDiscoveryDiagnostic[] } {
+	const dirs: string[] = [];
+	const diagnostics: ChainDiscoveryDiagnostic[] = [];
+	const packageRoots: string[] = [];
+	const seenPackageRoots = new Set<string>();
+	let directoryLimitReported = false;
+	let entryLimitReported = false;
+
+	const report = (filePath: string, error: string): void => {
+		diagnostics.push({ source: "package", filePath, error });
+	};
+	const claimDirectory = (dir: string): boolean => {
+		if (budget.directories >= LEGACY_CHAIN_DISCOVERY_MAX_DIRECTORIES) {
+			if (!directoryLimitReported) {
+				directoryLimitReported = true;
+				report(dir, `Legacy chain compatibility discovery reached its directory limit of ${LEGACY_CHAIN_DISCOVERY_MAX_DIRECTORIES}.`);
+			}
+			return false;
+		}
+		budget.directories += 1;
+		return true;
+	};
+	const readDirectory = (dir: string): fs.Dirent[] => {
+		if (!claimDirectory(dir)) return [];
+		try {
+			assertNoSymlinkPathComponents(dir);
+			const stat = fs.lstatSync(dir);
+			if (stat.isSymbolicLink() || !stat.isDirectory()) return [];
+			const directory = fs.opendirSync(dir, { bufferSize: 32 });
+			const entries: fs.Dirent[] = [];
 			try {
-				isDirectory = fs.statSync(filePath).isDirectory();
-			} catch {
-				isDirectory = false;
+				while (budget.entries < LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES) {
+					const entry = directory.readSync();
+					if (!entry) break;
+					entries.push(entry);
+					budget.entries += 1;
+				}
+				if (budget.entries === LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES && directory.readSync() !== null && !entryLimitReported) {
+					entryLimitReported = true;
+					report(dir, `Legacy chain compatibility discovery reached its entry limit of ${LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES}.`);
+				}
+			} finally {
+				directory.closeSync();
+			}
+			return entries.sort((left, right) => left.name.localeCompare(right.name));
+		} catch (error) {
+			const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+			if (code !== "ENOENT") report(dir, error instanceof Error ? error.message : String(error));
+			return [];
+		}
+	};
+	const addPackageRoot = (packageRoot: string): void => {
+		const resolvedRoot = path.resolve(packageRoot);
+		if (seenPackageRoots.has(resolvedRoot)) return;
+		seenPackageRoots.add(resolvedRoot);
+		packageRoots.push(resolvedRoot);
+	};
+	const readSettingsPackageRoots = (settingsFile: string, baseDir: string): void => {
+		if (budget.entries >= LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES) return;
+		const loaded = readLegacyCompatibilityJson(settingsFile);
+		if (loaded.error) report(settingsFile, loaded.error);
+		const packages = loaded.value?.packages;
+		if (!Array.isArray(packages)) return;
+		for (const entry of packages) {
+			if (budget.entries >= LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES) {
+				if (!entryLimitReported) {
+					entryLimitReported = true;
+					report(settingsFile, `Legacy chain compatibility discovery reached its entry limit of ${LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES}.`);
+				}
+				break;
+			}
+			budget.entries += 1;
+			const source = typeof entry === "string"
+				? entry
+				: entry && typeof entry === "object" && typeof (entry as { source?: unknown }).source === "string"
+					? (entry as { source: string }).source
+					: undefined;
+			if (!source) continue;
+			const packageRoot = resolveSettingsPackageRoot(source, baseDir);
+			if (packageRoot) addPackageRoot(packageRoot);
+		}
+	};
+	const readNodeModulesPackageRoots = (nodeModulesDir: string): void => {
+		for (const entry of readDirectory(nodeModulesDir)) {
+			if (entry.name.startsWith(".") || !entry.isDirectory()) continue;
+			const entryPath = path.join(nodeModulesDir, entry.name);
+			if (entry.name.startsWith("@")) {
+				for (const scopeEntry of readDirectory(entryPath)) {
+					if (!scopeEntry.name.startsWith(".") && scopeEntry.isDirectory()) addPackageRoot(path.join(entryPath, scopeEntry.name));
+				}
+			} else {
+				addPackageRoot(entryPath);
 			}
 		}
-		if (isDirectory) {
-			if (!shouldPruneDiscoveryDir(rootDir, filePath, entry.name)) {
-				files.push(...listFilesRecursive(filePath, predicate, rootDir, visitedDirectories));
-			}
+	};
+
+	const agentDir = getAgentDir();
+	if (projectRoot) {
+		const projectConfigDir = getProjectConfigDir(projectRoot);
+		addPackageRoot(projectRoot);
+		readNodeModulesPackageRoots(path.join(projectConfigDir, "npm", "node_modules"));
+		readSettingsPackageRoots(path.join(projectConfigDir, "settings.json"), projectConfigDir);
+	}
+	readNodeModulesPackageRoots(path.join(agentDir, "npm", "node_modules"));
+	readSettingsPackageRoots(path.join(agentDir, "settings.json"), agentDir);
+	const globalRoot = getGlobalNpmRoot();
+	if (globalRoot) readNodeModulesPackageRoots(globalRoot);
+
+	for (const packageRoot of packageRoots) {
+		if (!claimDirectory(packageRoot)) break;
+		const manifestPath = path.join(packageRoot, "package.json");
+		const loaded = readLegacyCompatibilityJson(manifestPath);
+		if (loaded.error) {
+			report(manifestPath, loaded.error);
 			continue;
 		}
-		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
-		if (!predicate(entry.name)) continue;
-		files.push(filePath);
+		if (!loaded.value) continue;
+		const roots: Record<string, unknown>[] = [];
+		const piSubagents = loaded.value["pi-subagents"];
+		if (piSubagents && typeof piSubagents === "object" && !Array.isArray(piSubagents)) roots.push(piSubagents as Record<string, unknown>);
+		const pi = loaded.value.pi;
+		const subagents = pi && typeof pi === "object" && !Array.isArray(pi) ? (pi as { subagents?: unknown }).subagents : undefined;
+		if (subagents && typeof subagents === "object" && !Array.isArray(subagents)) roots.push(subagents as Record<string, unknown>);
+		for (const root of roots) {
+			for (const chainDir of stringArray(root.chains)) {
+				if (budget.entries >= LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES) {
+					if (!entryLimitReported) {
+						entryLimitReported = true;
+						report(manifestPath, `Legacy chain compatibility discovery reached its entry limit of ${LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES}.`);
+					}
+					break;
+				}
+				budget.entries += 1;
+				dirs.push(path.resolve(packageRoot, chainDir));
+			}
+		}
 	}
-	return files;
+	return { dirs: [...new Set(dirs)], diagnostics };
+}
+
+function discoverLegacyChainFiles(dir: string, budget: LegacyChainDiscoveryBudget): LegacyChainFileDiscovery {
+	const rootDir = path.resolve(dir);
+	const files: string[] = [];
+	const diagnostics: Array<{ filePath: string; error: string }> = [];
+	const budgetError = legacyChainDiscoveryBudgetError(budget);
+	if (budgetError) return { files, diagnostics: [{ filePath: rootDir, error: budgetError }] };
+	try {
+		assertNoSymlinkPathComponents(rootDir);
+	} catch (error) {
+		return { files, diagnostics: [{ filePath: rootDir, error: error instanceof Error ? error.message : String(error) }] };
+	}
+	budget.directories += 1;
+	try {
+		const rootStat = fs.lstatSync(rootDir);
+		if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return { files, diagnostics };
+	} catch {
+		return { files, diagnostics };
+	}
+
+	const pending: Array<{ dir: string; depth: number }> = [{ dir: rootDir, depth: 0 }];
+	let depthLimitReported = false;
+	let directoryLimitReported = false;
+	let entryLimitReported = false;
+	let candidateLimitReported = false;
+
+	while (pending.length > 0 && !entryLimitReported && !candidateLimitReported) {
+		const current = pending.shift();
+		if (!current) throw new Error("legacy chain discovery queue unexpectedly empty");
+		let directory: fs.Dir;
+		try {
+			const directoryStat = fs.lstatSync(current.dir);
+			if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) continue;
+			directory = fs.opendirSync(current.dir, { bufferSize: 32 });
+		} catch {
+			continue;
+		}
+		const entries: fs.Dirent[] = [];
+		try {
+			while (budget.entries < LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES) {
+				const entry = directory.readSync();
+				if (!entry) break;
+				entries.push(entry);
+				budget.entries += 1;
+			}
+			if (budget.entries === LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES && directory.readSync() !== null) {
+				entryLimitReported = true;
+				diagnostics.push({ filePath: rootDir, error: `Legacy chain compatibility discovery reached its entry limit of ${LEGACY_CHAIN_DISCOVERY_MAX_ENTRIES}.` });
+			}
+		} catch {
+			continue;
+		} finally {
+			try {
+				directory.closeSync();
+			} catch {
+				// Discovery is best-effort and the bounded directory handle is already unusable.
+			}
+		}
+
+		for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+			if (entry.isSymbolicLink()) continue;
+			const filePath = path.join(current.dir, entry.name);
+			if (entry.isDirectory()) {
+				if (shouldPruneDiscoveryDir(rootDir, filePath, entry.name)) continue;
+				if (current.depth >= LEGACY_CHAIN_DISCOVERY_MAX_DEPTH) {
+					if (!depthLimitReported) {
+						depthLimitReported = true;
+						diagnostics.push({ filePath, error: `Legacy chain compatibility discovery reached its depth limit of ${LEGACY_CHAIN_DISCOVERY_MAX_DEPTH}.` });
+					}
+					continue;
+				}
+				if (budget.directories >= LEGACY_CHAIN_DISCOVERY_MAX_DIRECTORIES) {
+					if (!directoryLimitReported) {
+						directoryLimitReported = true;
+						diagnostics.push({ filePath, error: `Legacy chain compatibility discovery reached its directory limit of ${LEGACY_CHAIN_DISCOVERY_MAX_DIRECTORIES}.` });
+					}
+					continue;
+				}
+				pending.push({ dir: filePath, depth: current.depth + 1 });
+				budget.directories += 1;
+				continue;
+			}
+			if (!entry.isFile()) continue;
+			if (!entry.name.endsWith(".chain.md") && !entry.name.endsWith(".chain.json")) continue;
+			if (budget.candidates >= LEGACY_CHAIN_DISCOVERY_MAX_CANDIDATES) {
+				candidateLimitReported = true;
+				diagnostics.push({ filePath, error: `Legacy chain compatibility discovery reached its candidate limit of ${LEGACY_CHAIN_DISCOVERY_MAX_CANDIDATES}.` });
+				break;
+			}
+			files.push(filePath);
+			budget.candidates += 1;
+		}
+	}
+
+	return { files, diagnostics };
+}
+
+function readLegacyChainFile(filePath: string): { content?: string; error?: string } {
+	let descriptor: number | undefined;
+	try {
+		const pathStat = fs.lstatSync(filePath);
+		if (pathStat.isSymbolicLink() || !pathStat.isFile()) return {};
+		if (pathStat.size > LEGACY_CHAIN_FILE_MAX_BYTES) {
+			return { error: `Legacy chain compatibility reader rejected a file above its ${LEGACY_CHAIN_FILE_MAX_BYTES}-byte file limit.` };
+		}
+		const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+		descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+		const openedStat = fs.fstatSync(descriptor);
+		if (!openedStat.isFile()) return {};
+		if (openedStat.size > LEGACY_CHAIN_FILE_MAX_BYTES) {
+			return { error: `Legacy chain compatibility reader rejected a file above its ${LEGACY_CHAIN_FILE_MAX_BYTES}-byte file limit.` };
+		}
+		const chunks: Buffer[] = [];
+		const buffer = Buffer.allocUnsafe(8192);
+		let totalBytes = 0;
+		while (totalBytes <= LEGACY_CHAIN_FILE_MAX_BYTES) {
+			const remaining = LEGACY_CHAIN_FILE_MAX_BYTES + 1 - totalBytes;
+			const count = fs.readSync(descriptor, buffer, 0, Math.min(buffer.length, remaining), null);
+			if (count === 0) break;
+			chunks.push(Buffer.from(buffer.subarray(0, count)));
+			totalBytes += count;
+		}
+		if (totalBytes > LEGACY_CHAIN_FILE_MAX_BYTES) {
+			return { error: `Legacy chain compatibility reader rejected a file above its ${LEGACY_CHAIN_FILE_MAX_BYTES}-byte file limit.` };
+		}
+		return { content: Buffer.concat(chunks, totalBytes).toString("utf-8") };
+	} catch {
+		return {};
+	} finally {
+		if (descriptor !== undefined) {
+			try {
+				fs.closeSync(descriptor);
+			} catch {
+				// The bounded read is already complete or failed.
+			}
+		}
+	}
 }
 
 export interface AgentDefinitionInspection {
@@ -2201,20 +2495,21 @@ function reportAgentDefinitionDirectory(source: AgentSource, dir: string, inspec
 	};
 }
 
-function loadChainsFromDir(dir: string, source: AgentSource): { chains: ChainConfig[]; diagnostics: ChainDiscoveryDiagnostic[] } {
+function loadChainsFromDir(dir: string, source: AgentSource, budget: LegacyChainDiscoveryBudget): { chains: ChainConfig[]; diagnostics: ChainDiscoveryDiagnostic[] } {
 	const chains = new Map<string, ChainConfig>();
-	const diagnostics: ChainDiscoveryDiagnostic[] = [];
+	const discovered = discoverLegacyChainFiles(dir, budget);
+	const diagnostics: ChainDiscoveryDiagnostic[] = discovered.diagnostics.map((diagnostic) => ({ source, ...diagnostic }));
 
-	for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".chain.md") || fileName.endsWith(".chain.json"))) {
-		let content: string;
-		try {
-			content = fs.readFileSync(filePath, "utf-8");
-		} catch {
+	for (const filePath of discovered.files) {
+		const read = readLegacyChainFile(filePath);
+		if (read.error) {
+			diagnostics.push({ source, filePath, error: read.error });
 			continue;
 		}
+		if (read.content === undefined) continue;
 
 		try {
-			const chain = filePath.endsWith(".chain.json") ? parseJsonChain(content, source, filePath) : parseChain(content, source, filePath);
+			const chain = filePath.endsWith(".chain.json") ? parseJsonChain(read.content, source, filePath) : parseChain(read.content, source, filePath);
 			const existing = chains.get(chain.name);
 			if (existing && existing.filePath.endsWith(".chain.json") && filePath.endsWith(".chain.md")) continue;
 			chains.set(chain.name, chain);
@@ -2249,15 +2544,93 @@ function resolveNearestProjectAgentDirs(cwd: string): { readDirs: string[]; cand
 	return { readDirs, candidateDirs, preferredDir };
 }
 
-function resolveNearestProjectChainDirs(cwd: string): { readDirs: string[]; preferredDir: string | null } {
-	const projectRoot = findConfiguredProjectRoot(cwd);
-	if (!projectRoot) return { readDirs: [], preferredDir: null };
+function resolveLegacyCompatibilityProjectRoot(cwd: string): { projectRoot: string | null; diagnostics: ChainDiscoveryDiagnostic[] } {
+	const diagnostics: ChainDiscoveryDiagnostic[] = [];
+	const candidates: string[] = [];
+	let currentDir = path.resolve(cwd);
+	try {
+		assertNoSymlinkPathComponents(currentDir);
+	} catch (error) {
+		diagnostics.push({ source: "project", filePath: currentDir, error: error instanceof Error ? error.message : String(error) });
+		return { projectRoot: null, diagnostics };
+	}
+	while (true) {
+		const configDir = getProjectConfigDir(currentDir);
+		const legacyDir = path.join(currentDir, ".agents");
+		const isRealDirectory = (candidate: string): boolean => {
+			try {
+				const stat = fs.lstatSync(candidate);
+				return !stat.isSymbolicLink() && stat.isDirectory();
+			} catch {
+				return false;
+			}
+		};
+		if (isRealDirectory(configDir) || isRealDirectory(legacyDir)) candidates.push(currentDir);
+		const parentDir = path.dirname(currentDir);
+		if (parentDir === currentDir) break;
+		currentDir = parentDir;
+	}
+	const nearestRoot = candidates[0];
+	if (!nearestRoot) return { projectRoot: null, diagnostics };
 
+	let policyRoot: string | undefined;
+	let policyRootIndex = -1;
+	for (const [index, candidate] of candidates.entries()) {
+		const settingsPath = path.join(getProjectConfigDir(candidate), "settings.json");
+		const loaded = readLegacyCompatibilityJson(settingsPath);
+		if (loaded.error) diagnostics.push({ source: "project", filePath: settingsPath, error: loaded.error });
+		const subagents = loaded.value?.subagents;
+		const mode = subagents && typeof subagents === "object" && !Array.isArray(subagents)
+			? (subagents as Record<string, unknown>).projectRootResolution
+			: undefined;
+		if (mode === "nearest") return { projectRoot: nearestRoot, diagnostics };
+		if (mode === "git-root") {
+			policyRoot = candidate;
+			policyRootIndex = index;
+			break;
+		}
+		if (mode !== undefined) diagnostics.push({ source: "project", filePath: settingsPath, error: "Legacy chain compatibility discovery ignored an invalid projectRootResolution value." });
+	}
+	if (!policyRoot) return { projectRoot: nearestRoot, diagnostics };
+
+	let gitRoot: string | null = null;
+	currentDir = path.resolve(cwd);
+	while (true) {
+		try {
+			const stat = fs.lstatSync(path.join(currentDir, ".git"));
+			if (!stat.isSymbolicLink()) {
+				gitRoot = currentDir;
+				break;
+			}
+		} catch {
+			// Continue to the filesystem root.
+		}
+		const parentDir = path.dirname(currentDir);
+		if (parentDir === currentDir) break;
+		currentDir = parentDir;
+	}
+	const gitProjectRoot = gitRoot
+		? candidates.slice(policyRootIndex).find((candidate) => path.resolve(candidate) === gitRoot)
+		: undefined;
+	let configuredGitRoot: string | undefined;
+	try {
+		const stat = fs.lstatSync(path.join(policyRoot, ".git"));
+		if (!stat.isSymbolicLink()) configuredGitRoot = policyRoot;
+	} catch {
+		// The configured root is not itself a Git root.
+	}
+	return { projectRoot: gitProjectRoot ?? configuredGitRoot ?? nearestRoot, diagnostics };
+}
+
+function resolveLegacyCompatibilityProjectChainDirs(projectRoot: string | null): { readDirs: string[]; preferredDir: string | null } {
+	if (!projectRoot) return { readDirs: [], preferredDir: null };
 	const preferredDir = path.join(getProjectConfigDir(projectRoot), "chains");
-	return {
-		readDirs: isDirectory(preferredDir) ? [preferredDir] : [],
-		preferredDir,
-	};
+	try {
+		const stat = fs.lstatSync(preferredDir);
+		return { readDirs: !stat.isSymbolicLink() && stat.isDirectory() ? [preferredDir] : [], preferredDir };
+	} catch {
+		return { readDirs: [], preferredDir };
+	}
 }
 const BUILTIN_AGENTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "agents");
 // Candidate files and inspection state must describe the same cached builtin scan.
@@ -2351,27 +2724,30 @@ export function discoverAgents(cwd: string, scope: AgentScope, preferredModelPro
 	return { agents, agentDiagnostics, projectAgentsDir, cwd: effectiveCwd, scope, directories, ...(modelScope !== undefined ? { modelScope } : {}), ...(maxThinking !== undefined ? { maxThinking } : {}) };
 }
 
-export function discoverAgentsAll(cwd: string, preferredModelProvider?: string): {
+export interface AllAgentDiscoveryResult {
 	builtin: AgentConfig[];
 	package: AgentConfig[];
 	user: AgentConfig[];
 	project: AgentConfig[];
 	agentDiagnostics?: AgentDiscoveryDiagnostic[];
-	chains: ChainConfig[];
-	chainDiagnostics: ChainDiscoveryDiagnostic[];
 	userDir: string;
 	projectDir: string | null;
-	userChainDir: string;
-	projectChainDir: string | null;
 	userSettingsPath: string;
 	projectSettingsPath: string | null;
 	maxThinking?: ThinkingLevel;
-} {
+}
+
+export interface LegacyChainInspectionResult {
+	chains: ChainConfig[];
+	chainDiagnostics: ChainDiscoveryDiagnostic[];
+	userChainDir: string;
+	projectChainDir: string | null;
+}
+
+export function discoverAgentsAll(cwd: string, preferredModelProvider?: string): AllAgentDiscoveryResult {
 	const userDirOld = path.join(getAgentDir(), "agents");
 	const userDirNew = path.join(os.homedir(), ".agents");
-	const userChainDir = getUserChainDir();
 	const { readDirs: projectDirs, preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
-	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
 	const userSettingsPath = getUserAgentSettingsPath();
 	const projectSettingsPath = getProjectAgentSettingsPath(cwd);
 	const userSettings = selectProviderOverrides(readSubagentSettings(userSettingsPath), preferredModelProvider);
@@ -2433,35 +2809,6 @@ export function discoverAgentsAll(cwd: string, preferredModelProvider?: string):
 		projectSettingsPath,
 	);
 
-	const chainMap = new Map<string, ChainConfig>();
-	const packageChainDiagnostics: ChainDiscoveryDiagnostic[] = [];
-	const packageChainMap = new Map<string, ChainConfig>();
-	for (const dir of packageSubagentPaths.chains) {
-		const loaded = loadChainsFromDir(dir, "package");
-		packageChainDiagnostics.push(...loaded.diagnostics);
-		for (const chain of loaded.chains) {
-			if (!packageChainMap.has(chain.name)) packageChainMap.set(chain.name, chain);
-		}
-	}
-	const projectChainDiagnostics: ChainDiscoveryDiagnostic[] = [];
-	for (const dir of projectChainDirs) {
-		const loaded = loadChainsFromDir(dir, "project");
-		projectChainDiagnostics.push(...loaded.diagnostics);
-		for (const chain of loaded.chains) {
-			chainMap.set(chain.name, chain);
-		}
-	}
-	const userChains = loadChainsFromDir(userChainDir, "user");
-	const chains = [
-		...Array.from(packageChainMap.values()),
-		...userChains.chains,
-		...Array.from(chainMap.values()),
-	];
-	const chainDiagnostics = [
-		...packageChainDiagnostics,
-		...userChains.diagnostics,
-		...projectChainDiagnostics,
-	];
 	const agentDiagnostics = [
 		...builtinLoaded.diagnostics,
 		...userLoaded.flatMap((loaded) => loaded.diagnostics),
@@ -2477,14 +2824,48 @@ export function discoverAgentsAll(cwd: string, preferredModelProvider?: string):
 		user: applySubagentMaxThinking(user, maxThinking),
 		project: applySubagentMaxThinking(project, maxThinking),
 		agentDiagnostics,
-		chains,
-		chainDiagnostics,
 		userDir,
 		projectDir,
-		userChainDir,
-		projectChainDir,
 		userSettingsPath,
 		projectSettingsPath,
 		...(maxThinking !== undefined ? { maxThinking } : {}),
+	};
+}
+
+/** Explicitly inspect retired durable chain definitions for compatibility reporting. */
+export function inspectLegacyChainDefinitions(cwd: string): LegacyChainInspectionResult {
+	const userChainDir = getUserChainDir();
+	const projectResolution = resolveLegacyCompatibilityProjectRoot(cwd);
+	const { readDirs: projectChainDirs, preferredDir: projectChainDir } = resolveLegacyCompatibilityProjectChainDirs(projectResolution.projectRoot);
+	const discoveryBudget = createLegacyChainDiscoveryBudget();
+
+	const projectChains = new Map<string, ChainConfig>();
+	const projectDiagnostics: ChainDiscoveryDiagnostic[] = [...projectResolution.diagnostics];
+	for (const dir of projectChainDirs) {
+		const loaded = loadChainsFromDir(dir, "project", discoveryBudget);
+		projectDiagnostics.push(...loaded.diagnostics);
+		for (const chain of loaded.chains) projectChains.set(chain.name, chain);
+	}
+
+	const userChains = loadChainsFromDir(userChainDir, "user", discoveryBudget);
+	const packageDiscovery = collectLegacyPackageChainDirs(projectResolution.projectRoot ?? path.resolve(cwd), discoveryBudget);
+	const packageChains = new Map<string, ChainConfig>();
+	const packageDiagnostics: ChainDiscoveryDiagnostic[] = [...packageDiscovery.diagnostics];
+	for (const dir of packageDiscovery.dirs) {
+		const budgetError = legacyChainDiscoveryBudgetError(discoveryBudget);
+		if (budgetError) {
+			packageDiagnostics.push({ source: "package", filePath: path.resolve(dir), error: budgetError });
+			break;
+		}
+		const loaded = loadChainsFromDir(dir, "package", discoveryBudget);
+		packageDiagnostics.push(...loaded.diagnostics);
+		for (const chain of loaded.chains) if (!packageChains.has(chain.name)) packageChains.set(chain.name, chain);
+	}
+
+	return {
+		chains: [...packageChains.values(), ...userChains.chains, ...projectChains.values()],
+		chainDiagnostics: [...packageDiagnostics, ...userChains.diagnostics, ...projectDiagnostics],
+		userChainDir,
+		projectChainDir,
 	};
 }

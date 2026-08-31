@@ -1,0 +1,13 @@
+{
+  "id": "11111111-2222-4333-8444-555555555555",
+  "createdAt": 1700000000000,
+  "steps": [
+    {
+      "agent": "worker",
+      "task": "Inspect the retained artifact without executing it.",
+      "inheritProjectContext": true,
+      "inheritGlobalContext": true,
+      "inheritSkills": false
+    }
+  ]
+}

@@ -430,7 +430,7 @@ Use agent defaults, override them at runtime, or disable them:
 { workflowScript: `return runs.run("main", { agent: "scout", task: "...", skill: false })` }
 ```
 
-For chains, `skill` at the top level is additive. A step-level `skill` overrides that step; `false` disables skills for that step.
+In a `workflowScript`, pass `skill` to each `runs.run` call that needs an override; `false` disables skills for that child.
 
 Available skills use this shape in the child prompt:
 
