@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { actionResultFromSteeringStatus, claimSteeringRecovery, createSteeringStatus, recordSteeringRequest, remainingSteeringRecoveryLimits, steeringMessagePreview, terminalSteeringNoticeState, updateSteeringTarget } from "../../src/runs/background/steering.ts";
 import { applySteeringRecoveryAgentConfig } from "../../src/runs/background/async-resume.ts";
-import type { AgentConfig } from "../../src/agents/agents.ts";
+import type { AgentConfig } from "../../src/agents/agent-contract.ts";
 
 describe("steering lifecycle ledger", () => {
 	it("redacts and bounds steering message previews", () => {

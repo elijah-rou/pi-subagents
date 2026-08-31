@@ -1,4 +1,4 @@
-import type { AgentConfig, ChainConfig } from "./agents.ts";
+import type { AgentConfig, ChainConfig } from "./agent-contract.ts";
 
 const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/;
 

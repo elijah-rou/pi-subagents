@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentConfig } from "../agents/agents.ts";
+import type { AgentConfig } from "../agents/agent-contract.ts";
 import type { ExtensionConfig, IntercomBridgeConfig, IntercomBridgeMode } from "../shared/types.ts";
-import { getAgentDir } from "../shared/utils.ts";
+import { getAgentDir } from "../shared/config-paths.ts";
 
 export const NATIVE_INTERCOM_EXTENSION_DIR = "native:pi-subagents-supervisor-channel";
 

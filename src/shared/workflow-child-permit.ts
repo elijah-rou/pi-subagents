@@ -1,4 +1,6 @@
 import { stableJsonDigest } from "./launch-contract.ts";
+import type { WorkflowChildPermit, WorkflowChildPermitContext } from "./workflow-child-permit-contract.ts";
+export type { WorkflowChildPermit, WorkflowChildPermitContext } from "./workflow-child-permit-contract.ts";
 
 export interface WorkflowChildPermitInput {
 	issuerPackage: string;
@@ -16,16 +18,6 @@ export interface WorkflowChildPermitLaunch {
 	launchContractDigest: string;
 	context: "fresh" | "fork";
 	runner: "pi";
-}
-
-export interface WorkflowChildPermitContext {
-	permit: WorkflowChildPermit;
-	workflowRunId: string;
-	childKey: string;
-}
-
-export interface WorkflowChildPermit {
-	readonly __workflowChildPermit: unique symbol;
 }
 
 interface WorkflowChildPermitRecord {

@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, getProjectConfigDir } from "./utils.ts";
+import { getAgentDir, getProjectConfigDir } from "./config-paths.ts";
 
 export function getPromptDirectories(cwd: string) {
 	return {

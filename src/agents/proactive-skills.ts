@@ -1,4 +1,4 @@
-import type { AgentConfig, ChainConfig, ChainStepConfig } from "./agents.ts";
+import type { AgentConfig, ChainConfig, ChainStepConfig } from "./agent-contract.ts";
 import type { ProactiveSkillSubagentsConfig } from "../shared/types.ts";
 
 const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";

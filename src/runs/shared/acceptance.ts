@@ -8,6 +8,7 @@ import { StringDecoder } from "node:string_decoder";
 import type {
 	AcceptanceConfig,
 	AcceptanceContract,
+	AdaptedAcceptance,
 	AcceptanceEvidenceKind,
 	AcceptanceInput,
 	AgentContract,
@@ -15,6 +16,7 @@ import type {
 	AcceptanceLevel,
 	AcceptanceReport,
 	AcceptanceRole,
+	MergedAcceptanceInput,
 	PersistedResolvedAcceptanceInput,
 	AcceptanceRuntimeCheck,
 	AcceptanceRuntimeCheckStatus,
@@ -158,21 +160,10 @@ export function normalizeGateAcceptance(gate: unknown, acceptance: AcceptanceInp
 	return { ok: true, acceptance: { verify: [{ id: "gate", command: gate.trim() }] } };
 }
 
-export interface AdaptedAcceptance {
-	contract: AcceptanceContract | false;
-	stopRules: string[];
-	reason?: string;
-	deprecationWarnings: string[];
-}
+export type { AdaptedAcceptance, MergedAcceptanceInput } from "../../shared/types.ts";
 
 const MERGED_ACCEPTANCE_KIND = "merged-acceptance";
 const RESOLVED_ACCEPTANCE_KIND = "resolved-acceptance";
-
-/** Internal, serializable representation used after parent/child contract merging. */
-export interface MergedAcceptanceInput extends AcceptanceContract {
-	kind: typeof MERGED_ACCEPTANCE_KIND;
-	adapted: AdaptedAcceptance;
-}
 
 export type EffectiveAcceptanceInput = AcceptanceInput | MergedAcceptanceInput | PersistedResolvedAcceptanceInput;
 

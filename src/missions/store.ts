@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getAgentDir } from "../shared/utils.ts";
+import { getAgentDir } from "../shared/config-paths.ts";
 import {
 	MISSION_STATUSES,
 	type MissionArtifact,

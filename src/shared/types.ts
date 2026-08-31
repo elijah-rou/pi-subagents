@@ -5,16 +5,11 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import type { AgentConfig } from "../agents/agents.ts";
 import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ModelScopeRule } from "../runs/shared/model-scope.ts";
-import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
-import type { AuthorityPolicyConfig } from "../policy/authority.ts";
+import type { AuthorityPolicyConfig, ExtensionBindings, McpRuntimeSnapshotHost, ModelScopeRule, PermissionConfig, ResolvedSubagentCapabilityCeiling, SingleOutputSnapshot, SubagentCapabilityAudit, TaskMutationArbiter, UnknownAgentDiagnosticContext } from "./core-contracts.ts";
 import type { ThinkingLevel } from "./model-info.ts";
-import type { GlobalMissionIndexRecord, MissionRecord } from "../missions/types.ts";
-import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
-import type { WorkflowChildPermitContext } from "./workflow-child-permit.ts";
+import type { WorkflowChildPermitContext } from "./workflow-child-permit-contract.ts";
 
 // ============================================================================
 // Basic Types
@@ -994,6 +989,18 @@ export interface AcceptanceContract {
 export type AcceptanceLegacyInput = AcceptanceLevel | AcceptanceConfig;
 export type AcceptanceInput = false | AcceptanceLegacyInput | AcceptanceContract;
 
+export interface AdaptedAcceptance {
+	contract: AcceptanceContract | false;
+	stopRules: string[];
+	reason?: string;
+	deprecationWarnings: string[];
+}
+
+export interface MergedAcceptanceInput extends AcceptanceContract {
+	kind: "merged-acceptance";
+	adapted: AdaptedAcceptance;
+}
+
 /** Canonical effective acceptance persisted for lossless resume and revival. */
 export interface PersistedResolvedAcceptanceInput {
 	kind: "resolved-acceptance";
@@ -1407,12 +1414,6 @@ export interface Details {
 	runtimeAcknowledgedExtensions?: RuntimeAcknowledgedChildExtensionsV1;
 	/** Original launch contract whose persisted session is being revived. */
 	sourceLaunchContractDigest?: string;
-	/** Durable mission attached to this run, when mission mode was explicitly used. */
-	missionId?: string;
-	missionPath?: string;
-	/** Non-fatal automatic mission persistence failure. */
-	missionWarning?: string;
-	mission?: MissionRecord;
 	workflow?: {
 		value?: unknown;
 		preflightWarnings?: string[];
@@ -1439,11 +1440,6 @@ export interface Details {
 		mode: "off" | "live-card";
 		repoRelation: "same" | "other";
 		repoLabel?: string;
-	};
-	missions?: {
-		records?: MissionRecord[];
-		globalEntries?: GlobalMissionIndexRecord[];
-		warnings: string[];
 	};
 	/** Passive legacy schedule records and history returned by compatibility readers. */
 	schedules?: {
@@ -2252,9 +2248,9 @@ export interface SubagentChildStatusEvent {
 
 export interface RunSyncOptions {
 	/** Exact discovery provenance for an unknown-agent error; omission uses defensive fallback discovery. */
-	unknownAgentDiagnosticContext?: import("../agents/agents.ts").UnknownAgentDiagnosticContext;
+	unknownAgentDiagnosticContext?: UnknownAgentDiagnosticContext;
 	/** Opt-in global permission rules; missing tools remain allowed. */
-	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
+	permissions?: PermissionConfig;
 	/** Session id of the direct parent session for permission-system ask forwarding. */
 	parentSessionId?: string;
 	/** Private prompt-runtime steering transport for workflow-owned foreground children. */
@@ -2303,7 +2299,7 @@ export interface RunSyncOptions {
 	outputPath?: string;
 	outputClaimPath?: string;
 	managedOutput?: boolean;
-	managedOutputReservation?: import("../runs/shared/single-output.ts").SingleOutputSnapshot;
+	managedOutputReservation?: SingleOutputSnapshot;
 	outputMode?: OutputMode;
 	maxSubagentDepth?: number;
 	/** Effective parent wait-tool setting propagated to the child runtime. */
@@ -2322,9 +2318,9 @@ export interface RunSyncOptions {
 	/** The override came from the running parent session, not configuration. */
 	modelOverrideFromParent?: boolean;
 	/** LLM intent arbiter for the completion mutation guard (rescues read-only review runs). */
-	llmIntentArbiter?: import("../runs/shared/llm-intent-arbiter.ts").TaskMutationArbiter;
+	llmIntentArbiter?: TaskMutationArbiter;
 	/** Override the agent's default thinking level for this run */
-	thinkingOverride?: AgentConfig["thinking"];
+	thinkingOverride?: string | false;
 	thinkingCeiling?: ThinkingLevel;
 	extensionBindings?: ExtensionBindings;
 	/** Package-internal one-use authorization for one foreground workflow child. */
@@ -2334,7 +2330,7 @@ export interface RunSyncOptions {
 	/** Current parent-session provider to prefer for ambiguous bare model ids */
 	preferredModelProvider?: string;
 	/** Parent Pi event host used to snapshot runtime-registered MCP servers before child launch. */
-	runtimeSnapshotHost?: import("../runs/shared/mcp-direct-tool-allowlist.ts").McpRuntimeSnapshotHost;
+	runtimeSnapshotHost?: McpRuntimeSnapshotHost;
 	/** Optional subagent model-scope enforcement for fallback candidates */
 	modelScope?: ModelScopeRule | ModelScopeRule[];
 	/** Skills to make available (overrides agent default if provided) */
@@ -2346,7 +2342,7 @@ export interface RunSyncOptions {
 		acceptanceReportPath?: string;
 	};
 	agentContract?: AgentContract;
-	acceptance?: AcceptanceInput | import("../runs/shared/acceptance.ts").MergedAcceptanceInput;
+	acceptance?: AcceptanceInput | MergedAcceptanceInput;
 	/** Internal workflow seam: acceptance was composed by the runtime, not supplied as public tool input. */
 	acceptanceIsRuntimeMerged?: boolean;
 	acceptanceContext?: {
@@ -2500,7 +2496,7 @@ export interface ExtensionConfig {
 	completionBatch?: CompletionBatchConfig;
 	toolBudget?: ToolBudgetConfig;
 	/** Opt-in native tool permissions. Bash remains outside this policy. */
-	permissions?: import("../runs/shared/permissions.ts").PermissionConfig;
+	permissions?: PermissionConfig;
 	usageBudget?: UsageBudgetConfig;
 	worktreeSetupHook?: string;
 	worktreeSetupHookTimeoutMs?: number;

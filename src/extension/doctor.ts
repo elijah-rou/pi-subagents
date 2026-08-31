@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { discoverAgentsAll, inspectLegacyChainDefinitions, type AgentSource } from "../agents/agents.ts";
+import { discoverAgentsAll, inspectLegacyChainDefinitions } from "../agents/agents.ts";
+import type { AgentSource } from "../shared/core-contracts.ts";
 import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { formatSpawnBudgetSummary, getSpawnBudgetSnapshot } from "../runs/shared/spawn-budget.ts";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT } from "../runs/shared/parallel-utils.ts";

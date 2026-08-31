@@ -6,7 +6,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getProjectSubagentsDir } from "../../shared/artifacts.ts";
 import { shortenPath } from "../../shared/formatters.ts";
-import { getConfigDirName } from "../../shared/utils.ts";
+import { getConfigDirName } from "../../shared/config-paths.ts";
 import type { Details } from "../../shared/types.ts";
 import { resolveGitRepositoryIdentity } from "../../workflows/chat-progress.ts";
 

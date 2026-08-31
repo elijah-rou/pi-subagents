@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CHAIN_RUNS_DIR, TEMP_ARTIFACTS_DIR, type ArtifactPaths, type ArtifactDirPreference } from "./types.ts";
-import { getAgentDir } from "./utils.ts";
+import { getAgentDir } from "./config-paths.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 export const PROJECT_SUBAGENTS_RELATIVE_DIR = ".pi/subagents";
 

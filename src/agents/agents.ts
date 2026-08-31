@@ -9,8 +9,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
+import type { AgentConfig, AgentDefaultContext, AgentDiscoveryDiagnostic, AgentMemoryConfig, AgentModelSourceInfo, BuiltinAgentOverrideBase, ChainConfig, ChainDiscoveryDiagnostic, ChainStepConfig, SystemPromptMode } from "./agent-contract.ts";
+import type { AgentDefinitionDirectoryReport, AgentDefinitionDirectoryState, AgentScope, AgentSource, UnknownAgentDiagnosticContext } from "../shared/core-contracts.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
-import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+import { getAgentDir, getProjectConfigDir } from "../shared/config-paths.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
 import { parseChain, parseJsonChain } from "./chain-serializer.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
@@ -24,19 +26,7 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { parseThinkingLevel, type ThinkingLevel } from "../shared/thinking-ceiling.ts";
 import { assertNoSymlinkPathComponents } from "../shared/private-state.ts";
-
-export type AgentScope = "user" | "project" | "both";
-
-export type AgentSource = "builtin" | "package" | "user" | "project" | "runtime";
-type SystemPromptMode = "append" | "replace";
-export type AgentDefaultContext = "fresh" | "fork";
-
-export type AgentMemoryScope = "project" | "user";
-
-export interface AgentMemoryConfig {
-	scope: AgentMemoryScope;
-	path: string;
-}
+import { findProjectRootCandidates } from "./project-root.ts";
 
 export function defaultSystemPromptMode(name: string): SystemPromptMode {
 	return name === "delegate" ? "append" : "replace";
@@ -48,36 +38,6 @@ export function defaultInheritProjectContext(name: string): boolean {
 
 export function defaultInheritSkills(): boolean {
 	return false;
-}
-
-export interface BuiltinAgentOverrideBase {
-	description?: string;
-	output?: string;
-	outputMode?: OutputMode;
-	defaultReads?: string[];
-	model?: string;
-	modelProvider?: string;
-	fallbackModels?: string[];
-	fast?: boolean;
-	thinking?: string | false;
-	systemPromptMode: SystemPromptMode;
-	inheritProjectContext: boolean;
-	inheritGlobalContext: boolean;
-	inheritSkills: boolean;
-	defaultContext?: AgentDefaultContext;
-	acceptanceRole?: AcceptanceRole;
-	disabled?: boolean;
-	systemPrompt: string;
-	skills?: string[];
-	skillPath?: string[];
-	tools?: string[];
-	allowNestedSubagents?: boolean;
-	mcpDirectTools?: string[];
-	extensions?: string[];
-	subagentOnlyExtensions?: string[];
-	mutationTools?: string[];
-	completionGuard?: boolean;
-	toolBudget?: ToolBudgetConfig;
 }
 
 interface BuiltinAgentOverrideConfig {
@@ -108,75 +68,6 @@ interface BuiltinAgentOverrideConfig {
 	toolBudget?: ToolBudgetConfig | false;
 }
 
-interface BuiltinAgentOverrideInfo {
-	scope: "user" | "project";
-	path: string;
-	base: BuiltinAgentOverrideBase;
-}
-
-export interface AgentModelSourceInfo {
-	type: "subagents.defaultModel";
-	scope: "user" | "project";
-	path: string;
-	model: string;
-	defaultProvider?: string;
-}
-
-export interface AgentConfig {
-	name: string;
-	runner?: AgentRunnerConfig;
-	localName?: string;
-	packageName?: string;
-	packageSourceName?: string;
-	packageSourceVersion?: string;
-	packageSourceRoot?: string;
-	description: string;
-	aliases?: string[];
-	tools?: string[];
-	allowNestedSubagents?: boolean;
-	mcpDirectTools?: string[];
-	model?: string;
-	modelProvider?: string;
-	fallbackModels?: string[];
-	fast?: boolean;
-	thinking?: string | false;
-	systemPromptMode: SystemPromptMode;
-	inheritProjectContext: boolean;
-	inheritGlobalContext: boolean;
-	inheritSkills: boolean;
-	defaultContext?: AgentDefaultContext;
-	defaultAsync?: boolean;
-	defaultTimeoutMs?: number;
-	defaultToolTimeoutMs?: number;
-	defaultAcceptance?: AcceptanceInput;
-	acceptanceRole?: AcceptanceRole;
-	systemPrompt: string;
-	source: AgentSource;
-	filePath: string;
-	discoveryPriority?: number;
-	skills?: string[];
-	skillPath?: string[];
-	extensions?: string[];
-	extensionsFromDefault?: boolean;
-	subagentOnlyExtensions?: string[];
-	mutationTools?: string[];
-	output?: string;
-	outputMode?: OutputMode;
-	defaultReads?: string[];
-	defaultProgress?: boolean;
-	interactive?: boolean;
-	maxSubagentDepth?: number;
-	completionGuard?: boolean;
-	toolBudget?: ToolBudgetConfig;
-	permissions?: PermissionRules;
-	memory?: AgentMemoryConfig;
-	disabled?: boolean;
-	extraFields?: Record<string, string>;
-	override?: BuiltinAgentOverrideInfo;
-	modelSource?: AgentModelSourceInfo;
-	maxThinking?: ThinkingLevel;
-}
-
 type ProjectRootResolution = "nearest" | "git-root";
 
 interface SubagentSettings {
@@ -194,53 +85,6 @@ interface SubagentSettings {
 
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {}, providerOverrides: {} };
 const agentFrontmatterFields = new WeakMap<AgentConfig, Set<string>>();
-
-export interface ChainStepConfig {
-	agent?: string;
-	task?: string;
-	phase?: string;
-	label?: string;
-	as?: string;
-	outputSchema?: string | Record<string, unknown>;
-	output?: string | false;
-	outputMode?: OutputMode;
-	reads?: string[] | false;
-	model?: string;
-	skills?: string[] | false;
-	progress?: boolean;
-	parallel?: unknown;
-	expand?: unknown;
-	collect?: unknown;
-	concurrency?: number;
-	failFast?: boolean;
-	worktree?: boolean;
-	acceptance?: AcceptanceInput;
-	toolBudget?: ToolBudgetConfig;
-}
-
-export interface ChainConfig {
-	name: string;
-	localName?: string;
-	packageName?: string;
-	description: string;
-	source: AgentSource;
-	filePath: string;
-	steps: ChainStepConfig[];
-	extraFields?: Record<string, string>;
-}
-
-export interface ChainDiscoveryDiagnostic {
-	source: AgentSource;
-	filePath: string;
-	error: string;
-}
-
-export interface AgentDiscoveryDiagnostic extends ChainDiscoveryDiagnostic {
-	name?: string;
-	runtimeName?: string;
-	packageSpecified?: boolean;
-	discoveryPriority?: number;
-}
 
 const AGENT_SOURCE_PRIORITY: Record<AgentSource, number> = {
 	builtin: 0,
@@ -270,28 +114,6 @@ export function findBlockingAgentDiagnostic(name: string, agent: AgentConfig | r
 	}
 	const highestPriority = Math.max(...agents.map(agentDefinitionPriority), -Infinity);
 	return !agents.length || (match && agentDefinitionPriority(match) > highestPriority) ? match : undefined;
-}
-
-export type AgentDefinitionDirectoryState = "absent" | "empty" | "candidates" | "unreadable" | "not-directory";
-
-/** A definition directory actually inspected during one agent-discovery operation. */
-export interface AgentDefinitionDirectoryReport {
-	source: AgentSource;
-	path: string;
-	state: AgentDefinitionDirectoryState;
-	candidateCount?: number;
-}
-
-/**
- * Filesystem provenance for a failed agent resolution. Context is created from
- * the discovery result that supplied the effective agents; callers must not
- * pair arbitrary agent arrays with these directory reports.
- */
-export interface UnknownAgentDiagnosticContext {
-	cwd: string;
-	scope: AgentScope;
-	directories: readonly AgentDefinitionDirectoryReport[];
-	agents: readonly AgentConfig[];
 }
 
 export interface AgentDiscoveryResult {
@@ -770,22 +592,6 @@ function cloneOverrideValue(override: BuiltinAgentOverrideConfig): BuiltinAgentO
 	};
 }
 
-function isProjectRootCandidate(dir: string): boolean {
-	return isDirectory(getProjectConfigDir(dir)) || isDirectory(path.join(dir, ".agents"));
-}
-
-function findProjectRootCandidates(cwd: string): string[] {
-	const roots: string[] = [];
-	let currentDir = cwd;
-	while (true) {
-		if (isProjectRootCandidate(currentDir)) roots.push(currentDir);
-
-		const parentDir = path.dirname(currentDir);
-		if (parentDir === currentDir) return roots;
-		currentDir = parentDir;
-	}
-}
-
 function findNearestGitRoot(cwd: string): string | null {
 	let currentDir = cwd;
 	while (true) {
@@ -808,10 +614,6 @@ function readProjectRootResolution(projectRoot: string): ProjectRootResolution |
 	if (value === undefined) return undefined;
 	if (value === "nearest" || value === "git-root") return value;
 	throw new Error(`Subagent settings in '${settingsPath}' have invalid 'projectRootResolution'; expected 'nearest' or 'git-root'.`);
-}
-
-export function findNearestProjectRoot(cwd: string): string | null {
-	return findProjectRootCandidates(cwd)[0] ?? null;
 }
 
 export function findConfiguredProjectRoot(cwd: string): string | null {

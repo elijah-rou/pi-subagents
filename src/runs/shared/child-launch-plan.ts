@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import type { AgentConfig } from "../../agents/agents.ts";
-import { resolveChildCwd } from "../../shared/utils.ts";
+import type { AgentConfig } from "../../agents/agent-contract.ts";
+import { resolveChildCwd } from "../../shared/path-resolution.ts";
 import type { OutputMode } from "../../shared/types.ts";
 import { resolveSingleOutputPath } from "./single-output.ts";
 

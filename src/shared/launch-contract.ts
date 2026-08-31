@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
-import type { AgentConfig } from "../agents/agents.ts";
+import type { AgentConfig } from "../agents/agent-contract.ts";
 import type { ExtensionBindings } from "../runs/shared/extension-bindings.ts";
 
 export const AGENT_DEFINITION_PROJECTION_VERSION = 1 as const;

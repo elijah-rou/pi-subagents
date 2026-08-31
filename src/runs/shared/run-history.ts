@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir } from "../../shared/utils.ts";
+import { getAgentDir } from "../../shared/config-paths.ts";
 import { isUnexplainedProcessSignal } from "./process-signal.ts";
 
 export type RunOutcome = "completed" | "failed" | "timed_out" | "stopped" | "interrupted";

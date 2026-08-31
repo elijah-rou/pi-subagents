@@ -5,7 +5,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveAsyncByDefault } from "../../src/extension/config.ts";
-import { getConfigDirName, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, resolveWatchPath } from "../../src/shared/utils.ts";
+import { getConfigDirName, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName } from "../../src/shared/config-paths.ts";
+import { resolveWatchPath } from "../../src/shared/utils.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let previousPackageRootEnv: string | undefined;
@@ -101,7 +102,7 @@ describe("config directory resolution", () => {
 	});
 
 	it("does not runtime-import the coding agent peer from shared utils", () => {
-		const source = fs.readFileSync(path.join(repoRoot, "src/shared/utils.ts"), "utf-8");
+		const source = fs.readFileSync(path.join(repoRoot, "src/shared/config-paths.ts"), "utf-8");
 		assert.doesNotMatch(source, /import\s+[^;]*from\s+["']@earendil-works\/pi-coding-agent["']/);
 	});
 });

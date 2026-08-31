@@ -1,6 +1,5 @@
-export type PermissionDecision = "allow" | "ask" | "deny";
-export type PermissionRules = Record<string, PermissionDecision>;
-export interface PermissionConfig { rules?: PermissionRules }
+import type { PermissionConfig, PermissionDecision, PermissionRules } from "../../shared/core-contracts.ts";
+export type { PermissionConfig, PermissionDecision, PermissionRules } from "../../shared/core-contracts.ts";
 
 export const PERMISSION_POLICY_ENV = "PI_SUBAGENT_PERMISSION_POLICY";
 const INTERNAL_TOOLS = new Set(["contact_supervisor", "intercom", "subagent_wait", "structured_output"]);

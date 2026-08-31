@@ -47,7 +47,7 @@ import { WAIT_TOOL_DEFAULT_TIMEOUT_MS_ENV, WAIT_TOOL_ENABLED_ENV } from "../back
 import {
 	PI_CODING_AGENT_PACKAGE_ROOT_ENV,
 	getAgentDir,
-} from "../../shared/utils.ts";
+} from "../../shared/config-paths.ts";
 import {
 	encodePermissionRules,
 	PERMISSION_POLICY_ENV,

@@ -14,8 +14,9 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
-import { findNearestProjectRoot, type AgentConfig, type AgentMemoryConfig } from "./agents.ts";
+import { getAgentDir, getProjectConfigDir } from "../shared/config-paths.ts";
+import type { AgentConfig, AgentMemoryConfig } from "./agent-contract.ts";
+import { findNearestProjectRoot } from "./project-root.ts";
 
 export const AGENT_MEMORY_DIR_NAME = "agent-memory";
 export const AGENT_MEMORY_FILE = "MEMORY.md";

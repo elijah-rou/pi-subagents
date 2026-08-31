@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { handleList } from "../../src/agents/agent-management.ts";
-import type { AgentConfig } from "../../src/agents/agents.ts";
+import type { AgentConfig } from "../../src/agents/agent-contract.ts";
 import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import {
 	decodeSubagentCapabilityCeiling,

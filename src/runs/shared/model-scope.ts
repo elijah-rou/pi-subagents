@@ -14,14 +14,8 @@
  */
 
 import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
-
-export interface ModelScopeRule {
-	enforce?: boolean;
-	/** Reject inherited and fallback models outside the allowlist instead of warning. */
-	strict?: boolean;
-	/** Glob-style allow patterns (only `*` is special), matched against `provider/id`. */
-	allow?: string[];
-}
+import type { ModelScopeRule } from "../../shared/core-contracts.ts";
+export type { ModelScopeRule } from "../../shared/core-contracts.ts";
 
 export interface ModelScopeConfig extends ModelScopeRule {
 	/** Additional restrictions keyed by canonical agent name. */

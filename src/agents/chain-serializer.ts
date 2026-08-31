@@ -1,11 +1,11 @@
-import type { ChainConfig, ChainStepConfig } from "./agents.ts";
+import type { ChainConfig, ChainStepConfig } from "./agent-contract.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../runs/shared/chain-outputs.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import type { ChainStep } from "../shared/settings.ts";
-import type { AgentSource } from "./agents.ts";
+import type { AgentSource } from "../shared/core-contracts.ts";
 
 function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
 	const lines = sectionBody.split("\n");

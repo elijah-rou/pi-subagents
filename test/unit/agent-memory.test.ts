@@ -13,7 +13,9 @@ import {
 	resolveMemoryDir,
 } from "../../src/agents/agent-memory.ts";
 import { serializeAgent } from "../../src/agents/agent-serializer.ts";
-import { discoverAgents, findNearestProjectRoot, type AgentConfig, type AgentMemoryConfig } from "../../src/agents/agents.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
+import type { AgentConfig, AgentMemoryConfig } from "../../src/agents/agent-contract.ts";
+import { findNearestProjectRoot } from "../../src/agents/project-root.ts";
 import { handleManagementAction } from "../../src/agents/agent-management.ts";
 
 const tempDirs: string[] = [];

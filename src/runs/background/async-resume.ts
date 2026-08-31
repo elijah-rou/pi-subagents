@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DIRS, type AcceptanceInput, type AsyncStatus, type SteeringRecoveryDescriptor, type SubagentRunMode } from "../../shared/types.ts";
-import type { AgentConfig } from "../../agents/agents.ts";
+import type { AgentConfig } from "../../agents/agent-contract.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import { normalizeWorkflowLaneMetadata } from "../shared/lane-metadata.ts";
 import { type EffectiveAcceptanceInput, validatePersistedAcceptanceInput } from "../shared/acceptance.ts";

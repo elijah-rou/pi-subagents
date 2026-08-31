@@ -1,5 +1,5 @@
 import { stringify as stringifyYaml } from "yaml";
-import type { AgentConfig } from "./agents.ts";
+import type { AgentConfig } from "./agent-contract.ts";
 import { frontmatterNameForConfig } from "./identity.ts";
 
 export const KNOWN_FIELDS = new Set([

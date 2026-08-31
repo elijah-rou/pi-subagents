@@ -1,3 +1,6 @@
+import type { AuthorityAction, AuthorityDecision, AuthorityPolicyConfig } from "../shared/core-contracts.ts";
+export type { AuthorityAction, AuthorityDecision, AuthorityPolicyConfig } from "../shared/core-contracts.ts";
+
 export const AUTHORITY_ACTIONS = [
 	"discardWorktree",
 	"destructiveCleanup",
@@ -6,10 +9,6 @@ export const AUTHORITY_ACTIONS = [
 	"stopRun",
 	"steerRun",
 ] as const;
-
-export type AuthorityAction = typeof AUTHORITY_ACTIONS[number];
-export type AuthorityDecision = "auto" | "confirm" | "forbid";
-export type AuthorityPolicyConfig = Partial<Record<AuthorityAction, AuthorityDecision>>;
 
 const DEFAULT_AUTHORITY_POLICY: Record<AuthorityAction, AuthorityDecision> = {
 	discardWorktree: "confirm",

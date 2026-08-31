@@ -6,7 +6,8 @@ import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
-import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext, type AgentConfig } from "../../agents/agents.ts";
+import { discoverAgents, formatUnknownAgentError, unknownAgentDiagnosticContext } from "../../agents/agents.ts";
+import type { AgentConfig } from "../../agents/agent-contract.ts";
 import { alignForkedSessionCwd } from "../../shared/fork-context.ts";
 import {
 	ensureArtifactsDir,

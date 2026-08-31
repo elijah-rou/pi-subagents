@@ -1,3 +1,6 @@
+import type { ExtensionBindingJson, ExtensionBindings } from "../../shared/core-contracts.ts";
+export type { ExtensionBindingJson, ExtensionBindings } from "../../shared/core-contracts.ts";
+
 export const PI_SUBAGENT_EXTENSION_BINDINGS_ENV = "PI_SUBAGENT_EXTENSION_BINDINGS";
 export const MAX_EXTENSION_BINDING_NAMESPACES = 16;
 export const MAX_EXTENSION_BINDINGS_BYTES = 16 * 1024;
@@ -5,9 +8,6 @@ export const MAX_EXTENSION_BINDINGS_DEPTH = 16;
 export const MAX_EXTENSION_BINDINGS_PROPERTIES = 256;
 
 const EXTENSION_BINDING_NAMESPACE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62})\/[1-9][0-9]{0,8}$/;
-
-export type ExtensionBindingJson = null | boolean | number | string | ReadonlyArray<ExtensionBindingJson> | { readonly [key: string]: ExtensionBindingJson };
-export type ExtensionBindings = Readonly<Record<string, ExtensionBindingJson>>;
 
 export interface NormalizedExtensionBindings {
 	value: ExtensionBindings;

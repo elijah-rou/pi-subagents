@@ -5,6 +5,8 @@ import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
+import type { TaskMutationArbiter, TaskMutationVerdict } from "../../shared/core-contracts.ts";
+export type { TaskMutationArbiter, TaskMutationVerdict } from "../../shared/core-contracts.ts";
 
 /**
  * LLM intent arbiter for the completion mutation guard.
@@ -22,10 +24,6 @@ import { agentStreamOptions } from "../../shared/agent-stream-options.ts";
 
 const COMPLETION_GUARD_ERROR_PREFIX =
 	"Subagent completed without making edits for an implementation task.";
-
-export type TaskMutationVerdict = "read-only" | "implementation" | "unavailable";
-
-export type TaskMutationArbiter = (task: string) => Promise<TaskMutationVerdict>;
 
 const DecisionParams = Type.Object(
 	{

@@ -15,7 +15,7 @@ import { closeSteerInbox, consumeInterruptRequest, consumeSteerRequests, deliver
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
 import { PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
-import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, prepareManagedSingleOutput, refreshManagedSingleOutputSnapshot, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
+import { captureSingleOutputSnapshot, cleanupManagedSingleOutput, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, refreshManagedSingleOutputSnapshot, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	type ActivityState,
 	type ArtifactConfig,
@@ -24,7 +24,6 @@ import {
 	type ExternalJobStatus,
 	type ExternalProcessStatus,
 	type ArtifactPaths,
-	type AsyncParallelGroupStatus,
 	type AsyncStatus,
 	type ChainOutputMap,
 	type CostSummary,
@@ -63,19 +62,8 @@ import {
 	formatControlNoticeMessage,
 	shouldEmitOpenToolAttention,
 } from "../shared/subagent-control.ts";
-import {
-	type RunnerSubagentStep as SubagentStep,
-	type RunnerStep,
-	isDynamicRunnerGroup,
-	isParallelGroup,
-	flattenSteps,
-	mapConcurrent,
-	aggregateParallelOutputs,
-	MAX_PARALLEL_CONCURRENCY,
-	DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
-	Semaphore,
-} from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
+import { type RunnerSubagentStep as SubagentStep } from "../shared/parallel-utils.ts";
+import { buildPiArgs, cleanupTempDir, deriveForkPromptCacheKey, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan, type SubagentTaskDelivery } from "../shared/pi-args.ts";
 import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.ts";
@@ -83,9 +71,8 @@ import { createStructuredOutputRuntime, MISSING_STRUCTURED_OUTPUT_CALL_ERROR, re
 import { formatMidToolExitError, formatProcessSignalError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { readChildToolDiagnosticError } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
-import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
-import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
+import { getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
 import { formatModelAttemptNote, formatSubagentModelVerificationError, isContextOverflow, isRetryableModelFailureAttempt, recordRetryableModelFailure } from "../shared/model-fallback.ts";
 import {
@@ -121,16 +108,13 @@ import {
 	cleanupWorktrees,
 	createWorktrees,
 	diffWorktrees,
-	findWorktreeTaskCwdConflict,
 	formatWorktreeDiffSummary,
-	formatWorktreeTaskCwdConflict,
 	type WorktreeSetup,
 } from "../shared/worktree.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, decodeThinkingCeiling, SUBAGENT_THINKING_CEILING_ENV } from "../../shared/thinking-ceiling.ts";
 import { launchBindingDigest } from "../../shared/launch-contract.ts";
-import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { acceptanceFailureMessage, aggregateAcceptanceReport, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
+import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, persistResolvedAcceptance, stripAcceptanceReport } from "../shared/acceptance.ts";
 import { buildReviewProjection, isAgentContractV1 } from "../shared/agent-contract.ts";
 import { decideChildTerminal } from "../shared/terminal-decision.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
@@ -2144,6 +2128,7 @@ async function runSingleStep(
 	}
 }
 
+
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
 	exitCode?: number | null;
 	description?: string;
@@ -2182,7 +2167,7 @@ type RunnerStatusPayload = Omit<AsyncStatus, "steps" | "parallelGroups" | "pid" 
 	cwd: string;
 	currentStep: number;
 	chainStepCount: number;
-	parallelGroups: AsyncParallelGroupStatus[];
+	parallelGroups: AsyncStatus["parallelGroups"];
 	steps: RunnerStatusStep[];
 	lastUpdate: number;
 	artifactsDir?: string;
@@ -2201,109 +2186,6 @@ function requiredStatusStep(statusPayload: RunnerStatusPayload, index: number): 
 function setStatusWorktreeReference(statusStep: RunnerStatusStep, worktree: WorktreeSetup["worktrees"][number]): void {
 	statusStep.worktreePath = worktree.path;
 	statusStep.branch = worktree.branch;
-}
-
-function markParallelGroupSetupFailure(input: {
-	statusPayload: RunnerStatusPayload;
-	results: StepResult[];
-	group: Extract<RunnerStep, { parallel: SubagentStep[] }>;
-	groupStartFlatIndex: number;
-	setupError: string;
-	failedAt: number;
-	statusPath: string;
-	eventsPath: string;
-	asyncDir: string;
-	runId: string;
-	stepIndex: number;
-	writeStatus: (status: RunnerStatusPayload) => void;
-}): void {
-	for (let taskIndex = 0; taskIndex < input.group.parallel.length; taskIndex++) {
-		const flatTaskIndex = input.groupStartFlatIndex + taskIndex;
-		const statusStep = requiredStatusStep(input.statusPayload, flatTaskIndex);
-		const task = input.group.parallel[taskIndex];
-		if (!task) throw new Error(`Missing parallel task at index ${taskIndex}`);
-		statusStep.status = "failed";
-		statusStep.startedAt = input.failedAt;
-		statusStep.endedAt = input.failedAt;
-		statusStep.durationMs = 0;
-		statusStep.exitCode = 1;
-		input.results.push(omitUndefinedProperties({ agent: task.agent, context: task.context, output: input.setupError, success: false, exitCode: 1, sessionFile: task.sessionFile }));
-	}
-	input.statusPayload.currentStep = input.groupStartFlatIndex;
-	input.statusPayload.lastUpdate = input.failedAt;
-	input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
-	input.writeStatus(input.statusPayload);
-	appendJsonl(input.eventsPath, JSON.stringify({
-		type: "subagent.parallel.completed",
-		ts: input.failedAt,
-		runId: input.runId,
-		stepIndex: input.stepIndex,
-		success: false,
-	}));
-}
-
-function markParallelGroupRunning(input: {
-	statusPayload: RunnerStatusPayload;
-	group: Extract<RunnerStep, { parallel: SubagentStep[] }>;
-	groupStartFlatIndex: number;
-	groupStartTime: number;
-	statusPath: string;
-	eventsPath: string;
-	asyncDir: string;
-	runId: string;
-	stepIndex: number;
-	writeStatus: (status: RunnerStatusPayload) => void;
-}): void {
-	for (let taskIndex = 0; taskIndex < input.group.parallel.length; taskIndex++) {
-		const flatTaskIndex = input.groupStartFlatIndex + taskIndex;
-		const statusStep = requiredStatusStep(input.statusPayload, flatTaskIndex);
-		statusStep.status = "pending";
-		delete statusStep.startedAt;
-		delete statusStep.endedAt;
-		delete statusStep.durationMs;
-		delete statusStep.lastActivityAt;
-		delete statusStep.activityState;
-		delete statusStep.error;
-	}
-	input.statusPayload.currentStep = input.groupStartFlatIndex;
-	delete input.statusPayload.activityState;
-	input.statusPayload.lastActivityAt = input.groupStartTime;
-	input.statusPayload.lastUpdate = input.groupStartTime;
-	input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
-	input.writeStatus(input.statusPayload);
-	appendJsonl(input.eventsPath, JSON.stringify({
-		type: "subagent.parallel.started",
-		ts: input.groupStartTime,
-		runId: input.runId,
-		stepIndex: input.stepIndex,
-		agents: input.group.parallel.map((task) => task.agent),
-		count: input.group.parallel.length,
-	}));
-}
-
-function prepareParallelTaskRun(
-	task: SubagentStep,
-	cwd: string,
-	worktreeSetup: WorktreeSetup | undefined,
-	taskIndex: number,
-): { taskForRun: SubagentStep; taskCwd: string } {
-	if (!worktreeSetup) return { taskForRun: task, taskCwd: cwd };
-	const { cwd: _taskCwd, ...taskForRun } = task;
-	return {
-		taskForRun,
-		taskCwd: worktreeSetup.worktrees[taskIndex]!.agentCwd,
-	};
-}
-
-function captureParallelWorktreeDiffs(
-	worktreeSetup: WorktreeSetup,
-	asyncDir: string,
-	stepIndex: number,
-	group: Extract<RunnerStep, { parallel: SubagentStep[] }>,
-): { diffs: ReturnType<typeof diffWorktrees>; summary: string } {
-	const diffsDir = path.join(asyncDir, "worktree-diffs", `step-${stepIndex}`);
-	const diffs = diffWorktrees(worktreeSetup, group.parallel.map((task) => task.agent), diffsDir);
-	return { diffs, summary: formatWorktreeDiffSummary(diffs) };
 }
 
 function resolveAsyncStepTranscriptPath(input: {
@@ -2439,11 +2321,9 @@ async function runSingleStepWithTimeout(
 async function runSubagentInner(
 	config: SubagentRunConfig,
 	onWriterProcess: ((writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void) | undefined,
-	ownedManagedOutputs: Array<{ outputPath: string; reservation: NonNullable<SubagentStep["managedOutputReservation"]> }>,
 ): Promise<void> {
-	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
-		config;
-	const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+	const { id, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } = config;
+	const step = config.steps[0];
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};
 	const results: StepResult[] = [];
@@ -2480,109 +2360,41 @@ async function runSubagentInner(
 	let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
 	let latestSessionFile: string | undefined;
 
-	const flatSteps = flattenSteps(steps);
-	const initialFlatStepCount = flatSteps.length;
-	const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
-	const initialStatusSteps: RunnerStatusStep[] = [];
-	let flatStepCount = 0;
-	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
-		const step = steps[stepIndex]!;
-		if (isParallelGroup(step)) {
-			parallelGroups.push({ start: flatStepCount, count: step.parallel.length, stepIndex });
-			for (const task of step.parallel) {
-				const taskFlatIndex = flatStepCount;
-				const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: taskFlatIndex, flatStepCount: initialFlatStepCount }));
-				const taskSessionName = task.sessionName ?? deriveChildSessionName({ agent: task.agent, task: task.task, label: task.label });
-				initialStatusSteps.push(omitUndefinedProperties({
-					agent: task.agent,
-					...(task.lane ? { lane: task.lane } : config.lane ? { lane: config.lane } : {}),
-					...(taskSessionName ? { sessionName: taskSessionName } : {}),
-					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
-					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
-					...(task.context ? { context: task.context } : {}),
-					phase: task.phase,
-					label: task.label,
-					outputName: task.outputName,
-					structured: task.structured,
-					...(task.agentContract ? { agentContract: task.agentContract } : {}),
-					...(task.launchContractDigest ? { launchContractDigest: task.launchContractDigest } : {}),
-					...(task.childProfile ? { childProfile: task.childProfile } : {}),
-					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
-					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
-					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
-					status: "pending",
-					...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
-					...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
-					...(transcriptPath ? { transcriptPath } : {}),
-					skills: task.skills,
-					model: task.model,
-					...(task.contextLimit !== undefined ? { contextLimit: task.contextLimit } : {}),
-					thinking: task.thinking,
-					attemptedModels: task.modelCandidates && task.modelCandidates.length > 0 ? task.modelCandidates : task.model ? [task.model] : undefined,
-					recentTools: [],
-					recentOutput: [],
-				}));
-				flatStepCount++;
-			}
-		} else if (isDynamicRunnerGroup(step)) {
-			parallelGroups.push({ start: flatStepCount, count: 1, stepIndex });
-			initialStatusSteps.push(omitUndefinedProperties({
-				agent: `expand:${step.parallel.agent}`,
-				...(externalRunnerStatus(step.parallel.runner) ? { runner: externalRunnerStatus(step.parallel.runner) } : {}),
-				...(step.parallel.context ? { context: step.parallel.context } : {}),
-				phase: step.phase ?? step.parallel.phase,
-				label: step.label ?? step.parallel.label ?? `Dynamic fanout (${step.collect.as})`,
-				outputName: step.collect.as,
-				structured: Boolean(step.collect.outputSchema),
-				...(step.parallel.contextLimit !== undefined ? { contextLimit: step.parallel.contextLimit } : {}),
-				...(step.agentContract ? { agentContract: step.agentContract } : {}),
-				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
-				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
-				status: "pending",
-				...(step.parallel.toolBudget ? { toolBudget: initialToolBudgetState(step.parallel.toolBudget) } : {}),
-				recentTools: [],
-				recentOutput: [],
-			}));
-			flatStepCount++;
-		} else {
-			const stepFlatIndex = flatStepCount;
-			const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: step.agent, flatIndex: stepFlatIndex, flatStepCount: initialFlatStepCount }));
-			const stepSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task: step.task, label: step.label });
-			initialStatusSteps.push(omitUndefinedProperties({
-				agent: step.agent,
-				...(step.lane ? { lane: step.lane } : config.lane ? { lane: config.lane } : {}),
-				...(stepSessionName ? { sessionName: stepSessionName } : {}),
-				...(externalRunnerStatus(step.runner) ? { runner: externalRunnerStatus(step.runner) } : {}),
-				...(statusStepDescription(step.task) ? { description: statusStepDescription(step.task) } : {}),
-				...(step.context ? { context: step.context } : {}),
-				phase: step.phase,
-				label: step.label,
-				outputName: step.outputName,
-				structured: step.structured,
-				...(step.agentContract ? { agentContract: step.agentContract } : {}),
-				...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
-				...(step.childProfile ? { childProfile: step.childProfile } : {}),
-				...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
-				...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
-				...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
-				status: "pending",
-				...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
-				...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-				...(transcriptPath ? { transcriptPath } : {}),
-				skills: step.skills,
-				model: step.model,
-				...(step.contextLimit !== undefined ? { contextLimit: step.contextLimit } : {}),
-				thinking: step.thinking,
-				attemptedModels: step.modelCandidates && step.modelCandidates.length > 0 ? step.modelCandidates : step.model ? [step.model] : undefined,
-				recentTools: [],
-				recentOutput: [],
-			}));
-			flatStepCount++;
-		}
-	}
+	const flatStepCount = 1;
+	const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: step.agent, flatIndex: 0, flatStepCount }));
+	const stepSessionName = step.sessionName ?? deriveChildSessionName({ agent: step.agent, task: step.task, label: step.label });
+	const initialStatusSteps: RunnerStatusStep[] = [omitUndefinedProperties({
+		agent: step.agent,
+		...(step.lane ? { lane: step.lane } : config.lane ? { lane: config.lane } : {}),
+		...(stepSessionName ? { sessionName: stepSessionName } : {}),
+		...(externalRunnerStatus(step.runner) ? { runner: externalRunnerStatus(step.runner) } : {}),
+		...(statusStepDescription(step.task) ? { description: statusStepDescription(step.task) } : {}),
+		...(step.context ? { context: step.context } : {}),
+		phase: step.phase,
+		label: step.label,
+		outputName: step.outputName,
+		structured: step.structured,
+		...(step.agentContract ? { agentContract: step.agentContract } : {}),
+		...(step.launchContractDigest ? { launchContractDigest: step.launchContractDigest } : {}),
+		...(step.childProfile ? { childProfile: step.childProfile } : {}),
+		...(step.launchResolvedExtensions ? { launchResolvedExtensions: step.launchResolvedExtensions } : {}),
+		...(step.capabilityCeiling ? { capabilityCeiling: step.capabilityCeiling } : {}),
+		...(step.thinkingCeiling ? { thinkingCeiling: step.thinkingCeiling } : {}),
+		status: "pending",
+		...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
+		...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
+		...(transcriptPath ? { transcriptPath } : {}),
+		skills: step.skills,
+		model: step.model,
+		...(step.contextLimit !== undefined ? { contextLimit: step.contextLimit } : {}),
+		thinking: step.thinking,
+		attemptedModels: step.modelCandidates && step.modelCandidates.length > 0 ? step.modelCandidates : step.model ? [step.model] : undefined,
+		recentTools: [],
+		recentOutput: [],
+	})];
 	const sessionEnabled = Boolean(config.sessionDir)
 		|| shareEnabled
-		|| flatSteps.some((step) => Boolean(step.sessionFile));
+		|| Boolean(step.sessionFile);
 	if (config.runnerProcessInstanceId) {
 		for (const step of initialStatusSteps) {
 			step.processTerminal = { version: 1, state: "pending", runId: id, runnerProcessInstanceId: config.runnerProcessInstanceId };
@@ -2608,8 +2420,8 @@ async function runSubagentInner(
 		pid: process.pid,
 		cwd,
 		currentStep: 0,
-		chainStepCount: steps.length,
-		parallelGroups,
+		chainStepCount: 1,
+		parallelGroups: [],
 		workflowGraph: config.workflowGraph,
 		...(config.launchContractDigest ? { launchContractDigest: config.launchContractDigest } : {}),
 		...(config.launchResolvedExtensions ? { launchResolvedExtensions: config.launchResolvedExtensions } : {}),
@@ -3087,14 +2899,6 @@ async function runSubagentInner(
 		stopped: true,
 	});
 
-	const markDynamicGraphGroup = (stepIndex: number, status: "completed" | "failed" | "running" | "stopped", error?: string, acceptance?: import("../../shared/types.ts").AcceptanceLedger): void => {
-		const groupNode = statusPayload.workflowGraph?.nodes.find((node) => node.id === `step-${stepIndex}`);
-		if (!groupNode) return;
-		groupNode.status = status;
-		setOptionalProperty(groupNode, "error", error);
-		setOptionalProperty(groupNode, "acceptanceStatus", acceptance?.status ?? groupNode.acceptanceStatus);
-	};
-
 	const stepOutputActivityAt = (index: number): number => {
 		const step = statusPayload.steps[index];
 		let lastActivityAt = step?.lastActivityAt ?? step?.startedAt ?? overallStartTime;
@@ -3438,12 +3242,12 @@ async function runSubagentInner(
 		const now = Date.now();
 		statusPayload.currentStep = flatIndex;
 		if (event.type === "tool_execution_start" && event.toolName) {
-			const mutates = isMutatingTool(event.toolName, event.args, flatSteps[flatIndex]?.mutationTools);
+			const mutates = isMutatingTool(event.toolName, event.args, config.steps[0].mutationTools);
 			const currentPath = resolveCurrentPath(event.toolName, event.args);
 			const argsPreview = extractToolArgsPreview(event.args ?? {});
 			const blocksSupervisor = isBlockingSupervisorTool(event.toolName, event.args);
 			step.toolCount = (step.toolCount ?? 0) + 1;
-			const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+			const configuredToolBudget = config.steps[0].toolBudget;
 			if (configuredToolBudget) {
 				step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount);
 				statusPayload.toolBudget = step.toolBudget;
@@ -3496,7 +3300,7 @@ async function runSubagentInner(
 			pendingToolResults[flatIndex] = undefined;
 			const resultText = extractTextFromContent(event.message.content);
 			if (toolSnapshot && resultText.includes("Tool budget hard limit reached")) {
-				const configuredToolBudget = flatSteps[flatIndex]?.toolBudget;
+				const configuredToolBudget = config.steps[0].toolBudget;
 				if (configuredToolBudget) {
 					step.toolBudget = toolBudgetState(configuredToolBudget, step.toolCount ?? 0, toolSnapshot.tool);
 					step.toolBudgetBlocked = true;
@@ -3796,10 +3600,10 @@ async function runSubagentInner(
 	);
 
 	let flatIndex = 0;
-	let stepCursor = 0;
-	while (true) {
+	let stepPending = true;
+	while (stepPending) {
+		stepPending = false;
 		if (interrupted || timedOut || stopped) break;
-		if (stepCursor >= steps.length) break;
 		refreshUsageBudget();
 		if (statusPayload.usageBudget?.exhausted) {
 			usageBudgetExceeded = true;
@@ -3810,1350 +3614,341 @@ async function runSubagentInner(
 			writeStatusPayload();
 			break;
 		}
-		const stepIndex = stepCursor++;
-		const step = steps[stepIndex]!;
-
-		if (isDynamicRunnerGroup(step)) {
-			const groupStartFlatIndex = flatIndex;
-			let materialized: ReturnType<typeof materializeDynamicParallelStep>;
-			try {
-				materialized = materializeDynamicParallelStep(step as Parameters<typeof materializeDynamicParallelStep>[0], outputs, stepIndex, omitUndefinedProperties({ maxItems: config.dynamicFanoutMaxItems, allowRunnerFields: true }));
-				if (materialized.parallel.length > 1 && step.parallel.outputPath && !step.parallel.namespaceOutputPath) {
-					throw new DynamicFanoutError(`Dynamic chain step ${stepIndex + 1} materialized ${materialized.parallel.length} items that resolve output to the same path: ${step.parallel.outputPath}. Remove the explicit output path or use an inherited relative agent output so each item can be isolated.`);
-				}
-				for (const [itemIndex] of materialized.parallel.entries()) {
-					const thinkingOverride = step.thinkingOverrides?.[itemIndex];
-					const model = thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
-					const configThinking = thinkingOverride ? thinkingOverride : step.parallel.thinking;
-					const candidates = step.parallel.modelCandidates !== undefined
-						? step.parallel.modelCandidates.length > 0
-							? step.parallel.modelCandidates.map((candidate) => thinkingOverride ? applyThinkingSuffix(candidate, thinkingOverride, true) ?? candidate : candidate)
-							: [undefined]
-						: model ? [model] : [undefined];
-					for (const candidate of candidates) {
-						assertThinkingWithinCeiling({ model: candidate, configThinking, ceiling: step.parallel.thinkingCeiling ?? decodeThinkingCeiling(process.env[SUBAGENT_THINKING_CEILING_ENV]), agent: step.parallel.agent, runId: id });
-					}
-				}
-				if (materialized.collectedOnEmpty) await validateDynamicCollection(step.collect.outputSchema, materialized.collectedOnEmpty);
-				if (!config.runFanoutBudget) throw new Error("Async runner is missing its run fan-out budget identity.");
-				const runFanoutBudget = claimRunFanoutBatch(config.runFanoutBudget, materialized.parallel.map((_, itemIndex) => `chain[${stepIndex}].expand[${itemIndex}]`));
-				statusPayload.runFanoutBudget = runFanoutBudget;
-			} catch (error) {
-				const now = Date.now();
-				const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
-				statusPayload.state = "failed";
-				statusPayload.error = message;
-				statusPayload.currentStep = flatIndex;
-				const placeholder = statusPayload.steps[groupStartFlatIndex];
-				if (placeholder) {
-					placeholder.status = "failed";
-					placeholder.error = message;
-					placeholder.startedAt = now;
-					placeholder.endedAt = now;
-					placeholder.durationMs = 0;
-					placeholder.exitCode = 1;
-				}
-				statusPayload.lastUpdate = now;
-				markDynamicGraphGroup(stepIndex, "failed", message);
-				writeStatusPayload();
-				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1 }));
-				break;
-			}
-
-			const effectiveDynamicGroupAcceptance = resolveEffectiveAcceptance(omitUndefinedProperties({
-				explicit: step.acceptanceInput,
-				agentName: step.parallel.agent,
-				acceptanceRole: step.acceptanceRole,
-				task: materialized.parallel.map((task) => task.task ?? step.parallel.task).join("\n") || step.parallel.task,
-				mode: config.mode,
-				async: true,
-				dynamicGroup: true,
-				agentContract: step.agentContract,
-			}));
-
-			if (materialized.parallel.length === 0) {
-				const now = Date.now();
-				const collection = materialized.collectedOnEmpty ?? [];
-				outputs[step.collect.as] = {
-					text: JSON.stringify(collection),
-					structured: collection,
-					agent: step.parallel.agent,
-					stepIndex,
-				};
-				statusPayload.outputs = outputs;
-				const placeholder = statusPayload.steps[groupStartFlatIndex];
-				if (placeholder) {
-					placeholder.status = "complete";
-					placeholder.startedAt = now;
-					placeholder.endedAt = now;
-					placeholder.durationMs = 0;
-				}
-				previousOutput = "Dynamic fanout produced 0 results.";
-				const groupAcceptance = effectiveDynamicGroupAcceptance.level !== "none" && !timedOut && !stopped
-					? await evaluateAcceptance(omitUndefinedProperties({
-						acceptance: effectiveDynamicGroupAcceptance,
-						output: "",
-						report: aggregateAcceptanceReport({
-							criteria: effectiveDynamicGroupAcceptance.criteria,
-							results: [],
-							notes: "Dynamic fanout produced 0 results.",
-						}),
-						cwd,
-						signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
-						abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? "Subagent timed out.",
-						reportOptional: isAgentContractV1(step.agentContract) && effectiveDynamicGroupAcceptance.explicit,
-					}))
-					: undefined;
-				const groupStopped = stopped || stopAbortController.signal.aborted;
-				const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
-				const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
-				if (placeholder && effectiveGroupAcceptance) placeholder.acceptance = effectiveGroupAcceptance;
-				const groupTerminal = decideChildTerminal({
-					exitCode: 0,
-					error: groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : undefined,
-					timedOut: groupTimedOut,
-					stopped: groupStopped,
-					...(effectiveGroupAcceptance ? { acceptance: { status: effectiveGroupAcceptance.status, diagnostic: acceptanceFailureMessage(effectiveGroupAcceptance), required: effectiveGroupAcceptance.effectiveAcceptance.onFailure === "fail" } } : {}),
-				});
-				if (!groupTerminal.success) {
-					statusPayload.state = groupTerminal.status === "stopped" ? "stopped" : "failed";
-					statusPayload.error = groupTerminal.error;
-					setOptionalProperty(statusPayload, "stopped", groupTerminal.execution.stopped ? true : statusPayload.stopped);
-					if (placeholder) {
-						placeholder.status = groupTerminal.status === "stopped" ? "stopped" : "failed";
-						placeholder.error = groupTerminal.error;
-						placeholder.exitCode = groupTerminal.exitCode;
-						setOptionalProperty(placeholder, "timedOut", groupTerminal.execution.timedOut);
-						setOptionalProperty(placeholder, "stopped", groupTerminal.execution.stopped);
-					}
-					markDynamicGraphGroup(stepIndex, groupTerminal.status === "stopped" ? "stopped" : "failed", groupTerminal.error, effectiveGroupAcceptance);
-					statusPayload.lastUpdate = Date.now();
-					writeStatusPayload();
-					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: groupTerminal.error, error: groupTerminal.error, success: false, exitCode: groupTerminal.exitCode, timedOut: groupTerminal.execution.timedOut, stopped: groupTerminal.execution.stopped, acceptance: effectiveGroupAcceptance }));
-					break;
-				}
-				flatIndex++;
-				statusPayload.lastUpdate = now;
-				markDynamicGraphGroup(stepIndex, "completed", undefined, effectiveGroupAcceptance);
-				writeStatusPayload();
-				continue;
-			}
-
-			const dynamicOutputReservations: Array<{ outputPath: string; reservation: NonNullable<ReturnType<typeof prepareManagedSingleOutput>> }> = [];
-			try {
-				if (step.parallel.namespaceOutputPath && step.parallel.outputPath) {
-					for (const [itemIndex] of materialized.parallel.entries()) {
-						const outputPath = path.join(path.dirname(step.parallel.outputPath), `dynamic-${stepIndex}`, `${itemIndex}-${step.parallel.agent}`, path.basename(step.parallel.outputPath));
-						const reservation = prepareManagedSingleOutput(path.basename(outputPath), outputPath);
-						if (reservation) {
-							dynamicOutputReservations.push({ outputPath, reservation });
-							ownedManagedOutputs.push({ outputPath, reservation });
-						}
-					}
-				}
-			} catch (error) {
-				for (const entry of dynamicOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
-				const now = Date.now();
-				const message = `Failed to reserve dynamic managed output: ${error instanceof Error ? error.message : String(error)}`;
-				statusPayload.state = "failed";
-				statusPayload.error = message;
-				statusPayload.currentStep = groupStartFlatIndex;
-				const placeholder = statusPayload.steps[groupStartFlatIndex];
-				if (placeholder) {
-					placeholder.status = "failed";
-					placeholder.error = message;
-					placeholder.startedAt = now;
-					placeholder.endedAt = now;
-					placeholder.durationMs = 0;
-					placeholder.exitCode = 1;
-				}
-				statusPayload.lastUpdate = now;
-				markDynamicGraphGroup(stepIndex, "failed", message);
-				writeStatusPayload();
-				results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1 }));
-				break;
-			}
-			const dynamicSteps = materialized.parallel.map((task, itemIndex) => {
-				const thinkingOverride = step.thinkingOverrides?.[itemIndex];
-				const model = thinkingOverride ? applyThinkingSuffix(step.parallel.model, thinkingOverride, true) : step.parallel.model;
-				const thinking = thinkingOverride ? resolveEffectiveThinking(model, thinkingOverride) : undefined;
-				const outputPath = step.parallel.namespaceOutputPath && step.parallel.outputPath
-					? path.join(path.dirname(step.parallel.outputPath), `dynamic-${stepIndex}`, `${itemIndex}-${step.parallel.agent}`, path.basename(step.parallel.outputPath))
-					: step.parallel.outputPath;
-				const taskText = task.task ?? step.parallel.task;
-				const materializedTask = step.parallel.namespaceOutputPath ? injectSingleOutputInstruction(taskText, outputPath, step.parallel) : taskText;
-				const sessionName = deriveChildSessionName({ agent: step.parallel.agent, task: taskText, label: task.label ?? step.parallel.label });
-				return omitUndefinedProperties({
-					...step.parallel,
-					runFanoutPath: `chain[${stepIndex}].expand[${itemIndex}]`,
-					task: materializedTask,
-					...(sessionName ? { sessionName } : {}),
-					effectiveAcceptance: resolveEffectiveAcceptance(omitUndefinedProperties({
-						explicit: step.parallel.acceptanceInput,
-						agentName: step.parallel.agent,
-						acceptanceRole: step.parallel.acceptanceRole,
-						task: materializedTask,
-						mode: config.mode,
-						async: true,
-						dynamic: true,
-						agentContract: step.parallel.agentContract ?? step.agentContract,
-					})),
-					systemPrompt: step.parallel.namespaceOutputPath ? injectOutputPathSystemPrompt(step.parallel.systemPrompt ?? "", outputPath, step.parallel) : step.parallel.systemPrompt,
-					outputPath,
-					...(step.parallel.namespaceOutputPath ? { managedOutput: true, managedOutputReservation: dynamicOutputReservations[itemIndex]?.reservation } : {}),
-					label: task.label ?? step.parallel.label,
-					...(step.sessionFiles?.[itemIndex] ? { sessionFile: step.sessionFiles[itemIndex] } : {}),
-					...(thinkingOverride ? {
-						...(model ? { model } : {}),
-						...(thinking ? { thinking } : {}),
-						...(step.parallel.modelCandidates ? { modelCandidates: step.parallel.modelCandidates.flatMap((candidate) => {
-							const resolved = applyThinkingSuffix(candidate, thinkingOverride, true);
-							return resolved ? [resolved] : [];
-						}) } : {}),
-					} : {}),
-					structuredOutputSchema: step.parallel.structuredOutputSchema ?? step.parallel.structuredOutput?.schema,
-				});
-			});
-			const dynamicFlatStepCount = Math.max(statusPayload.steps.length - 1 + dynamicSteps.length, 1);
-			const dynamicStatusSteps: RunnerStatusStep[] = dynamicSteps.map((task, itemIndex) => {
-				const transcriptPath = resolveAsyncStepTranscriptPath(omitUndefinedProperties({ artifactsDir, artifactConfig, runId: id, agent: task.agent, flatIndex: groupStartFlatIndex + itemIndex, flatStepCount: dynamicFlatStepCount }));
-				return omitUndefinedProperties({
-					agent: task.agent,
-					...(task.sessionName ? { sessionName: task.sessionName } : {}),
-					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
-					...(task.context ? { context: task.context } : {}),
-					...(task.phase ?? step.phase ? { phase: task.phase ?? step.phase } : {}),
-					...(task.label ? { label: task.label } : {}),
-					structured: Boolean(task.structuredOutputSchema),
-					...(task.agentContract ? { agentContract: task.agentContract } : {}),
-					acceptanceInput: persistResolvedAcceptance(task.effectiveAcceptance),
-					...(task.childProfile ? { childProfile: task.childProfile } : {}),
-					...(task.launchResolvedExtensions ? { launchResolvedExtensions: task.launchResolvedExtensions } : {}),
-					...(task.capabilityCeiling ? { capabilityCeiling: task.capabilityCeiling } : {}),
-					status: "pending",
-					...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
-					...(transcriptPath ? { transcriptPath } : {}),
-					...(task.skills ? { skills: task.skills } : {}),
-					...(task.model ? { model: task.model } : {}),
-					...(task.contextLimit !== undefined ? { contextLimit: task.contextLimit } : {}),
-					...(task.thinking ? { thinking: task.thinking } : {}),
-					...(task.thinkingCeiling ? { thinkingCeiling: task.thinkingCeiling } : {}),
-					...(task.modelCandidates && task.modelCandidates.length > 0 ? { attemptedModels: task.modelCandidates } : task.model ? { attemptedModels: [task.model] } : {}),
-					recentTools: [],
-					recentOutput: [],
-				});
-			});
-			statusPayload.steps.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps);
-			if (config.childIntercomTargets) {
-				config.childIntercomTargets = statusPayload.steps.map((statusStep, index) => resolveSubagentIntercomTarget(id, statusStep.agent, index));
-			}
-			mutatingFailureStates.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => createMutatingFailureState()));
-			pendingToolResults.splice(groupStartFlatIndex, 1, ...dynamicStatusSteps.map(() => undefined));
-			const materializedDelta = dynamicStatusSteps.length - 1;
-			for (const group of statusPayload.parallelGroups) {
-				if (group.stepIndex === stepIndex) {
-					group.start = groupStartFlatIndex;
-					group.count = dynamicStatusSteps.length;
-				} else if (group.start > groupStartFlatIndex) {
-					group.start += materializedDelta;
-				}
-			}
-			if (statusPayload.workflowGraph) {
-				const shiftFlatIndexes = (nodes: NonNullable<typeof statusPayload.workflowGraph>["nodes"]): void => {
-					for (const node of nodes) {
-						if (node.stepIndex !== undefined && node.stepIndex > stepIndex && node.flatIndex !== undefined && node.flatIndex >= groupStartFlatIndex) {
-							node.flatIndex += dynamicStatusSteps.length;
-						}
-						if (node.children) shiftFlatIndexes(node.children);
-					}
-				};
-				shiftFlatIndexes(statusPayload.workflowGraph.nodes);
-				const groupNode = statusPayload.workflowGraph.nodes.find((node) => node.id === `step-${stepIndex}`);
-				if (groupNode) {
-					groupNode.children = materialized.items.map((item, itemIndex) => omitUndefinedProperties({
-						id: `step-${stepIndex}-item-${item.idKey}`,
-						kind: "agent",
-						agent: step.parallel.agent,
-						phase: dynamicSteps[itemIndex]?.phase ?? step.phase,
-						label: dynamicSteps[itemIndex]?.label?.trim() || `${step.parallel.agent} ${item.key}`,
-						status: "pending",
-						flatIndex: groupStartFlatIndex + itemIndex,
-						stepIndex,
-						itemKey: item.key,
-						structured: Boolean(dynamicSteps[itemIndex]?.structuredOutputSchema),
-					}));
-				}
-			}
-			writeStatusPayload();
-
-			const concurrency = step.concurrency ?? MAX_PARALLEL_CONCURRENCY;
-			const failFast = step.failFast ?? false;
-			let aborted = false;
-			const parallelResults = await mapConcurrent(dynamicSteps, concurrency, async (task, taskIdx): Promise<StepResult> => {
-				const fi = groupStartFlatIndex + taskIdx;
-				refreshUsageBudget();
-				if (statusPayload.usageBudget?.exhausted) {
-					const skippedAt = Date.now();
-					const message = usageBudgetExceededMessage(statusPayload.usageBudget);
-					requiredStatusStep(statusPayload, fi).status = "failed";
-					requiredStatusStep(statusPayload, fi).error = message;
-					requiredStatusStep(statusPayload, fi).startedAt = skippedAt;
-					requiredStatusStep(statusPayload, fi).endedAt = skippedAt;
-					requiredStatusStep(statusPayload, fi).durationMs = 0;
-					requiredStatusStep(statusPayload, fi).exitCode = 1;
-					statusPayload.lastUpdate = skippedAt;
-					usageBudgetExceeded = true;
-					writeStatusPayload();
-					appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0 }));
-					return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
-				}
-				if (timedOut) return timedOutStepResult(task.agent, task.context, task.sessionName);
-				if (stopped) return stoppedStepResult(task.agent, task.context, task.sessionName);
-				if (childStopRequests.has(fi)) return childStopResult(fi, task.agent, task.context);
-				if (interrupted) return pausedStepResult(task.agent, task.context, task.sessionName);
-				if (aborted && failFast) {
-					const skippedAt = Date.now();
-					requiredStatusStep(statusPayload, fi).status = "failed";
-					requiredStatusStep(statusPayload, fi).error = "Skipped due to fail-fast";
-					requiredStatusStep(statusPayload, fi).startedAt = skippedAt;
-					requiredStatusStep(statusPayload, fi).endedAt = skippedAt;
-					requiredStatusStep(statusPayload, fi).durationMs = 0;
-					requiredStatusStep(statusPayload, fi).exitCode = -1;
-					statusPayload.lastUpdate = skippedAt;
-					writeStatusPayload();
-					return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
-				}
-				const taskStartTime = Date.now();
-				statusPayload.currentStep = fi;
-				requiredStatusStep(statusPayload, fi).status = "running";
-				delete requiredStatusStep(statusPayload, fi).error;
-				delete requiredStatusStep(statusPayload, fi).activityState;
-				resetStepLiveDetail(requiredStatusStep(statusPayload, fi));
-				requiredStatusStep(statusPayload, fi).startedAt = taskStartTime;
-				requiredStatusStep(statusPayload, fi).lastActivityAt = taskStartTime;
-				statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
-				statusPayload.lastActivityAt = taskStartTime;
-				statusPayload.lastUpdate = taskStartTime;
-				writeStatusPayload();
-				appendJsonl(eventsPath, JSON.stringify({ type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent }));
-				flushPendingStepSteers(fi);
-				const singleResult = await runSingleStepWithTimeout(task, compactOptional<SingleStepContext>({
-					previousOutput, placeholder, cwd, sessionEnabled,
-					outputs,
-					sessionDir: config.sessionDir ? path.join(config.sessionDir, `dynamic-${stepIndex}-${taskIdx}`) : undefined,
-					artifactsDir, artifactConfig, id,
-					flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
-					outputFile: path.join(asyncDir, `output-${fi}.log`),
-					steerInboxDir: stepSteerInboxDir(asyncDir, fi),
-					steerCapabilityPath: steerCapabilityPath(asyncDir, fi),
-					steerAckDir: steerAcksDir(asyncDir, fi),
-					piPackageRoot: config.piPackageRoot,
-					piArgv1: config.piArgv1,
-					childIntercomTarget: config.childIntercomTargets?.[fi],
-					orchestratorIntercomTarget: config.controlIntercomTarget,
-					nestedRoute: config.nestedRoute,
-					capabilityCeiling: config.capabilityCeiling,
-					runFanoutBudget: config.runFanoutBudget,
-					registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
-					registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
-					registerStop: (stop) => registerStepStop(fi, stop),
-					timeoutSignal: timeoutAbortController.signal,
-					stopSignal: stopAbortController.signal,
-					trackedMutationEvidenceForCompletionGuard: false,
-					timeoutMessage,
-					stopMessage,
-					toolTimeoutMs: task.toolTimeoutMs ?? config.toolTimeoutMs,
-					onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
-					onChildEvent: (event) => updateStepFromChildEvent(fi, event),
-					onWriterProcess,
-					onExternalProcess: (process) => updateExternalProcess(fi, process),
-					onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
-					skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
-					usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
-				}), config.deadlineAt);
-				const taskEndTime = Date.now();
-				const childTerminal = decideWorkflowChildTerminal(singleResult, { stopped, timedOut });
-				const childStopped = childTerminal.status === "stopped";
-				requiredStatusStep(statusPayload, fi).status = workflowStatusFromTerminal(childTerminal.status);
-				requiredStatusStep(statusPayload, fi).endedAt = taskEndTime;
-				requiredStatusStep(statusPayload, fi).durationMs = taskEndTime - taskStartTime;
-				requiredStatusStep(statusPayload, fi).exitCode = childTerminal.exitCode;
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
-				if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
-				if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "childProfile", singleResult.childProfile ?? requiredStatusStep(statusPayload, fi).childProfile);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "modelAttempts", singleResult.modelAttempts);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "contextOverflow", singleResult.contextOverflow);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "totalCost", singleResult.totalCost);
-				if (singleResult.totalCost) {
-					pendingParallelUsageCost = {
-						inputTokens: pendingParallelUsageCost.inputTokens + singleResult.totalCost.inputTokens,
-						outputTokens: pendingParallelUsageCost.outputTokens + singleResult.totalCost.outputTokens,
-						costUsd: pendingParallelUsageCost.costUsd + singleResult.totalCost.costUsd,
-					};
-					refreshUsageBudget();
-				}
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", childTerminal.error);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, fi).transcriptPath);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptError", singleResult.transcriptError);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "agentContract", singleResult.agentContract);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "launchContractDigest", singleResult.launchContractDigest);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "launchResolvedExtensions", singleResult.launchResolvedExtensions);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "effects", singleResult.effects);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "execution", singleResult.execution);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "review", singleResult.review);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutput", singleResult.structuredOutput);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputPath", singleResult.structuredOutputPath);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
-				if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
-				setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityAudit", singleResult.capabilityAudit);
-				if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
-				if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
-				statusPayload.lastUpdate = taskEndTime;
-				writeStatusPayload();
-				appendCapabilityCeilingAppliedEvent(eventsPath, id, fi, task.agent, singleResult);
-		appendJsonl(eventsPath, JSON.stringify({
-			type: childTerminal.status === "stopped" ? "subagent.step.stopped" : childTerminal.status === "paused" ? "subagent.step.paused" : childTerminal.success ? "subagent.step.completed" : "subagent.step.failed",
-			ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
-			exitCode: childTerminal.exitCode, durationMs: taskEndTime - taskStartTime,
-		}));
-		if (childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
-		if (!childTerminal.success && childTerminal.status === "failed" && failFast) aborted = true;
-				return {
-					...singleResult,
-					output: childStopped ? stopMessage : childTerminal.execution.timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
-					error: childTerminal.error,
-					exitCode: childTerminal.exitCode,
-					interrupted: childTerminal.status === "paused",
-					timedOut: childTerminal.execution.timedOut,
-					stopped: childStopped,
-					skipped: false,
-				};
-			}, globalSemaphore);
-			for (const entry of dynamicOutputReservations) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
-
-			flatIndex += dynamicSteps.length;
-			for (const [itemIndex, pr] of parallelResults.entries()) {
-				const terminal = decideWorkflowChildTerminal(pr);
-				results.push(omitUndefinedProperties({
-					agent: pr.agent,
-					...(pr.sessionName ? { sessionName: pr.sessionName } : {}),
-					context: pr.context,
-					agentContract: pr.agentContract,
-					launchContractDigest: pr.launchContractDigest,
-					childProfile: pr.childProfile,
-					launchResolvedExtensions: pr.launchResolvedExtensions,
-					runtimeAcknowledgedExtensions: pr.runtimeAcknowledgedExtensions,
-					output: pr.output,
-					outputState: pr.outputState,
-					error: pr.error,
-					protocolError: pr.protocolError,
-					success: terminal.success,
-					exitCode: terminal.exitCode,
-					skipped: pr.skipped,
-					interrupted: pr.interrupted,
-					timedOut: pr.timedOut,
-					stopped: pr.stopped,
-					toolBudget: pr.toolBudget,
-					toolBudgetBlocked: pr.toolBudgetBlocked,
-					sessionFile: pr.sessionFile,
-					intercomTarget: pr.intercomTarget,
-					model: pr.model,
-					attemptedModels: pr.attemptedModels,
-					modelAttempts: pr.modelAttempts,
-					contextOverflow: pr.contextOverflow,
-					totalCost: pr.totalCost,
-					usage: pr.usage,
-					artifactPaths: pr.artifactPaths,
-					transcriptPath: pr.transcriptPath,
-					transcriptError: pr.transcriptError,
-					effects: pr.effects,
-					execution: pr.execution,
-					review: pr.review,
-					timeoutRecovery: pr.timeoutRecovery,
-					structuredOutput: pr.structuredOutput,
-					structuredOutputPath: pr.structuredOutputPath,
-					structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
-					acceptance: pr.acceptance,
-					acceptanceInput: pr.acceptanceInput ?? persistResolvedAcceptance(dynamicSteps[itemIndex]!.effectiveAcceptance),
-					capabilityCeiling: pr.capabilityCeiling,
-					capabilityAudit: pr.capabilityAudit,
-				}));
-			}
-			pendingParallelUsageCost = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-			refreshUsageBudget();
-			const collection = collectDynamicResults(step as Parameters<typeof collectDynamicResults>[0], materialized.items, parallelResults);
-			const failures = parallelResults.filter((result) => result.exitCode !== 0 && result.exitCode !== -1);
-			if (failures.length === 0) {
-				try {
-					await validateDynamicCollection(step.collect.outputSchema, collection);
-					outputs[step.collect.as] = {
-						text: JSON.stringify(collection),
-						structured: collection,
-						agent: step.parallel.agent,
-						stepIndex,
-					};
-					statusPayload.outputs = outputs;
-					const groupAcceptance = !timedOut && !stopped
-						? await evaluateAcceptance(omitUndefinedProperties({
-							acceptance: effectiveDynamicGroupAcceptance,
-							output: "",
-							report: aggregateAcceptanceReport({
-								criteria: effectiveDynamicGroupAcceptance.criteria,
-								results: parallelResults,
-								notes: `Dynamic fanout collected ${collection.length} result(s) into ${step.collect.as}.`,
-							}),
-							cwd,
-							signal: combinedAbortSignal([timeoutAbortController.signal, stopAbortController.signal]),
-							abortMessage: stopAbortController.signal.aborted ? stopMessage : timeoutMessage ?? "Subagent timed out.",
-							reportOptional: isAgentContractV1(step.agentContract) && effectiveDynamicGroupAcceptance.explicit,
-						}))
-						: undefined;
-					const groupStopped = stopped || stopAbortController.signal.aborted;
-					const groupTimedOut = !groupStopped && (timedOut || timeoutAbortController.signal.aborted);
-					const effectiveGroupAcceptance = groupTimedOut || groupStopped ? undefined : groupAcceptance;
-					const groupTerminal = decideChildTerminal({
-						exitCode: 0,
-						error: groupStopped ? stopMessage : groupTimedOut ? timeoutMessage ?? "Subagent timed out." : undefined,
-						timedOut: groupTimedOut,
-						stopped: groupStopped,
-						...(effectiveGroupAcceptance ? { acceptance: { status: effectiveGroupAcceptance.status, diagnostic: acceptanceFailureMessage(effectiveGroupAcceptance), required: effectiveGroupAcceptance.effectiveAcceptance.onFailure === "fail" } } : {}),
-					});
-					markDynamicGraphGroup(stepIndex, groupTerminal.status === "stopped" ? "stopped" : groupTerminal.success ? "completed" : "failed", groupTerminal.error, effectiveGroupAcceptance);
-					if (!groupTerminal.success) {
-						results.push(omitUndefinedProperties({
-							agent: step.parallel.agent,
-							output: groupTerminal.error,
-							error: groupTerminal.error,
-							success: false,
-							exitCode: groupTerminal.exitCode,
-							timedOut: groupTerminal.execution.timedOut,
-							stopped: groupTerminal.execution.stopped,
-							structuredOutput: collection,
-							acceptance: effectiveGroupAcceptance,
-						}));
-						statusPayload.error = groupTerminal.error;
-						setOptionalProperty(statusPayload, "stopped", groupTerminal.execution.stopped ? true : statusPayload.stopped);
-					}
-				} catch (error) {
-					const message = error instanceof DynamicFanoutError ? error.message : error instanceof Error ? error.message : String(error);
-					results.push(omitUndefinedProperties({ agent: step.parallel.agent, context: step.parallel.context, output: message, error: message, success: false, exitCode: 1, structuredOutput: collection }));
-					statusPayload.error = message;
-					markDynamicGraphGroup(stepIndex, "failed", message);
-				}
-			}
-			previousOutput = aggregateParallelOutputs(
-				parallelResults.map((r, i) => omitUndefinedProperties({
-					agent: r.agent,
-					taskIndex: i,
-					output: r.output,
-					exitCode: r.exitCode,
-					error: r.error,
-				})),
-				(i, agent) => `=== Dynamic Item ${i + 1} (${agent}, key ${materialized.items[i]?.key ?? i}) ===`,
-			);
-			appendJsonl(eventsPath, JSON.stringify({
-				type: "subagent.dynamic.completed",
-				ts: Date.now(),
-				runId: id,
-				stepIndex,
-				success: failures.length === 0,
-			}));
-			if (failures.length > 0) markDynamicGraphGroup(stepIndex, "failed", failures[0]?.error ?? "Dynamic fanout child failed.");
-			statusPayload.lastUpdate = Date.now();
-			writeStatusPayload();
-			if (failures.length > 0 || statusPayload.error) break;
+		const stepIndex = 0;
+		const seqStep = step;
+		if (timedOut) {
+			results.push(timedOutStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
+			flatIndex++;
 			continue;
 		}
-
-		if (isParallelGroup(step)) {
-			const group = step;
-			const concurrency = group.concurrency ?? MAX_PARALLEL_CONCURRENCY;
-			const failFast = group.failFast ?? false;
-			const groupStartFlatIndex = flatIndex;
-			let aborted = false;
-			let worktreeSetup: WorktreeSetup | undefined;
-			let worktreeFinalized = false;
-			if (group.worktree) {
-				const worktreeTaskCwdConflict = findWorktreeTaskCwdConflict(group.parallel, cwd);
-				if (worktreeTaskCwdConflict) {
-					const failedAt = Date.now();
-					markParallelGroupSetupFailure({
-						statusPayload,
-						results,
-						group,
-						groupStartFlatIndex,
-						setupError: formatWorktreeTaskCwdConflict(worktreeTaskCwdConflict, cwd),
-						failedAt,
-						statusPath,
-						eventsPath,
-						asyncDir,
-						runId: id,
-						stepIndex,
-						writeStatus: () => writeStatusPayload(),
-					});
-					flatIndex += group.parallel.length;
-					break;
-				}
-				try {
-					worktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, omitUndefinedProperties({
-						agents: group.parallel.map((task) => task.agent),
-						setupHook: config.worktreeSetupHook
-							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
-							: undefined,
-						baseDir: config.worktreeBaseDir,
-						beforeCreate: (plannedSetup) => {
-							for (const worktree of plannedSetup.worktrees) setStatusWorktreeReference(requiredStatusStep(statusPayload, groupStartFlatIndex + worktree.index), worktree);
-							const pendingHandoff = writePendingParallelHandoff({
-								manifestPath: parallelHandoffPath(asyncDir),
-								runId: id,
-								mode: statusPayload.mode === "parallel" ? "parallel" : "chain",
-								source: "async",
-								cwd,
-								stepIndex,
-								flatStartIndex: groupStartFlatIndex,
-								setup: plannedSetup,
-								laneBindings: handoffWorkflowKey || config.lane ? [{ index: groupStartFlatIndex, taskIndex: 0, ...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}), ...(handoffChildRunId ? { runId: handoffChildRunId } : {}), ...(config.lane ? { lane: config.lane } : {}) }] : undefined,
-							});
-							statusPayload.parallelHandoff = pendingHandoff;
-							statusPayload.lastUpdate = Date.now();
-							writeStatusPayload();
-						},
-					}));
-				} catch (error) {
-					const setupError = error instanceof Error ? error.message : String(error);
-					const failedAt = Date.now();
-					markParallelGroupSetupFailure({
-						statusPayload,
-						results,
-						group,
-						groupStartFlatIndex,
-						setupError,
-						failedAt,
-						statusPath,
-						eventsPath,
-						asyncDir,
-						runId: id,
-						stepIndex,
-						writeStatus: () => writeStatusPayload(),
-					});
-					flatIndex += group.parallel.length;
-					break;
-				}
-			}
-
+		if (stopped) {
+			results.push(stoppedStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
+			flatIndex++;
+			continue;
+		}
+		if (childStopRequests.has(flatIndex)) {
+			results.push(childStopResult(flatIndex, seqStep.agent, seqStep.context));
+			flatIndex++;
+			continue;
+		}
+		if (interrupted) {
+			results.push(pausedStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
+			flatIndex++;
+			continue;
+		}
+		let singleWorktreeSetup: WorktreeSetup | undefined;
+		if (seqStep.worktree) {
 			try {
-				const groupStartTime = Date.now();
-				markParallelGroupRunning({
-					statusPayload,
-					group,
-					groupStartFlatIndex,
-					groupStartTime,
-					statusPath,
-					eventsPath,
-					asyncDir,
-					runId: id,
-					stepIndex,
-					writeStatus: () => writeStatusPayload(),
-				});
-				const parallelResults = await mapConcurrent(
-					group.parallel,
-					concurrency,
-					async (task, taskIdx): Promise<StepResult> => {
-						const fi = groupStartFlatIndex + taskIdx;
-						refreshUsageBudget();
-						if (statusPayload.usageBudget?.exhausted) {
-							const skippedAt = Date.now();
-							const message = usageBudgetExceededMessage(statusPayload.usageBudget);
-							requiredStatusStep(statusPayload, fi).status = "failed";
-							requiredStatusStep(statusPayload, fi).error = message;
-							requiredStatusStep(statusPayload, fi).startedAt = skippedAt;
-							requiredStatusStep(statusPayload, fi).endedAt = skippedAt;
-							requiredStatusStep(statusPayload, fi).durationMs = 0;
-							requiredStatusStep(statusPayload, fi).exitCode = 1;
-							delete requiredStatusStep(statusPayload, fi).activityState;
-							statusPayload.lastUpdate = skippedAt;
-							usageBudgetExceeded = true;
-							writeStatusPayload();
-							appendJsonl(eventsPath, JSON.stringify({
-								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: 1, durationMs: 0,
-							}));
-							return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: message, error: message, exitCode: 1 as number | null, skipped: true });
+				singleWorktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, 1, omitUndefinedProperties({
+					agents: [seqStep.agent],
+					setupHook: config.worktreeSetupHook
+						? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
+						: undefined,
+					baseDir: config.worktreeBaseDir,
+					beforeCreate: (plannedSetup) => {
+						const worktree = plannedSetup.worktrees[0];
+						if (worktree) {
+							setStatusWorktreeReference(requiredStatusStep(statusPayload, flatIndex), worktree);
 						}
-						if (timedOut) return timedOutStepResult(task.agent, task.context, task.sessionName);
-						if (stopped) return stoppedStepResult(task.agent, task.context, task.sessionName);
-						if (childStopRequests.has(fi)) return childStopResult(fi, task.agent, task.context);
-						if (interrupted) return pausedStepResult(task.agent, task.context, task.sessionName);
-						if (aborted && failFast) {
-							const skippedAt = Date.now();
-							requiredStatusStep(statusPayload, fi).status = "failed";
-							requiredStatusStep(statusPayload, fi).error = "Skipped due to fail-fast";
-							requiredStatusStep(statusPayload, fi).startedAt = skippedAt;
-							requiredStatusStep(statusPayload, fi).endedAt = skippedAt;
-							requiredStatusStep(statusPayload, fi).durationMs = 0;
-							requiredStatusStep(statusPayload, fi).exitCode = -1;
-							delete requiredStatusStep(statusPayload, fi).activityState;
-							statusPayload.lastUpdate = skippedAt;
-							writeStatusPayload();
-							appendJsonl(eventsPath, JSON.stringify({
-								type: "subagent.step.failed", ts: skippedAt, runId: id, stepIndex: fi, agent: task.agent, exitCode: -1, durationMs: 0,
-							}));
-							return omitUndefinedProperties({ agent: task.agent, ...(task.sessionName ? { sessionName: task.sessionName } : {}), context: task.context, output: "(skipped — fail-fast)", exitCode: -1 as number | null, skipped: true });
-						}
-
-						const taskStartTime = Date.now();
-						statusPayload.currentStep = fi;
-						requiredStatusStep(statusPayload, fi).status = "running";
-						delete requiredStatusStep(statusPayload, fi).error;
-						delete requiredStatusStep(statusPayload, fi).activityState;
-						resetStepLiveDetail(requiredStatusStep(statusPayload, fi));
-						requiredStatusStep(statusPayload, fi).startedAt = taskStartTime;
-						delete requiredStatusStep(statusPayload, fi).endedAt;
-						delete requiredStatusStep(statusPayload, fi).durationMs;
-						requiredStatusStep(statusPayload, fi).lastActivityAt = taskStartTime;
-						statusPayload.outputFile = path.join(asyncDir, `output-${fi}.log`);
-						statusPayload.lastActivityAt = taskStartTime;
-						statusPayload.lastUpdate = taskStartTime;
+						const pendingHandoff = writePendingParallelHandoff({
+							manifestPath: parallelHandoffPath(asyncDir),
+							runId: id,
+							mode: "single",
+							source: "async",
+							cwd,
+							stepIndex,
+							flatStartIndex: flatIndex,
+							setup: plannedSetup,
+							laneBindings: handoffWorkflowKey || config.lane ? [{ index: flatIndex, taskIndex: 0, ...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}), ...(handoffChildRunId ? { runId: handoffChildRunId } : {}), ...(config.lane ? { lane: config.lane } : {}) }] : undefined,
+						});
+						statusPayload.parallelHandoff = pendingHandoff;
+						statusPayload.lastUpdate = Date.now();
 						writeStatusPayload();
-
-						appendJsonl(eventsPath, JSON.stringify({
-							type: "subagent.step.started", ts: taskStartTime, runId: id, stepIndex: fi, agent: task.agent,
-						}));
-
-						const taskSessionDir = config.sessionDir
-							? path.join(config.sessionDir, `parallel-${taskIdx}`)
-							: undefined;
-						const { taskForRun, taskCwd } = prepareParallelTaskRun(task, cwd, worktreeSetup, taskIdx);
-						flushPendingStepSteers(fi);
-
-						const singleResult = await runSingleStepWithTimeout(taskForRun, compactOptional<SingleStepContext>({
-							previousOutput, placeholder, cwd: taskCwd, sessionEnabled,
-							outputs,
-							sessionDir: taskSessionDir,
-							artifactsDir, artifactConfig, id,
-							flatIndex: fi, flatStepCount: Math.max(statusPayload.steps.length, 1),
-							outputFile: path.join(asyncDir, `output-${fi}.log`),
-							steerInboxDir: stepSteerInboxDir(asyncDir, fi),
-							steerCapabilityPath: steerCapabilityPath(asyncDir, fi),
-							steerAckDir: steerAcksDir(asyncDir, fi),
-							piPackageRoot: config.piPackageRoot,
-							piArgv1: config.piArgv1,
-							childIntercomTarget: config.childIntercomTargets?.[fi],
-							orchestratorIntercomTarget: config.controlIntercomTarget,
-							nestedRoute: config.nestedRoute,
-							capabilityCeiling: config.capabilityCeiling,
-							runFanoutBudget: config.runFanoutBudget,
-							registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
-							registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
-							registerStop: (stop) => registerStepStop(fi, stop),
-							timeoutSignal: timeoutAbortController.signal,
-							stopSignal: stopAbortController.signal,
-							trackedMutationEvidenceForCompletionGuard: Boolean(worktreeSetup),
-							timeoutMessage,
-							stopMessage,
-							toolTimeoutMs: taskForRun.toolTimeoutMs ?? config.toolTimeoutMs,
-							onAttemptStart: (attempt) => updateStepModel(fi, attempt.model, attempt.thinking, attempt.contextLimit),
-							onChildEvent: (event) => updateStepFromChildEvent(fi, event),
-							onWriterProcess,
-							onExternalProcess: (process) => updateExternalProcess(fi, process),
-							onExternalJob: (externalJob) => updateExternalJob(fi, externalJob),
-							skipAcceptance: () => timedOut || stopped || childStopRequests.has(fi),
-							usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
-						}), config.deadlineAt);
-						if (task.sessionFile) {
-							latestSessionFile = task.sessionFile;
-						}
-
-						const taskEndTime = Date.now();
-						const taskDuration = taskEndTime - taskStartTime;
-						const childTerminal = decideWorkflowChildTerminal(singleResult, { stopped, timedOut });
-						const childStopped = childTerminal.status === "stopped";
-
-						requiredStatusStep(statusPayload, fi).status = workflowStatusFromTerminal(childTerminal.status);
-						requiredStatusStep(statusPayload, fi).endedAt = taskEndTime;
-						requiredStatusStep(statusPayload, fi).durationMs = taskDuration;
-						requiredStatusStep(statusPayload, fi).exitCode = childTerminal.exitCode;
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "stopped", stopped || childStopped ? true : undefined);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudget", singleResult.toolBudget);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
-						if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
-						if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "sessionName", singleResult.sessionName);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "model", singleResult.model);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "childProfile", singleResult.childProfile ?? requiredStatusStep(statusPayload, fi).childProfile);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, fi).thinking));
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "attemptedModels", singleResult.attemptedModels);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "modelAttempts", singleResult.modelAttempts);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "contextOverflow", singleResult.contextOverflow);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "totalCost", singleResult.totalCost);
-						if (singleResult.totalCost) {
-							pendingParallelUsageCost = {
-								inputTokens: pendingParallelUsageCost.inputTokens + singleResult.totalCost.inputTokens,
-								outputTokens: pendingParallelUsageCost.outputTokens + singleResult.totalCost.outputTokens,
-								costUsd: pendingParallelUsageCost.costUsd + singleResult.totalCost.costUsd,
-							};
-							refreshUsageBudget();
-						}
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "error", childTerminal.error);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, fi).transcriptPath);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "transcriptError", singleResult.transcriptError);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "agentContract", singleResult.agentContract);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "launchResolvedExtensions", singleResult.launchResolvedExtensions);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "effects", singleResult.effects);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "execution", singleResult.execution);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "review", singleResult.review);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutput", singleResult.structuredOutput);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputPath", singleResult.structuredOutputPath);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptance", singleResult.acceptance);
-				if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, fi), "acceptanceInput", singleResult.acceptanceInput);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "timeoutRecovery", singleResult.timeoutRecovery);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityCeiling", singleResult.capabilityCeiling);
-						setOptionalProperty(requiredStatusStep(statusPayload, fi), "capabilityAudit", singleResult.capabilityAudit);
-						if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
-						if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
-						statusPayload.lastUpdate = taskEndTime;
-						writeStatusPayload();
-						appendCapabilityCeilingAppliedEvent(eventsPath, id, fi, task.agent, singleResult);
-
-						appendJsonl(eventsPath, JSON.stringify({
-							type: childTerminal.status === "stopped" ? "subagent.step.stopped" : childTerminal.status === "paused" ? "subagent.step.paused" : childTerminal.success ? "subagent.step.completed" : "subagent.step.failed",
-							ts: taskEndTime, runId: id, stepIndex: fi, agent: task.agent,
-							exitCode: childTerminal.exitCode, durationMs: taskDuration,
-						}));
-						if (childStopped) appendTerminalChildStatusEvent(fi, taskEndTime);
-						if (singleResult.completionGuardTriggered) {
-							const event = buildControlEvent(omitUndefinedProperties({
-								from: requiredStatusStep(statusPayload, fi).activityState,
-								to: "needs_attention",
-								runId: id,
-								agent: task.agent,
-								index: fi,
-								ts: taskEndTime,
-								message: `${task.agent} completed without making edits for an implementation task`,
-								reason: "completion_guard",
-							}));
-							appendControlEvent(event);
-						}
-
-						if (!childTerminal.success && childTerminal.status === "failed" && failFast) aborted = true;
-						return {
-							...singleResult,
-							output: childStopped ? stopMessage : childTerminal.execution.timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
-							error: childTerminal.error,
-							exitCode: childTerminal.exitCode,
-							interrupted: childTerminal.status === "paused",
-							timedOut: childTerminal.execution.timedOut,
-							stopped: childStopped,
-							skipped: false,
-						};
 					},
-					globalSemaphore,
-				);
-
-				flatIndex += group.parallel.length;
-
-				for (let t = 0; t < group.parallel.length; t++) {
-					const fi = groupStartFlatIndex + t;
-					const sessionTokens = config.sessionDir
-						? parseSessionTokens(path.join(config.sessionDir, `parallel-${t}`))
-						: null;
-					const fallbackTokens = tokenUsageFromAttempts(parallelResults[t]?.modelAttempts);
-					const observedTokens = requiredStatusStep(statusPayload, fi).tokens;
-					const taskTokens = sessionTokens ?? (fallbackTokens
-						? { ...fallbackTokens, ...(observedTokens?.window !== undefined ? { window: observedTokens.window } : {}), ...(observedTokens?.windowPeak !== undefined ? { windowPeak: observedTokens.windowPeak } : {}) }
-						: null);
-					if (!taskTokens) continue;
-					requiredStatusStep(statusPayload, fi).tokens = taskTokens;
-					previousCumulativeTokens = {
-						input: previousCumulativeTokens.input + taskTokens.input,
-						output: previousCumulativeTokens.output + taskTokens.output,
-						total: previousCumulativeTokens.total + taskTokens.total,
-						...(taskTokens.window !== undefined ? { window: taskTokens.window } : {}),
-						...(previousCumulativeTokens.windowPeak !== undefined || taskTokens.windowPeak !== undefined
-							? { windowPeak: Math.max(previousCumulativeTokens.windowPeak ?? 0, taskTokens.windowPeak ?? 0) }
-							: {}),
-					};
-				}
-				statusPayload.totalTokens = { ...previousCumulativeTokens };
-				statusPayload.lastUpdate = Date.now();
-				writeStatusPayload();
-
-				for (const pr of parallelResults) {
-					const terminal = decideWorkflowChildTerminal(pr);
-					results.push(omitUndefinedProperties({
-						agent: pr.agent,
-						context: pr.context,
-						agentContract: pr.agentContract,
-						launchContractDigest: pr.launchContractDigest,
-						childProfile: pr.childProfile,
-						launchResolvedExtensions: pr.launchResolvedExtensions,
-						output: pr.output,
-						outputState: pr.outputState,
-						error: pr.error,
-						protocolError: pr.protocolError,
-						success: terminal.success,
-						exitCode: terminal.exitCode,
-						skipped: pr.skipped,
-						interrupted: pr.interrupted,
-						timedOut: pr.timedOut,
-						stopped: pr.stopped,
-						toolBudget: pr.toolBudget,
-						toolBudgetBlocked: pr.toolBudgetBlocked,
-						sessionFile: pr.sessionFile,
-						intercomTarget: pr.intercomTarget,
-						model: pr.model,
-						attemptedModels: pr.attemptedModels,
-						modelAttempts: pr.modelAttempts,
-						contextOverflow: pr.contextOverflow,
-						totalCost: pr.totalCost,
-						usage: pr.usage,
-						artifactPaths: pr.artifactPaths,
-						transcriptPath: pr.transcriptPath,
-						transcriptError: pr.transcriptError,
-							effects: pr.effects,
-							execution: pr.execution,
-							review: pr.review,
-							timeoutRecovery: pr.timeoutRecovery,
-							structuredOutput: pr.structuredOutput,
-						structuredOutputPath: pr.structuredOutputPath,
-						structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
-						acceptance: pr.acceptance,
-						acceptanceInput: pr.acceptanceInput,
-					}));
-				}
-				pendingParallelUsageCost = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-				refreshUsageBudget();
-				for (let t = 0; t < group.parallel.length; t++) {
-					const outputName = group.parallel[t]?.outputName;
-					if (outputName) outputs[outputName] = outputEntryFromAsyncResult({
-						agent: parallelResults[t]!.agent,
-						output: parallelResults[t]!.output,
-						structuredOutput: parallelResults[t]!.structuredOutput,
-					}, stepIndex);
-				}
-				statusPayload.outputs = outputs;
-
-				previousOutput = aggregateParallelOutputs(
-					parallelResults.map((r) => omitUndefinedProperties({
-						agent: r.agent,
-						output: r.output,
-						exitCode: r.exitCode,
-						error: r.error,
-						model: r.model,
-						attemptedModels: r.attemptedModels,
-					})),
-				);
-				if (worktreeSetup) {
-					const captured = captureParallelWorktreeDiffs(worktreeSetup, asyncDir, stepIndex, group);
-					if (captured.summary) previousOutput = `${previousOutput}\n\n${captured.summary}`;
-					worktreeFinalized = true;
-					const manifestPath = parallelHandoffPath(asyncDir);
-					const handoff = {
-						manifestPath,
-						runId: id,
-						mode: statusPayload.mode === "parallel" ? "parallel" as const : "chain" as const,
-						source: "async" as const,
-						cwd,
-						stepIndex,
-						flatStartIndex: groupStartFlatIndex,
-						setup: worktreeSetup,
-						diffs: captured.diffs,
-						results: parallelResults.map((result) => {
-							const processStopped = result.exitCode !== 0 && isUnexplainedProcessSignal(omitUndefinedProperties({
-								processSignal: result.processSignal,
-								interrupted: result.interrupted,
-								timedOut: result.timedOut,
-								stopped: result.stopped,
-							}));
-							const terminal = decideWorkflowChildTerminal(result, { stopped: result.stopped === true || processStopped });
-							return {
-								agent: result.agent,
-								...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
-								...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
-								...(config.lane ? { lane: config.lane } : {}),
-								status: handoffStatusFromTerminal(terminal.status),
-								summary: result.output || result.error || "(no output)",
-								...(result.artifactPaths?.outputPath ? { outputPath: result.artifactPaths.outputPath } : {}),
-								...(result.structuredOutput !== undefined ? { structuredOutput: result.structuredOutput } : {}),
-								...(result.structuredOutputPath ? { structuredOutputPath: result.structuredOutputPath } : {}),
-								...(result.sessionFile ? { sessionPath: result.sessionFile } : {}),
-							};
-						}),
-					};
-					try {
-						writeParallelHandoffGroup(handoff);
-						const cleanup = cleanupWorktrees(worktreeSetup, { kind: "preserve", capturedDiffs: captured.diffs, handoffManifestPath: manifestPath });
-						statusPayload.parallelHandoff = writeParallelHandoffGroup({ ...handoff, cleanup });
-						previousOutput = `${previousOutput}\n\n${formatParallelHandoffReference(statusPayload.parallelHandoff)}`;
-					} catch (error) {
-						previousOutput = `${previousOutput}\n\n${formatParallelHandoffError(error)}`;
-					}
-					writeStatusPayload();
-				}
-
-				appendJsonl(eventsPath, JSON.stringify({
-					type: "subagent.parallel.completed",
-					ts: Date.now(),
-					runId: id,
-					stepIndex,
-					success: parallelResults.every((result) => result.exitCode === -1 || decideWorkflowChildTerminal(result).success),
 				}));
-
-				if (parallelResults.some((result) => result.exitCode !== -1 && !decideWorkflowChildTerminal(result).success)) {
-					break;
-				}
-			} finally {
-				if (worktreeSetup && !worktreeFinalized) cleanupWorktrees(worktreeSetup);
-			}
-		} else {
-			const seqStep = step as SubagentStep;
-			if (timedOut) {
-				results.push(timedOutStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
-				flatIndex++;
-				continue;
-			}
-			if (stopped) {
-				results.push(stoppedStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
-				flatIndex++;
-				continue;
-			}
-			if (childStopRequests.has(flatIndex)) {
-				results.push(childStopResult(flatIndex, seqStep.agent, seqStep.context));
-				flatIndex++;
-				continue;
-			}
-			if (interrupted) {
-				results.push(pausedStepResult(seqStep.agent, seqStep.context, seqStep.sessionName));
-				flatIndex++;
-				continue;
-			}
-			let singleWorktreeSetup: WorktreeSetup | undefined;
-			if (seqStep.worktree) {
-				try {
-					singleWorktreeSetup = createWorktrees(cwd, `${id}-s${stepIndex}`, 1, omitUndefinedProperties({
-						agents: [seqStep.agent],
-						setupHook: config.worktreeSetupHook
-							? omitUndefinedProperties({ hookPath: config.worktreeSetupHook, timeoutMs: config.worktreeSetupHookTimeoutMs })
-							: undefined,
-						baseDir: config.worktreeBaseDir,
-						beforeCreate: (plannedSetup) => {
-							const worktree = plannedSetup.worktrees[0];
-							if (worktree) {
-								setStatusWorktreeReference(requiredStatusStep(statusPayload, flatIndex), worktree);
-							}
-							const pendingHandoff = writePendingParallelHandoff({
-								manifestPath: parallelHandoffPath(asyncDir),
-								runId: id,
-								mode: "single",
-								source: "async",
-								cwd,
-								stepIndex,
-								flatStartIndex: flatIndex,
-								setup: plannedSetup,
-								laneBindings: handoffWorkflowKey || config.lane ? [{ index: flatIndex, taskIndex: 0, ...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}), ...(handoffChildRunId ? { runId: handoffChildRunId } : {}), ...(config.lane ? { lane: config.lane } : {}) }] : undefined,
-							});
-							statusPayload.parallelHandoff = pendingHandoff;
-							statusPayload.lastUpdate = Date.now();
-							writeStatusPayload();
-						},
-					}));
-				} catch (error) {
-					if (singleWorktreeSetup) cleanupWorktrees(singleWorktreeSetup);
-					throw error;
-				}
-			}
-			const singleCwd = singleWorktreeSetup?.worktrees[0]?.agentCwd ?? cwd;
-			const stepStartTime = Date.now();
-			statusPayload.currentStep = flatIndex;
-			requiredStatusStep(statusPayload, flatIndex).status = "running";
-			delete requiredStatusStep(statusPayload, flatIndex).activityState;
-			delete statusPayload.activityState;
-			resetStepLiveDetail(requiredStatusStep(statusPayload, flatIndex));
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "skills", seqStep.skills);
-			requiredStatusStep(statusPayload, flatIndex).startedAt = stepStartTime;
-			requiredStatusStep(statusPayload, flatIndex).lastActivityAt = stepStartTime;
-			statusPayload.lastActivityAt = stepStartTime;
-			statusPayload.lastUpdate = stepStartTime;
-			statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
-			writeStatusPayload();
-
-			appendJsonl(eventsPath, JSON.stringify({
-				type: "subagent.step.started",
-				ts: stepStartTime,
-				runId: id,
-				stepIndex: flatIndex,
-				agent: seqStep.agent,
-			}));
-
-			flushPendingStepSteers(flatIndex);
-			const executionStep = singleWorktreeSetup ? { ...seqStep, cwd: singleCwd } : seqStep;
-			let singleResult: Awaited<ReturnType<typeof runSingleStepWithTimeout>>;
-			try {
-				singleResult = await runSingleStepWithTimeout(executionStep, compactOptional<SingleStepContext>({
-				previousOutput, placeholder, cwd: singleCwd, sessionEnabled,
-				outputs: statusPayload.mode === "single" ? undefined : outputs,
-				sessionDir: config.sessionDir,
-				artifactsDir, artifactConfig, id,
-				flatIndex, flatStepCount: Math.max(statusPayload.steps.length, 1),
-				outputFile: path.join(asyncDir, `output-${flatIndex}.log`),
-				steerInboxDir: stepSteerInboxDir(asyncDir, flatIndex),
-				steerCapabilityPath: steerCapabilityPath(asyncDir, flatIndex),
-				steerAckDir: steerAcksDir(asyncDir, flatIndex),
-				piPackageRoot: config.piPackageRoot,
-				piArgv1: config.piArgv1,
-				childIntercomTarget: config.childIntercomTargets?.[flatIndex],
-				orchestratorIntercomTarget: config.controlIntercomTarget,
-				nestedRoute: config.nestedRoute,
-				capabilityCeiling: config.capabilityCeiling,
-				runFanoutBudget: config.runFanoutBudget,
-				registerInterrupt: (interrupt) => registerStepInterrupt(flatIndex, interrupt),
-				registerTimeout: (interrupt) => registerStepTimeout(flatIndex, interrupt),
-				registerStop: (stop) => registerStepStop(flatIndex, stop),
-				timeoutSignal: timeoutAbortController.signal,
-				stopSignal: stopAbortController.signal,
-				timeoutMessage,
-				stopMessage,
-				toolTimeoutMs: seqStep.toolTimeoutMs ?? config.toolTimeoutMs,
-				onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking, attempt.contextLimit),
-				onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
-				onWriterProcess,
-				onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
-				onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
-				skipAcceptance: () => timedOut || stopped || childStopRequests.has(flatIndex),
-				usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
-				}), config.deadlineAt);
 			} catch (error) {
 				if (singleWorktreeSetup) cleanupWorktrees(singleWorktreeSetup);
 				throw error;
 			}
-			if (seqStep.sessionFile) {
-				latestSessionFile = seqStep.sessionFile;
-			}
+		}
+		const singleCwd = singleWorktreeSetup?.worktrees[0]?.agentCwd ?? cwd;
+		const stepStartTime = Date.now();
+		statusPayload.currentStep = flatIndex;
+		requiredStatusStep(statusPayload, flatIndex).status = "running";
+		delete requiredStatusStep(statusPayload, flatIndex).activityState;
+		delete statusPayload.activityState;
+		resetStepLiveDetail(requiredStatusStep(statusPayload, flatIndex));
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "skills", seqStep.skills);
+		requiredStatusStep(statusPayload, flatIndex).startedAt = stepStartTime;
+		requiredStatusStep(statusPayload, flatIndex).lastActivityAt = stepStartTime;
+		statusPayload.lastActivityAt = stepStartTime;
+		statusPayload.lastUpdate = stepStartTime;
+		statusPayload.outputFile = path.join(asyncDir, `output-${flatIndex}.log`);
+		writeStatusPayload();
 
-			previousOutput = singleResult.output;
-			const singleTerminal = decideWorkflowChildTerminal(singleResult, { stopped, timedOut });
-			const childStopped = singleTerminal.status === "stopped";
-			results.push(omitUndefinedProperties({
+		appendJsonl(eventsPath, JSON.stringify({
+			type: "subagent.step.started",
+			ts: stepStartTime,
+			runId: id,
+			stepIndex: flatIndex,
+			agent: seqStep.agent,
+		}));
+
+		flushPendingStepSteers(flatIndex);
+		const executionStep = singleWorktreeSetup ? { ...seqStep, cwd: singleCwd } : seqStep;
+		let singleResult: Awaited<ReturnType<typeof runSingleStepWithTimeout>>;
+		try {
+			singleResult = await runSingleStepWithTimeout(executionStep, compactOptional<SingleStepContext>({
+			previousOutput, placeholder, cwd: singleCwd, sessionEnabled,
+			outputs: statusPayload.mode === "single" ? undefined : outputs,
+			sessionDir: config.sessionDir,
+			artifactsDir, artifactConfig, id,
+			flatIndex, flatStepCount: Math.max(statusPayload.steps.length, 1),
+			outputFile: path.join(asyncDir, `output-${flatIndex}.log`),
+			steerInboxDir: stepSteerInboxDir(asyncDir, flatIndex),
+			steerCapabilityPath: steerCapabilityPath(asyncDir, flatIndex),
+			steerAckDir: steerAcksDir(asyncDir, flatIndex),
+			piPackageRoot: config.piPackageRoot,
+			piArgv1: config.piArgv1,
+			childIntercomTarget: config.childIntercomTargets?.[flatIndex],
+			orchestratorIntercomTarget: config.controlIntercomTarget,
+			nestedRoute: config.nestedRoute,
+			capabilityCeiling: config.capabilityCeiling,
+			runFanoutBudget: config.runFanoutBudget,
+			registerInterrupt: (interrupt) => registerStepInterrupt(flatIndex, interrupt),
+			registerTimeout: (interrupt) => registerStepTimeout(flatIndex, interrupt),
+			registerStop: (stop) => registerStepStop(flatIndex, stop),
+			timeoutSignal: timeoutAbortController.signal,
+			stopSignal: stopAbortController.signal,
+			timeoutMessage,
+			stopMessage,
+			toolTimeoutMs: seqStep.toolTimeoutMs ?? config.toolTimeoutMs,
+			onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt.model, attempt.thinking, attempt.contextLimit),
+			onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
+			onWriterProcess,
+			onExternalProcess: (process) => updateExternalProcess(flatIndex, process),
+			onExternalJob: (externalJob) => updateExternalJob(flatIndex, externalJob),
+			skipAcceptance: () => timedOut || stopped || childStopRequests.has(flatIndex),
+			usageBudgetExhausted: () => refreshUsageBudget()?.exhausted === true,
+			}), config.deadlineAt);
+		} catch (error) {
+			if (singleWorktreeSetup) cleanupWorktrees(singleWorktreeSetup);
+			throw error;
+		}
+		if (seqStep.sessionFile) {
+			latestSessionFile = seqStep.sessionFile;
+		}
+
+		previousOutput = singleResult.output;
+		const singleTerminal = decideWorkflowChildTerminal(singleResult, { stopped, timedOut });
+		const childStopped = singleTerminal.status === "stopped";
+		results.push(omitUndefinedProperties({
+			agent: singleResult.agent,
+			...(singleResult.sessionName ? { sessionName: singleResult.sessionName } : {}),
+			context: singleResult.context,
+			agentContract: singleResult.agentContract,
+			launchContractDigest: singleResult.launchContractDigest,
+			childProfile: singleResult.childProfile,
+			launchResolvedExtensions: singleResult.launchResolvedExtensions,
+			runtimeAcknowledgedExtensions: singleResult.runtimeAcknowledgedExtensions,
+			output: stopped || childStopped ? stopMessage : timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
+			outputState: singleResult.outputState,
+			error: singleTerminal.error,
+			protocolError: singleResult.protocolError,
+			success: singleTerminal.success,
+			exitCode: singleTerminal.exitCode,
+			sessionFile: singleResult.sessionFile,
+			intercomTarget: singleResult.intercomTarget,
+			model: singleResult.model,
+			attemptedModels: singleResult.attemptedModels,
+			modelAttempts: singleResult.modelAttempts,
+			contextOverflow: singleResult.contextOverflow,
+			totalCost: singleResult.totalCost,
+			usage: singleResult.usage,
+			artifactPaths: singleResult.artifactPaths,
+			transcriptPath: singleResult.transcriptPath,
+			transcriptError: singleResult.transcriptError,
+			effects: singleResult.effects,
+			execution: singleResult.execution,
+			review: singleResult.review,
+			timeoutRecovery: singleResult.timeoutRecovery,
+			structuredOutput: singleResult.structuredOutput,
+			structuredOutputPath: singleResult.structuredOutputPath,
+			structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
+			acceptance: singleResult.acceptance,
+			acceptanceInput: singleResult.acceptanceInput,
+			capabilityCeiling: singleResult.capabilityCeiling,
+			capabilityAudit: singleResult.capabilityAudit,
+			interrupted: singleResult.interrupted,
+			timedOut: timedOut || singleResult.timedOut ? true : undefined,
+			stopped: stopped || childStopped ? true : undefined,
+			toolBudget: singleResult.toolBudget,
+			toolBudgetBlocked: singleResult.toolBudgetBlocked,
+			runner: singleResult.runner,
+			externalProcess: singleResult.externalProcess,
+			externalJob: singleResult.externalJob,
+		}));
+		if (seqStep.outputName) {
+			outputs[seqStep.outputName] = outputEntryFromAsyncResult({
 				agent: singleResult.agent,
-				...(singleResult.sessionName ? { sessionName: singleResult.sessionName } : {}),
-				context: singleResult.context,
-				agentContract: singleResult.agentContract,
-				launchContractDigest: singleResult.launchContractDigest,
-				childProfile: singleResult.childProfile,
-				launchResolvedExtensions: singleResult.launchResolvedExtensions,
-				runtimeAcknowledgedExtensions: singleResult.runtimeAcknowledgedExtensions,
-				output: stopped || childStopped ? stopMessage : timedOut ? singleResult.output || (timeoutMessage ?? "Subagent timed out.") : singleResult.output,
-				outputState: singleResult.outputState,
-				error: singleTerminal.error,
-				protocolError: singleResult.protocolError,
-				success: singleTerminal.success,
-				exitCode: singleTerminal.exitCode,
-				sessionFile: singleResult.sessionFile,
-				intercomTarget: singleResult.intercomTarget,
-				model: singleResult.model,
-				attemptedModels: singleResult.attemptedModels,
-				modelAttempts: singleResult.modelAttempts,
-				contextOverflow: singleResult.contextOverflow,
-				totalCost: singleResult.totalCost,
-				usage: singleResult.usage,
-				artifactPaths: singleResult.artifactPaths,
-				transcriptPath: singleResult.transcriptPath,
-				transcriptError: singleResult.transcriptError,
-				effects: singleResult.effects,
-				execution: singleResult.execution,
-				review: singleResult.review,
-				timeoutRecovery: singleResult.timeoutRecovery,
+				output: singleResult.output,
 				structuredOutput: singleResult.structuredOutput,
-				structuredOutputPath: singleResult.structuredOutputPath,
-				structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
-				acceptance: singleResult.acceptance,
-				acceptanceInput: singleResult.acceptanceInput,
-				capabilityCeiling: singleResult.capabilityCeiling,
-				capabilityAudit: singleResult.capabilityAudit,
-				interrupted: singleResult.interrupted,
-				timedOut: timedOut || singleResult.timedOut ? true : undefined,
-				stopped: stopped || childStopped ? true : undefined,
-				toolBudget: singleResult.toolBudget,
-				toolBudgetBlocked: singleResult.toolBudgetBlocked,
-				runner: singleResult.runner,
-				externalProcess: singleResult.externalProcess,
-				externalJob: singleResult.externalJob,
-			}));
-			if (seqStep.outputName) {
-				outputs[seqStep.outputName] = outputEntryFromAsyncResult({
-					agent: singleResult.agent,
-					output: singleResult.output,
-					structuredOutput: singleResult.structuredOutput,
-				}, stepIndex);
-			}
-			statusPayload.outputs = outputs;
+			}, stepIndex);
+		}
+		statusPayload.outputs = outputs;
 
-			const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
-			let stepTokens: TokenUsage | null = cumulativeTokens
-				? {
-						input: cumulativeTokens.input - previousCumulativeTokens.input,
-						output: cumulativeTokens.output - previousCumulativeTokens.output,
-						total: cumulativeTokens.total - previousCumulativeTokens.total,
-						...(cumulativeTokens.window !== undefined ? { window: cumulativeTokens.window } : {}),
-						...(cumulativeTokens.windowPeak !== undefined ? { windowPeak: cumulativeTokens.windowPeak } : {}),
-					}
+		const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
+		let stepTokens: TokenUsage | null = cumulativeTokens
+			? {
+					input: cumulativeTokens.input - previousCumulativeTokens.input,
+					output: cumulativeTokens.output - previousCumulativeTokens.output,
+					total: cumulativeTokens.total - previousCumulativeTokens.total,
+					...(cumulativeTokens.window !== undefined ? { window: cumulativeTokens.window } : {}),
+					...(cumulativeTokens.windowPeak !== undefined ? { windowPeak: cumulativeTokens.windowPeak } : {}),
+				}
+			: null;
+		if (cumulativeTokens) {
+			previousCumulativeTokens = cumulativeTokens;
+		} else {
+			const fallbackTokens = tokenUsageFromAttempts(singleResult.modelAttempts);
+			const observedTokens = requiredStatusStep(statusPayload, flatIndex).tokens;
+			stepTokens = fallbackTokens
+				? { ...fallbackTokens, ...(observedTokens?.window !== undefined ? { window: observedTokens.window } : {}), ...(observedTokens?.windowPeak !== undefined ? { windowPeak: observedTokens.windowPeak } : {}) }
 				: null;
-			if (cumulativeTokens) {
-				previousCumulativeTokens = cumulativeTokens;
-			} else {
-				const fallbackTokens = tokenUsageFromAttempts(singleResult.modelAttempts);
-				const observedTokens = requiredStatusStep(statusPayload, flatIndex).tokens;
-				stepTokens = fallbackTokens
-					? { ...fallbackTokens, ...(observedTokens?.window !== undefined ? { window: observedTokens.window } : {}), ...(observedTokens?.windowPeak !== undefined ? { windowPeak: observedTokens.windowPeak } : {}) }
-					: null;
-				if (stepTokens) {
-					previousCumulativeTokens = {
-						input: previousCumulativeTokens.input + stepTokens.input,
-						output: previousCumulativeTokens.output + stepTokens.output,
-						total: previousCumulativeTokens.total + stepTokens.total,
-						...(stepTokens.window !== undefined ? { window: stepTokens.window } : {}),
-						...(previousCumulativeTokens.windowPeak !== undefined || stepTokens.windowPeak !== undefined
-							? { windowPeak: Math.max(previousCumulativeTokens.windowPeak ?? 0, stepTokens.windowPeak ?? 0) }
-							: {}),
-					};
-				}
-			}
-
-			const stepEndTime = Date.now();
-			requiredStatusStep(statusPayload, flatIndex).status = workflowStatusFromTerminal(singleTerminal.status);
-			requiredStatusStep(statusPayload, flatIndex).endedAt = stepEndTime;
-			requiredStatusStep(statusPayload, flatIndex).durationMs = stepEndTime - stepStartTime;
-			requiredStatusStep(statusPayload, flatIndex).exitCode = singleTerminal.exitCode;
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "stopped", stopped || childStopped ? true : undefined);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudget", singleResult.toolBudget);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
-			if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
-			if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "sessionName", singleResult.sessionName);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "model", singleResult.model);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "childProfile", singleResult.childProfile ?? requiredStatusStep(statusPayload, flatIndex).childProfile);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, flatIndex).thinking));
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "attemptedModels", singleResult.attemptedModels);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "modelAttempts", singleResult.modelAttempts);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "contextOverflow", singleResult.contextOverflow);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "totalCost", singleResult.totalCost);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "error", singleTerminal.error);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, flatIndex).transcriptPath);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptError", singleResult.transcriptError);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "agentContract", singleResult.agentContract);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "launchResolvedExtensions", singleResult.launchResolvedExtensions);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "effects", singleResult.effects);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "execution", singleResult.execution);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "review", singleResult.review);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutput", singleResult.structuredOutput);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputPath", singleResult.structuredOutputPath);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptance", singleResult.acceptance);
-			if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptanceInput", singleResult.acceptanceInput);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timeoutRecovery", singleResult.timeoutRecovery);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityCeiling", singleResult.capabilityCeiling);
-			setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityAudit", singleResult.capabilityAudit);
-			if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
-			if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
 			if (stepTokens) {
-				requiredStatusStep(statusPayload, flatIndex).tokens = stepTokens;
-				statusPayload.totalTokens = { ...previousCumulativeTokens };
-			}
-			statusPayload.lastUpdate = stepEndTime;
-			writeStatusPayload();
-			appendCapabilityCeilingAppliedEvent(eventsPath, id, flatIndex, seqStep.agent, singleResult);
-
-			appendJsonl(eventsPath, JSON.stringify({
-				type: singleTerminal.status === "stopped" ? "subagent.step.stopped" : singleTerminal.status === "paused" ? "subagent.step.paused" : singleTerminal.success ? "subagent.step.completed" : "subagent.step.failed",
-				ts: stepEndTime,
-				runId: id,
-				stepIndex: flatIndex,
-				agent: seqStep.agent,
-				exitCode: singleTerminal.exitCode,
-				durationMs: stepEndTime - stepStartTime,
-				tokens: stepTokens,
-			}));
-			if (stopped || childStopped) appendTerminalChildStatusEvent(flatIndex, stepEndTime);
-			if (singleWorktreeSetup && !singleResult.detached) {
-				const diffs = diffWorktrees(singleWorktreeSetup, [seqStep.agent], path.join(asyncDir, "worktree-diffs", `step-${stepIndex}`));
-				const diffSummary = formatWorktreeDiffSummary(diffs);
-				const manifestPath = parallelHandoffPath(asyncDir);
-				const handoff = {
-					manifestPath,
-					runId: id,
-					mode: "single" as const,
-					source: "async" as const,
-					cwd,
-					stepIndex,
-					flatStartIndex: flatIndex,
-					setup: singleWorktreeSetup,
-					diffs,
-					results: [{
-						agent: singleResult.agent,
-						...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
-						...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
-						...(config.lane ? { lane: config.lane } : {}),
-						status: handoffStatusFromTerminal(singleTerminal.status),
-						summary: singleResult.output || singleResult.error || "(no output)",
-						...(singleResult.artifactPaths?.outputPath ? { outputPath: singleResult.artifactPaths.outputPath } : {}),
-						...(singleResult.structuredOutput !== undefined ? { structuredOutput: singleResult.structuredOutput } : {}),
-						...(singleResult.structuredOutputPath ? { structuredOutputPath: singleResult.structuredOutputPath } : {}),
-						...(singleResult.sessionFile ? { sessionPath: singleResult.sessionFile } : {}),
-					}],
+				previousCumulativeTokens = {
+					input: previousCumulativeTokens.input + stepTokens.input,
+					output: previousCumulativeTokens.output + stepTokens.output,
+					total: previousCumulativeTokens.total + stepTokens.total,
+					...(stepTokens.window !== undefined ? { window: stepTokens.window } : {}),
+					...(previousCumulativeTokens.windowPeak !== undefined || stepTokens.windowPeak !== undefined
+						? { windowPeak: Math.max(previousCumulativeTokens.windowPeak ?? 0, stepTokens.windowPeak ?? 0) }
+						: {}),
 				};
-				try {
-					writeParallelHandoffGroup(handoff);
-					const cleanup = cleanupWorktrees(singleWorktreeSetup, {
-						kind: "preserve",
-						capturedDiffs: diffs,
-						handoffManifestPath: manifestPath,
-						...(config.parentWorkflowRunId && singleResult.sessionFile && fs.existsSync(singleResult.sessionFile) && !singleResult.stopped
-							? { cleanupBlocker: "retained child resume requires managed worktree cwd" }
-							: {}),
-					});
-					statusPayload.parallelHandoff = writeParallelHandoffGroup({ ...handoff, cleanup });
-					previousOutput = [previousOutput, diffSummary, formatParallelHandoffReference(statusPayload.parallelHandoff)].filter(Boolean).join("\n\n");
-				} catch (error) {
-					previousOutput = [previousOutput, diffSummary, formatParallelHandoffError(error)].filter(Boolean).join("\n\n");
-				}
-				writeStatusPayload();
-			}
-
-			if (singleResult.completionGuardTriggered) {
-				const event = buildControlEvent(omitUndefinedProperties({
-					from: requiredStatusStep(statusPayload, flatIndex).activityState,
-					to: "needs_attention",
-					runId: id,
-					agent: seqStep.agent,
-					index: flatIndex,
-					ts: stepEndTime,
-					message: `${seqStep.agent} completed without making edits for an implementation task`,
-					reason: "completion_guard",
-				}));
-				appendControlEvent(event);
-			}
-
-			flatIndex++;
-			if (!singleTerminal.success && singleTerminal.status === "failed") {
-				break;
 			}
 		}
+
+		const stepEndTime = Date.now();
+		requiredStatusStep(statusPayload, flatIndex).status = workflowStatusFromTerminal(singleTerminal.status);
+		requiredStatusStep(statusPayload, flatIndex).endedAt = stepEndTime;
+		requiredStatusStep(statusPayload, flatIndex).durationMs = stepEndTime - stepStartTime;
+		requiredStatusStep(statusPayload, flatIndex).exitCode = singleTerminal.exitCode;
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timedOut", timedOut || singleResult.timedOut ? true : undefined);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "stopped", stopped || childStopped ? true : undefined);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudget", singleResult.toolBudget);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "toolBudgetBlocked", singleResult.toolBudgetBlocked);
+		if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
+		if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "sessionName", singleResult.sessionName);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "model", singleResult.model);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "childProfile", singleResult.childProfile ?? requiredStatusStep(statusPayload, flatIndex).childProfile);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "thinking", resolveEffectiveThinking(singleResult.model, requiredStatusStep(statusPayload, flatIndex).thinking));
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "attemptedModels", singleResult.attemptedModels);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "modelAttempts", singleResult.modelAttempts);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "contextOverflow", singleResult.contextOverflow);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "totalCost", singleResult.totalCost);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "error", singleTerminal.error);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptPath", singleResult.transcriptPath ?? requiredStatusStep(statusPayload, flatIndex).transcriptPath);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "transcriptError", singleResult.transcriptError);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "agentContract", singleResult.agentContract);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "launchResolvedExtensions", singleResult.launchResolvedExtensions);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "runtimeAcknowledgedExtensions", singleResult.runtimeAcknowledgedExtensions);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "effects", singleResult.effects);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "execution", singleResult.execution);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "review", singleResult.review);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutput", singleResult.structuredOutput);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputPath", singleResult.structuredOutputPath);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "structuredOutputSchemaPath", singleResult.structuredOutputSchemaPath);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptance", singleResult.acceptance);
+		if (singleResult.acceptanceInput !== undefined) setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "acceptanceInput", singleResult.acceptanceInput);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "timeoutRecovery", singleResult.timeoutRecovery);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityCeiling", singleResult.capabilityCeiling);
+		setOptionalProperty(requiredStatusStep(statusPayload, flatIndex), "capabilityAudit", singleResult.capabilityAudit);
+		if (singleResult.capabilityCeiling) statusPayload.capabilityCeiling = singleResult.capabilityCeiling;
+		if (singleResult.capabilityAudit) statusPayload.capabilityAudit = singleResult.capabilityAudit;
+		if (stepTokens) {
+			requiredStatusStep(statusPayload, flatIndex).tokens = stepTokens;
+			statusPayload.totalTokens = { ...previousCumulativeTokens };
+		}
+		statusPayload.lastUpdate = stepEndTime;
+		writeStatusPayload();
+		appendCapabilityCeilingAppliedEvent(eventsPath, id, flatIndex, seqStep.agent, singleResult);
+
+		appendJsonl(eventsPath, JSON.stringify({
+			type: singleTerminal.status === "stopped" ? "subagent.step.stopped" : singleTerminal.status === "paused" ? "subagent.step.paused" : singleTerminal.success ? "subagent.step.completed" : "subagent.step.failed",
+			ts: stepEndTime,
+			runId: id,
+			stepIndex: flatIndex,
+			agent: seqStep.agent,
+			exitCode: singleTerminal.exitCode,
+			durationMs: stepEndTime - stepStartTime,
+			tokens: stepTokens,
+		}));
+		if (stopped || childStopped) appendTerminalChildStatusEvent(flatIndex, stepEndTime);
+		if (singleWorktreeSetup && !singleResult.detached) {
+			const diffs = diffWorktrees(singleWorktreeSetup, [seqStep.agent], path.join(asyncDir, "worktree-diffs", `step-${stepIndex}`));
+			const diffSummary = formatWorktreeDiffSummary(diffs);
+			const manifestPath = parallelHandoffPath(asyncDir);
+			const handoff = {
+				manifestPath,
+				runId: id,
+				mode: "single" as const,
+				source: "async" as const,
+				cwd,
+				stepIndex,
+				flatStartIndex: flatIndex,
+				setup: singleWorktreeSetup,
+				diffs,
+				results: [{
+					agent: singleResult.agent,
+					...(handoffWorkflowKey ? { workflowKey: handoffWorkflowKey } : {}),
+					...(handoffChildRunId ? { runId: handoffChildRunId } : {}),
+					...(config.lane ? { lane: config.lane } : {}),
+					status: handoffStatusFromTerminal(singleTerminal.status),
+					summary: singleResult.output || singleResult.error || "(no output)",
+					...(singleResult.artifactPaths?.outputPath ? { outputPath: singleResult.artifactPaths.outputPath } : {}),
+					...(singleResult.structuredOutput !== undefined ? { structuredOutput: singleResult.structuredOutput } : {}),
+					...(singleResult.structuredOutputPath ? { structuredOutputPath: singleResult.structuredOutputPath } : {}),
+					...(singleResult.sessionFile ? { sessionPath: singleResult.sessionFile } : {}),
+				}],
+			};
+			try {
+				writeParallelHandoffGroup(handoff);
+				const cleanup = cleanupWorktrees(singleWorktreeSetup, {
+					kind: "preserve",
+					capturedDiffs: diffs,
+					handoffManifestPath: manifestPath,
+					...(config.parentWorkflowRunId && singleResult.sessionFile && fs.existsSync(singleResult.sessionFile) && !singleResult.stopped
+						? { cleanupBlocker: "retained child resume requires managed worktree cwd" }
+						: {}),
+				});
+				statusPayload.parallelHandoff = writeParallelHandoffGroup({ ...handoff, cleanup });
+				previousOutput = [previousOutput, diffSummary, formatParallelHandoffReference(statusPayload.parallelHandoff)].filter(Boolean).join("\n\n");
+			} catch (error) {
+				previousOutput = [previousOutput, diffSummary, formatParallelHandoffError(error)].filter(Boolean).join("\n\n");
+			}
+			writeStatusPayload();
+		}
+
+		if (singleResult.completionGuardTriggered) {
+			const event = buildControlEvent(omitUndefinedProperties({
+				from: requiredStatusStep(statusPayload, flatIndex).activityState,
+				to: "needs_attention",
+				runId: id,
+				agent: seqStep.agent,
+				index: flatIndex,
+				ts: stepEndTime,
+				message: `${seqStep.agent} completed without making edits for an implementation task`,
+				reason: "completion_guard",
+			}));
+			appendControlEvent(event);
+		}
+
+		flatIndex++;
+		if (!singleTerminal.success && singleTerminal.status === "failed") {
+			break;
+		}
+
 	}
 
 	let summary = results.map((r) => `${r.agent}:\n${r.output || (r.exitCode !== 0 ? r.error : undefined) || "(no output)"}`).join("\n\n");
@@ -5278,7 +4073,6 @@ async function runSubagentInner(
 	setOptionalProperty(statusPayload, "shareUrl", shareUrl);
 	setOptionalProperty(statusPayload, "gistUrl", gistUrl);
 	setOptionalProperty(statusPayload, "shareError", shareError);
-	for (const step of flattenSteps(steps)) cleanupManagedSingleOutput(step.outputPath, step.managedOutputReservation);
 	if ((statusPayload.state === "failed" || statusPayload.state === "partial") && !statusPayload.error) {
 		const concreteFailure = results.find(concreteFailureResult);
 		const failedStep = concreteFailure ? undefined : statusPayload.steps.find((s) => s.status === "failed");
@@ -5456,9 +4250,10 @@ async function runSubagent(
 	config: SubagentRunConfig,
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
 ): Promise<void> {
-	const ownedManagedOutputs: Array<{ outputPath: string; reservation: NonNullable<SubagentStep["managedOutputReservation"]> }> = flattenSteps(config.steps).flatMap((step) => step.outputPath && step.managedOutputReservation ? [{ outputPath: step.outputPath, reservation: step.managedOutputReservation }] : []);
+	const step = config.steps[0];
+	const ownedManagedOutputs: Array<{ outputPath: string; reservation: NonNullable<SubagentStep["managedOutputReservation"]> }> = step.outputPath && step.managedOutputReservation ? [{ outputPath: step.outputPath, reservation: step.managedOutputReservation }] : [];
 	try {
-		await runSubagentInner(config, onWriterProcess, ownedManagedOutputs);
+		await runSubagentInner(config, onWriterProcess);
 	} finally {
 		for (const entry of ownedManagedOutputs) cleanupManagedSingleOutput(entry.outputPath, entry.reservation);
 	}

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { findConfiguredProjectRoot } from "../../agents/agents.ts";
-import { getAgentDir, getConfigDirName, getProjectConfigDir } from "../../shared/utils.ts";
+import { getAgentDir, getConfigDirName, getProjectConfigDir } from "../../shared/config-paths.ts";
 
 const PACKAGE_CONFIG_ROOT = "npm";
 const PACKAGE_GIT_ROOT = "git";

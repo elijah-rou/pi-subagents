@@ -5,7 +5,7 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validatePermissionRules, type PermissionRules } from "../runs/shared/permissions.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import { BUILTIN_AGENT_NAMES } from "./builtin-names.ts";
-import type { AgentConfig, AgentDefaultContext, AgentDiscoveryDiagnostic } from "./agents.ts";
+import type { AgentConfig, AgentDefaultContext, AgentDiscoveryDiagnostic } from "./agent-contract.ts";
 
 export const RUNTIME_AGENT_REGISTRY_KEY = "pi-subagents.runtime-agents.v1";
 

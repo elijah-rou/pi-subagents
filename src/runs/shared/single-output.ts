@@ -2,17 +2,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
+import type { SingleOutputSnapshot } from "../../shared/core-contracts.ts";
+export type { SingleOutputSnapshot } from "../../shared/core-contracts.ts";
 import { hasMutationToolCapability } from "./completion-guard.ts";
-
-export interface SingleOutputSnapshot {
-	exists: boolean;
-	managed?: boolean;
-	mtimeMs?: number;
-	size?: number;
-	device?: number;
-	inode?: number;
-	ownedPlaceholder?: boolean;
-}
 
 /**
  * Content the child itself sent to the configured output path, taken from its

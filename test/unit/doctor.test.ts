@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { buildDoctorReport } from "../../src/extension/doctor.ts";
-import type { AgentConfig, ChainConfig } from "../../src/agents/agents.ts";
+import type { AgentConfig, ChainConfig } from "../../src/agents/agent-contract.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function makeState(cwd: string): SubagentState {

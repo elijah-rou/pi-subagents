@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { parseFrontmatter } from "./frontmatter.ts";
-import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+import { getAgentDir, getProjectConfigDir } from "../shared/config-paths.ts";
 
 export type SkillSource =
 	| "project"

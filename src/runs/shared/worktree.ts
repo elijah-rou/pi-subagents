@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { resolveAuthorityDecision, type AuthorityPolicyConfig } from "../../policy/authority.ts";
 import { PROJECT_SUBAGENTS_RELATIVE_DIR } from "../../shared/artifacts.ts";
-import { getAgentDir } from "../../shared/utils.ts";
+import { getAgentDir } from "../../shared/config-paths.ts";
 
 export interface WorktreeSetup {
 	cwd: string;

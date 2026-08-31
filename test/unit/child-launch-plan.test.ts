@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import type { AgentConfig } from "../../src/agents/agents.ts";
+import type { AgentConfig } from "../../src/agents/agent-contract.ts";
 import { planChildLaunch, resolveStepBehavior } from "../../src/runs/shared/child-launch-plan.ts";
 
 const agent = {

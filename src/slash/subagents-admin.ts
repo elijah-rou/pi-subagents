@@ -8,9 +8,8 @@ import {
 	frontmatterNameForConfig,
 	mergeBuiltinAgentOverride,
 	removeBuiltinAgentOverrideFields,
-	type AgentConfig,
-	type BuiltinAgentOverrideBase,
 } from "../agents/agents.ts";
+import type { AgentConfig, BuiltinAgentOverrideBase } from "../agents/agent-contract.ts";
 import { serializeAgent } from "../agents/agent-serializer.ts";
 import { editableAgentConfig, preservedAgentFrontmatterFields } from "../agents/agent-management.ts";
 import { findModelInfo, getSupportedThinkingLevels, toModelInfo } from "../shared/model-info.ts";

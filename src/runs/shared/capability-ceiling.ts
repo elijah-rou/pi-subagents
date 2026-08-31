@@ -1,4 +1,6 @@
 import { Buffer } from "node:buffer";
+import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../../shared/core-contracts.ts";
+export type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../../shared/core-contracts.ts";
 
 export const SUBAGENT_CAPABILITY_CEILING_VERSION = 1 as const;
 export const SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY = "pi-subagents.capability-ceiling.v1";
@@ -8,28 +10,6 @@ export type SubagentCapabilityCeiling =
 	| { allowedTools: readonly string[]; allowedAgents?: readonly string[]; denyExtensions?: boolean }
 	| { allowedTools?: readonly string[]; allowedAgents?: readonly string[]; denyExtensions: boolean }
 	| { allowedTools?: readonly string[]; allowedAgents: readonly string[]; denyExtensions?: boolean };
-
-export interface ResolvedSubagentCapabilityCeiling {
-	version: typeof SUBAGENT_CAPABILITY_CEILING_VERSION;
-	allowedTools?: string[];
-	allowedAgents?: string[];
-	denyExtensions: boolean;
-	sources: string[];
-}
-
-export interface SubagentCapabilityAudit {
-	ceiling: ResolvedSubagentCapabilityCeiling;
-	requestedTools?: string[];
-	effectiveTools: string[];
-	removedTools: string[];
-	internalTools: string[];
-	extensionsDenied: boolean;
-	removedExtensionCount: number;
-	requestedMcpToolCount: number;
-	effectiveMcpTools: string[];
-	agentAllowed: boolean;
-	agentRestrictionSources?: string[];
-}
 
 export interface RegisterSubagentCapabilityCeilingOptions {
 	sessionId: string;

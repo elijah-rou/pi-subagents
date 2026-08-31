@@ -3,7 +3,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { findConfiguredProjectRoot } from "../../agents/agents.ts";
-import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
+import { getAgentDir, getProjectConfigDir } from "../../shared/config-paths.ts";
+import type { McpRuntimeSnapshotHost } from "../../shared/core-contracts.ts";
+export type { McpRuntimeSnapshotHost } from "../../shared/core-contracts.ts";
 import { isMcpServerDefinition, loadAgentPluginMcpServers, loadPackageMcpServers, type McpServerDefinition } from "./mcp-config-sources.ts";
 import {
 	normalizeMcpDirectToolSelectors,
@@ -61,12 +63,6 @@ interface McpRuntimeSnapshotRequest {
 	result?:
 		| { ok: true; snapshot: McpRuntimeServerSnapshot }
 		| { ok: false; error: Error };
-}
-
-export interface McpRuntimeSnapshotHost {
-	events: {
-		emit(event: string, request: McpRuntimeSnapshotRequest): void;
-	};
 }
 
 interface CachedTool {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AgentConfig, ChainConfig } from "../../src/agents/agents.ts";
+import type { AgentConfig, ChainConfig } from "../../src/agents/agent-contract.ts";
 import {
 	buildProactiveSkillSubagentRecommendationLines,
 	formatProactiveSkillSubagentRecommendations,
