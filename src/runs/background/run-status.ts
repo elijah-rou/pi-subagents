@@ -29,6 +29,7 @@ import { workflowGraphStageNodes } from "../shared/workflow-graph.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
 import { redactSecretValues } from "../shared/permissions.ts";
+import { projectLifecycleState } from "../shared/async-status-projection.ts";
 
 interface RunStatusParams {
 	action?: string;
@@ -96,7 +97,7 @@ function formatRunLifecycleDebug(input: { status: AsyncStatus; asyncDir: string;
 		`Status file: ${path.join(asyncDir, "status.json")}`,
 		`Process terminal file: ${path.join(asyncDir, "process-terminal.json")}`,
 		`Session: ${status.sessionId ?? "unknown"}`,
-		`State: ${status.state}`,
+		`State: ${projectLifecycleState(status.state)}`,
 		`Mode: ${status.mode}`,
 		status.parentWorkflowRunId ? `Workflow parent: ${status.parentWorkflowRunId}` : undefined,
 		status.workflowKey ? `Workflow key: ${status.workflowKey}` : undefined,
@@ -515,7 +516,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				`Run: ${status.runId}`,
 				status.toolCallId ? `Tool call: ${status.toolCallId}` : undefined,
 				missionId ? `Mission: ${missionId}` : undefined,
-				`State: ${status.state}`,
+				`State: ${projectLifecycleState(status.state)}`,
 				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
 				status.capabilityCeiling ? `Capability ceiling: ${status.capabilityCeiling.allowedTools === undefined ? "names unrestricted" : status.capabilityCeiling.allowedTools.length === 0 ? "none" : status.capabilityCeiling.allowedTools.join(", ")}\nExtensions denied: ${status.capabilityCeiling.denyExtensions ? "yes" : "no"} (sources: ${status.capabilityCeiling.sources.join(", ")})` : undefined,
 				status.capabilityAudit ? `Capability audit: ${status.capabilityAudit.removedTools.length} tools removed, ${status.capabilityAudit.removedExtensionCount} extension entries removed` : undefined,

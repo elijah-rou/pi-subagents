@@ -1971,6 +1971,8 @@ export interface AsyncJobState {
 	workflowKey?: string;
 	workflow?: Details["workflow"];
 	workflowChildren?: WorkflowChildSummaryV1;
+	/** Durable runner-exit proof loaded from status.json. Visibility code reads but never writes it. */
+	processTerminal?: ProcessTerminalV1;
 	lane?: WorkflowLaneMetadata;
 }
 
@@ -2162,8 +2164,6 @@ export interface SubagentState {
 	/** Current-session top-level async capacity projection. */
 	activeAsyncCapacity?: ActiveAsyncCapacitySnapshot;
 	asyncJobs: Map<string, AsyncJobState>;
-	/** Current-session active and recent async runs for the native fleet inspector. */
-	fleetJobs?: Map<string, AsyncJobState>;
 	/** Suppress dynamic status widgets while the fleet overlay owns the viewport. */
 	fleetInspectorOpen?: boolean;
 	/** Temporarily suppress dynamic widgets while Pi compacts the session. */

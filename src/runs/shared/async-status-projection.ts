@@ -42,11 +42,18 @@ export interface AsyncStatusSnapshotNodeV1 {
 	id: string;
 	kind: AsyncStatusSnapshotKind | "host-step";
 	label: string;
+	/** Authoritative live or terminal state from status.json/in-memory status. */
 	state: AsyncStatusSnapshotState;
 	startedAt?: number;
 	updatedAt?: number;
 	endedAt?: number;
 	activity?: AsyncStatusSnapshotActivityV1;
+	/** Bounded terminal result facts. Output content remains in its artifact. */
+	terminal?: { state: AsyncStatusSnapshotState; outputAvailable: boolean };
+	/** Durable runner-exit proof. Renderer code cannot synthesize this field. */
+	processProof?: { state: "pending" | "not-started" | "observed" | "unknown"; observedAt?: number; reason?: string };
+	/** Durable workflow receipt identity, without unbounded receipt entries. */
+	workflowReceipt?: { state: string; createdAt: number };
 	hostStep?: AsyncStatusSnapshotHostStepV1;
 	children?: AsyncStatusSnapshotNodeV1[];
 }
@@ -154,7 +161,7 @@ function publicCount(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-function normalizeState(value: string): AsyncStatusSnapshotState {
+export function projectLifecycleState(value: string): AsyncStatusSnapshotState {
 	if (value === "completed") return "complete";
 	if (value === "pending") return "queued";
 	return value as AsyncStatusSnapshotState;
@@ -199,14 +206,22 @@ function activityFor(source: {
 	return Object.keys(activity).length ? activity : undefined;
 }
 
-function appendBoundedChildren(children: AsyncStatusSnapshotNodeV1[], source: readonly AsyncStatusSnapshotNodeV1[], ctx: ProjectionContext): void {
-	const remaining = Math.max(0, ctx.caps.maxChildrenPerNode - children.length);
-	children.push(...source.slice(0, remaining));
-	ctx.omitted.children += Math.max(0, source.length - remaining);
+function activeLifecycleValue(value: string): boolean {
+	const state = projectLifecycleState(value);
+	return state === "queued" || state === "running";
+}
+
+function retainActiveFirst<T>(source: readonly T[], state: (value: T) => string, limit: number, ctx: ProjectionContext): T[] {
+	const active: T[] = [];
+	const terminal: T[] = [];
+	for (const value of source) (activeLifecycleValue(state(value)) ? active : terminal).push(value);
+	const retained = [...active, ...terminal].slice(0, limit);
+	ctx.omitted.children += source.length - retained.length;
+	return retained;
 }
 
 function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, depth: number, ctx: ProjectionContext): AsyncStatusSnapshotNodeV1 {
-	const state = normalizeState(step.status);
+	const state = projectLifecycleState(step.status);
 	const startedAt = publicTime(step.startedAt);
 	const endedAt = publicTime(step.endedAt);
 	const updatedAt = endedAt ?? publicTime(step.lastActivityAt) ?? startedAt;
@@ -222,10 +237,9 @@ function projectStep(step: AsyncJobStep | NestedStepSummary, index: number, dept
 		...(activity ? { activity } : {}),
 	};
 	if (depth < ctx.caps.maxDepth && step.children?.length) {
-		const nested = step.children.map((child, childIndex) => projectNestedRun(child, childIndex, depth + 1, ctx));
-		const bounded: AsyncStatusSnapshotNodeV1[] = [];
-		appendBoundedChildren(bounded, nested, ctx);
-		if (bounded.length) node.children = bounded;
+		const retained = retainActiveFirst(step.children, (child) => child.state, ctx.caps.maxChildrenPerNode, ctx);
+		const children = retained.map((child) => projectNestedRun(child, step.children!.indexOf(child), depth + 1, ctx));
+		if (children.length) node.children = children;
 	} else if (step.children?.length) {
 		ctx.omitted.children += step.children.length;
 	}
@@ -243,7 +257,7 @@ function projectWorkflowGraphNode(node: WorkflowGraphSnapshot["nodes"][number], 
 }
 
 function projectNestedRun(child: NestedRunSummary, index: number, depth: number, ctx: ProjectionContext): AsyncStatusSnapshotNodeV1 {
-	const state = normalizeState(child.state);
+	const state = projectLifecycleState(child.state);
 	const startedAt = publicTime(child.startedAt);
 	const endedAt = publicTime(child.endedAt);
 	const updatedAt = publicTime(child.lastUpdate) ?? endedAt ?? publicTime(child.lastActivityAt) ?? startedAt;
@@ -259,11 +273,15 @@ function projectNestedRun(child: NestedRunSummary, index: number, depth: number,
 		...(activity ? { activity } : {}),
 	};
 	if (depth < ctx.caps.maxDepth) {
-		const nestedSteps = child.steps?.map((step, stepIndex) => projectStep(step, stepIndex, depth + 1, ctx)) ?? [];
-		const nestedChildren = child.children?.map((nested, childIndex) => projectNestedRun(nested, childIndex, depth + 1, ctx)) ?? [];
-		const bounded: AsyncStatusSnapshotNodeV1[] = [];
-		appendBoundedChildren(bounded, [...nestedSteps, ...nestedChildren], ctx);
-		if (bounded.length) node.children = bounded;
+		const candidates = [
+			...(child.steps?.map((step, stepIndex) => ({ kind: "step" as const, value: step, index: stepIndex })) ?? []),
+			...(child.children?.map((nested, childIndex) => ({ kind: "run" as const, value: nested, index: childIndex })) ?? []),
+		];
+		const retained = retainActiveFirst(candidates, (candidate) => candidate.kind === "step" ? candidate.value.status : candidate.value.state, ctx.caps.maxChildrenPerNode, ctx);
+		const children = retained.map((candidate) => candidate.kind === "step"
+			? projectStep(candidate.value, candidate.index, depth + 1, ctx)
+			: projectNestedRun(candidate.value, candidate.index, depth + 1, ctx));
+		if (children.length) node.children = children;
 	} else {
 		ctx.omitted.children += (child.steps?.length ?? 0) + (child.children?.length ?? 0);
 	}
@@ -306,10 +324,18 @@ function projectHostStep(hostStep: HostStepNodeV1, ctx: ProjectionContext): Asyn
 }
 
 function projectRun(job: AsyncJobState, ctx: ProjectionContext): AsyncStatusSnapshotNodeV1 {
-	const state = normalizeState(job.status);
+	const state = projectLifecycleState(job.status);
 	const startedAt = publicTime(job.startedAt);
 	const updatedAt = publicTime(job.updatedAt) ?? startedAt;
 	const activity = activityFor(job, ctx);
+	const processProof = job.processTerminal
+		? {
+			state: job.processTerminal.state,
+			...(job.processTerminal.observedAt !== undefined ? { observedAt: job.processTerminal.observedAt } : {}),
+			...(job.processTerminal.reason ? { reason: publicText(job.processTerminal.reason, "unknown", ctx.caps.maxStringLength) } : {}),
+		}
+		: undefined;
+	const receipt = job.workflow?.receipt;
 	const node: AsyncStatusSnapshotNodeV1 = {
 		id: publicText(job.asyncId, "async", ctx.caps.maxStringLength),
 		kind: kindForMode(job.mode),
@@ -319,23 +345,35 @@ function projectRun(job: AsyncJobState, ctx: ProjectionContext): AsyncStatusSnap
 		...(updatedAt !== undefined ? { updatedAt } : {}),
 		...(terminalState(state) && updatedAt !== undefined ? { endedAt: updatedAt } : {}),
 		...(activity ? { activity } : {}),
+		...(terminalState(state) ? { terminal: { state, outputAvailable: Boolean(job.outputFile) } } : {}),
+		...(processProof ? { processProof } : {}),
+		...(receipt ? { workflowReceipt: { state: receipt.state, createdAt: receipt.createdAt } } : {}),
 	};
 	if (ctx.caps.maxDepth > 0) {
-		const stepChildren = job.steps?.map((step, index) => projectStep(step, step.index ?? index, 1, ctx)) ?? [];
 		const loadedKeys = new Set(job.steps?.flatMap((step) => step.workflowKey ? [step.workflowKey] : []) ?? []);
-		const graphStages = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : [];
-		const graphChildren = graphStages
-			.filter((graphNode) => !loadedKeys.has(graphNode.id))
-			.map((graphNode, index) => projectWorkflowGraphNode(graphNode, index, 1, ctx));
-		const nestedChildren = job.nestedChildren?.map((child, index) => projectNestedRun(child, index, 1, ctx)) ?? [];
-		const hostStepChildren = validHostStepList(job.hostSteps).map((hostStep) => projectHostStep(hostStep, ctx));
-		const ordinaryChildren = [...stepChildren, ...graphChildren, ...nestedChildren];
-		const retainedHostSteps = hostStepChildren.slice(0, ctx.caps.maxChildrenPerNode);
-		const retainedOrdinaryChildren = ordinaryChildren.slice(0, ctx.caps.maxChildrenPerNode - retainedHostSteps.length);
-		const bounded: AsyncStatusSnapshotNodeV1[] = [];
-		bounded.push(...retainedOrdinaryChildren, ...retainedHostSteps);
-		ctx.omitted.children += ordinaryChildren.length - retainedOrdinaryChildren.length + hostStepChildren.length - retainedHostSteps.length;
-		if (bounded.length) node.children = bounded;
+		const graphStages = (job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : []).filter((graphNode) => !loadedKeys.has(graphNode.id));
+		const ordinaryCandidates = [
+			...(job.steps?.map((step, index) => ({ kind: "step" as const, value: step, index: step.index ?? index })) ?? []),
+			...graphStages.map((graphNode, index) => ({ kind: "graph" as const, value: graphNode, index })),
+			...(job.nestedChildren?.map((child, index) => ({ kind: "run" as const, value: child, index })) ?? []),
+		];
+		const hostSteps = validHostStepList(job.hostSteps);
+		const retainedHostSteps = hostSteps.slice(0, ctx.caps.maxChildrenPerNode);
+		const ordinaryLimit = ctx.caps.maxChildrenPerNode - retainedHostSteps.length;
+		const retainedOrdinary = retainActiveFirst(ordinaryCandidates, (candidate) => {
+			if (candidate.kind === "step") return candidate.value.status;
+			if (candidate.kind === "graph") return workflowGraphStepStatus(candidate.value.status);
+			return candidate.value.state;
+		}, ordinaryLimit, ctx);
+		const ordinaryChildren = retainedOrdinary.map((candidate) => {
+			if (candidate.kind === "step") return projectStep(candidate.value, candidate.index, 1, ctx);
+			if (candidate.kind === "graph") return projectWorkflowGraphNode(candidate.value, candidate.index, 1, ctx);
+			return projectNestedRun(candidate.value, candidate.index, 1, ctx);
+		});
+		const hostStepChildren = retainedHostSteps.map((hostStep) => projectHostStep(hostStep, ctx));
+		const children = [...ordinaryChildren, ...hostStepChildren];
+		if (children.length) node.children = children;
+		ctx.omitted.children += hostSteps.length - retainedHostSteps.length;
 	} else {
 		const loadedKeys = new Set(job.steps?.flatMap((step) => step.workflowKey ? [step.workflowKey] : []) ?? []);
 		const graphStages = job.mode === "workflow" ? workflowGraphStageNodes(job.workflowGraph) : [];
@@ -563,6 +601,9 @@ export function projectAsyncStatusSnapshot(jobs: Iterable<AsyncJobState>, option
 	const caps = resolveCaps(options);
 	const ctx: ProjectionContext = { caps, omitted: { runs: 0, children: 0, byteLimitExceeded: false } };
 	const sorted = [...jobs].sort((left, right) => {
+		const activeRank = (state: AsyncJobState["status"]): number => state === "queued" || state === "running" ? 0 : 1;
+		const byActivity = activeRank(left.status) - activeRank(right.status);
+		if (byActivity !== 0) return byActivity;
 		const leftUpdated = left.updatedAt ?? left.startedAt ?? 0;
 		const rightUpdated = right.updatedAt ?? right.startedAt ?? 0;
 		return rightUpdated - leftUpdated || left.asyncId.localeCompare(right.asyncId);

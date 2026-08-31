@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { consumeStopRequestPayload, stopRequestPath } from "../../src/runs/background/control-channel.ts";
+import { updateTerminalRunIndex } from "../../src/runs/background/terminal-run-index.ts";
 import {
 	SUBAGENT_RPC_PROTOCOL_VERSION,
 	SUBAGENT_RPC_READY_EVENT,
@@ -202,11 +203,12 @@ describe("subagent extension RPC bridge", () => {
 
 	it("projects bounded display-safe active fleet records without internal ids", async () => {
 		const events = new FakeEvents();
+		const asyncId = "private-" + "x".repeat(161);
 		const state = {
 			currentSessionId: "/sessions/parent.jsonl",
 			foregroundControls: new Map(),
-			asyncJobs: new Map([["async-private-id", {
-				asyncId: "async-private-id", sessionId: "/sessions/parent.jsonl", status: "running", mode: "single",
+			asyncJobs: new Map([[asyncId, {
+				asyncId, sessionId: "/sessions/parent.jsonl", status: "running", mode: "single",
 				description: ["Review", "\u001b]8;;hostile\u0007", "the diff"].join("\n"),
 				startedAt: 100, steps: [{ agent: "reviewer", label: "opaque label", status: "running", startedAt: 120, model: "anthropic/claude-opus-4-8:high", thinking: "high", tokens: { input: 12, output: 34, total: 46, window: 40, windowPeak: 44 } }],
 			}]]),
@@ -225,7 +227,7 @@ describe("subagent extension RPC bridge", () => {
 			startedAt: 120, tokens: { input: 12, output: 34, total: 46, window: 40, windowPeak: 44 },
 		});
 		assert.equal(JSON.stringify(fleet).includes("Review the diff"), false);
-		assert.equal(JSON.stringify(fleet).includes("async-private-id"), false);
+		assert.equal(JSON.stringify(fleet).includes(asyncId), false);
 		bridge.dispose();
 	});
 
@@ -255,37 +257,48 @@ describe("subagent extension RPC bridge", () => {
 		bridge.dispose();
 	});
 
-	it("adds a bounded current async status snapshot to status replies", async () => {
+	it("adds active and durable recent terminal jobs to bounded status snapshots", async () => {
 		const events = new FakeEvents();
+		const asyncDirRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rpc-async-snapshot-"));
+		const doneDir = path.join(asyncDirRoot, "done");
+		fs.mkdirSync(doneDir, { recursive: true });
+		const doneStatus = {
+			version: 1,
+			runId: "done",
+			sessionId: "/sessions/parent.jsonl",
+			state: "complete",
+			mode: "single",
+			startedAt: 40,
+			updatedAt: 50,
+			endedAt: 50,
+			steps: [{ agent: "reviewer", status: "complete" }],
+		};
+		fs.writeFileSync(path.join(doneDir, "status.json"), JSON.stringify(doneStatus));
+		updateTerminalRunIndex(doneDir, doneStatus as any);
 		const state = {
 			currentSessionId: "/sessions/parent.jsonl",
 			foregroundControls: new Map(),
-			asyncJobs: new Map([["run-1", {
-				asyncId: "run-1",
-				asyncDir: "/tmp/PRIVATE_RPC_LEAK/run-1",
-				cwd: "/repo/PRIVATE_RPC_LEAK",
-				sessionDir: "/sessions/PRIVATE_RPC_LEAK",
-				outputFile: "/tmp/PRIVATE_RPC_LEAK/output.log",
-				sessionId: "/sessions/parent.jsonl",
-				status: "running",
-				mode: "single",
-				agents: ["worker"],
-				currentTool: "read",
-				steps: [{ agent: "worker", status: "running", currentToolArgs: "PRIVATE_RPC_LEAK args", recentOutput: ["PRIVATE_RPC_LEAK output"] }],
-			}]]),
-			fleetJobs: new Map([["done", {
-				asyncId: "done",
-				asyncDir: "/tmp/done",
-				sessionId: "/sessions/parent.jsonl",
-				status: "complete",
-				agents: ["reviewer"],
-				updatedAt: 50,
-			}]]),
+			asyncJobs: new Map([
+				["run-1", {
+					asyncId: "run-1",
+					asyncDir: "/tmp/PRIVATE_RPC_LEAK/run-1",
+					cwd: "/repo/PRIVATE_RPC_LEAK",
+					sessionDir: "/sessions/PRIVATE_RPC_LEAK",
+					outputFile: "/tmp/PRIVATE_RPC_LEAK/output.log",
+					sessionId: "/sessions/parent.jsonl",
+					status: "running",
+					mode: "single",
+					agents: ["worker"],
+					currentTool: "read",
+					steps: [{ agent: "worker", status: "running", currentToolArgs: "PRIVATE_RPC_LEAK args", recentOutput: ["PRIVATE_RPC_LEAK output"] }],
+				}],
+			]),
 		} as any;
 		const bridge = registerSubagentRpcBridge({
 			events,
 			getContext: () => ctx("runtime-session-id", "/sessions/parent.jsonl"),
 			state,
+			asyncDirRoot,
 			execute: async () => ({ content: [], details: { mode: "management", results: [] } } as any),
 		});
 
@@ -298,6 +311,7 @@ describe("subagent extension RPC bridge", () => {
 		assert.equal(JSON.stringify(snapshot).includes("currentToolArgs"), false);
 		assert.equal(JSON.stringify(snapshot).includes("recentOutput"), false);
 		bridge.dispose();
+		fs.rmSync(asyncDirRoot, { recursive: true, force: true });
 	});
 
 	it("projects resolved foreground model, effort, and split usage without prompt goals", async () => {

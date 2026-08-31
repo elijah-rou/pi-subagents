@@ -3003,7 +3003,6 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			baseCwd: tempDir,
 			currentSessionId: "session-cap",
 			asyncJobs: new Map(),
-			fleetJobs: new Map(),
 			foregroundControls: new Map(),
 			lastForegroundControlId: null,
 		};
@@ -3062,7 +3061,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.equal(owners.every(Boolean), true);
 		const beforeAsync = new Set(fs.existsSync(ASYNC_DIR) ? fs.readdirSync(ASYNC_DIR) : []);
 		const beforeResults = new Set(fs.existsSync(RESULTS_DIR) ? fs.readdirSync(RESULTS_DIR) : []);
-		const state = { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), fleetJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null };
+		const state = { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null };
 		const executor = createSubagentExecutor!({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state,

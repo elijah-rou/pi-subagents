@@ -98,6 +98,24 @@ describe("async status projection", () => {
 		assert.doesNotMatch(serialized, /private\/report|fileMutation|Required file-only output/);
 	});
 
+	it("projects bounded terminal, process-proof, and workflow-receipt truth without mutating the source", () => {
+		const source = job({
+			asyncId: "truth-run",
+			status: "failed",
+			outputFile: "/private/output.log",
+			processTerminal: { version: 1, runId: "truth-run", runnerProcessInstanceId: "runner-1", state: "observed", observedAt: 30, instances: [] },
+			workflow: { emits: [], console: [], receipt: { version: 1, workflowRunId: "truth-run", state: "failed", createdAt: 29, entries: {} } },
+		});
+		const before = structuredClone(source);
+		const run = projectAsyncStatusSnapshot([source], { generatedAt: 31 }).runs[0];
+
+		assert.deepEqual(run?.terminal, { state: "failed", outputAvailable: true });
+		assert.deepEqual(run?.processProof, { state: "observed", observedAt: 30 });
+		assert.deepEqual(run?.workflowReceipt, { state: "failed", createdAt: 29 });
+		assert.deepEqual(source, before);
+		assert.doesNotMatch(JSON.stringify(run), /private\/output/);
+	});
+
 	it("projects compact Fleet workflow rows without applying UI bounds", () => {
 		const rows = projectAsyncWorkflowRows([{
 			agent: "reviewer",
@@ -147,6 +165,46 @@ describe("async status projection", () => {
 		})]);
 
 		assert.equal(snapshot.runs[0]?.children?.[0]?.state, "partial");
+	});
+
+	it("retains active workflow children ahead of earlier terminal siblings", () => {
+		const snapshot = projectAsyncStatusSnapshot([job({
+			asyncId: "bounded-workflow",
+			status: "running",
+			steps: [
+				...Array.from({ length: 8 }, (_, index) => ({ agent: `done-${index}`, status: "complete" as const })),
+				{ agent: "active", status: "running" },
+			],
+		})]);
+
+		assert.equal(snapshot.runs[0]?.children?.[0]?.label, "active");
+		assert.equal(snapshot.runs[0]?.children?.[0]?.state, "running");
+	});
+
+	it("retains active recursive nested siblings ahead of terminal siblings", () => {
+		const terminalChildren = Array.from({ length: 8 }, (_, index) => ({
+			id: `done-${index}`,
+			parentRunId: "parent",
+			depth: 2,
+			path: [],
+			state: "complete" as const,
+			agent: `done-${index}`,
+		}));
+		const snapshot = projectAsyncStatusSnapshot([job({
+			asyncId: "nested-owner",
+			status: "running",
+			nestedChildren: [{
+				id: "parent",
+				parentRunId: "nested-owner",
+				depth: 1,
+				path: [],
+				state: "running",
+				agent: "parent",
+				children: [...terminalChildren, { id: "active", parentRunId: "parent", depth: 2, path: [], state: "running", agent: "active" }],
+			}],
+		})]);
+
+		assert.equal(snapshot.runs[0]?.children?.[0]?.children?.[0]?.id, "active");
 	});
 
 	it("reserves bounded snapshot capacity for host steps", () => {

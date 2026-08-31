@@ -77,8 +77,6 @@ export function dismissRecoveredWorkflow(
 	updateActiveRunIndex(asyncDir, "complete");
 	state.asyncJobs.delete(status.runId);
 	state.asyncJobs.delete(runId);
-	state.fleetJobs?.delete(status.runId);
-	state.fleetJobs?.delete(runId);
 	return {
 		content: [{ type: "text", text: `Dismissed recovered workflow ${status.runId} from the display. No running work was terminated.` }],
 		details: { mode: "management", results: [] },

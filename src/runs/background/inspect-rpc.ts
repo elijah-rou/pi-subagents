@@ -8,6 +8,7 @@ import { completionReplayPath, readCompletionArchive, readCompletionReplay } fro
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
+import { projectLifecycleState } from "../shared/async-status-projection.ts";
 
 /** On-demand inspection of current-session async children. Re-reads canonical artifacts after the same reconciliation as status; nothing is persisted or broadcast. */
 
@@ -413,7 +414,7 @@ export function buildInspectReply(request: InspectRequest, deps: InspectDeps = {
 			requestId: request.requestId,
 			asyncId: node.status.runId,
 			...(request.childId !== undefined ? { childId: request.childId } : {}),
-			status: node.status.state,
+			status: projectLifecycleState(node.status.state),
 			...(label ? { label } : {}),
 			...(boundedTask !== undefined ? { task: boundedTask } : {}),
 			...(messages && messages.length > 0 ? { messages } : {}),

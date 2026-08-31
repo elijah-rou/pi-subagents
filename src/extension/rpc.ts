@@ -5,6 +5,7 @@ import { Compile } from "typebox/compile";
 import { resolveAsyncRunLocation } from "../runs/background/async-resume.ts";
 import { deliverStopRequest } from "../runs/background/control-channel.ts";
 import { reconcileAsyncRun } from "../runs/background/stale-run-reconciler.ts";
+import { listAsyncRuns } from "../runs/background/async-status.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import {
@@ -23,7 +24,8 @@ import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
-import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
+import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, asyncRunSummaryToSnapshotJob, asyncStatusSnapshotJobsForState, buildAsyncStatusSnapshot } from "../runs/background/async-status-snapshot.ts";
+import { projectLifecycleState } from "../runs/shared/async-status-projection.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
 
 export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
@@ -213,31 +215,15 @@ function buildFleetStatus(
 		}
 	}
 	for (const job of state.asyncJobs.values()) {
-		if (job.sessionId !== authoritativeSessionId || !activeState(job.status)) continue;
+		if (job.sessionId !== authoritativeSessionId) continue;
+		const lifecycleState = projectLifecycleState(job.status);
+		if (!activeState(lifecycleState)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt;
-		if (job.mode === "workflow") {
-			addCandidate({
-				internalKey: `async:${job.asyncId}`,
-				agent: "workflow",
-				startedAt,
-				tokens: job.totalTokens,
-			});
-			continue;
-		}
-		const steps: AsyncJobStep[] | undefined = job.steps?.length
+		const steps: AsyncJobStep[] = job.steps?.length
 			? job.steps
-			: job.agents?.map((agent, index) => ({
-				agent,
-				index,
-				status: job.status === "queued" ? "pending" : "running",
-			}));
-		if (!steps?.length) {
-			addCandidate({
-				internalKey: `async:${job.asyncId}`,
-				agent: job.mode ?? "subagent",
-				startedAt,
-				tokens: job.totalTokens,
-			});
+			: (job.agents ?? []).map((agent, index) => ({ agent, index, status: lifecycleState === "queued" ? "pending" : "running" }));
+		if (job.mode === "workflow" || steps.length === 0) {
+			addCandidate({ internalKey: `async:${job.asyncId}`, agent: job.mode ?? "subagent", startedAt, tokens: job.totalTokens });
 			continue;
 		}
 		for (const [offset, step] of steps.entries()) {
@@ -699,14 +685,21 @@ async function handleRequest(
 			{ action: "status", ...normalizeTargetParams(request.params, "status") },
 		);
 		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
+		const snapshotJobs = new Map(asyncStatusSnapshotJobsForState(options.state, sessionId).map((job) => [job.asyncId, job]));
+		if (sessionId) {
+			const terminalRuns = listAsyncRuns(options.asyncDirRoot ?? DIRS.async, {
+				sessionId,
+				states: ["complete", "failed", "partial", "paused", "stopped", "rejected"],
+				entryLimit: 20,
+				reconcile: false,
+			});
+			for (const run of terminalRuns) if (!snapshotJobs.has(run.id)) snapshotJobs.set(run.id, asyncRunSummaryToSnapshotJob(run));
+		}
+		const asyncSnapshot = buildAsyncStatusSnapshot(snapshotJobs.values());
 		return {
 			...status,
-			fleet: buildFleetStatus(
-				options.state,
-				fleetKeys,
-				sessionId,
-			),
-			asyncSnapshot: buildAsyncStatusSnapshotForState(options.state, sessionId),
+			fleet: buildFleetStatus(options.state, fleetKeys, sessionId),
+			asyncSnapshot,
 		};
 	}
 	if (request.method === "steer") {

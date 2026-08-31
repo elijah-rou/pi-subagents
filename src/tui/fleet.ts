@@ -16,6 +16,7 @@ import type { SteerDeliveryMode } from "../runs/background/control-channel.ts";
 import { stopAsyncRun } from "../runs/foreground/async-stop-action.ts";
 import { resolveWorkflowForegroundSteeringTarget, steerWorkflowForegroundTarget } from "../runs/foreground/workflow-foreground-steering.ts";
 import { contextModeBadge, contextModeLabel } from "../runs/shared/context-mode.ts";
+import { projectLifecycleState } from "../runs/shared/async-status-projection.ts";
 import { readFleetTranscript, renderFleetTranscript, type FleetTranscript } from "./fleet-transcript.ts";
 import { getLivePromptAudit, type LivePromptAudit, type PromptAuditView } from "../runs/foreground/prompt-audit.ts";
 import { invalidateFleetViews, subscribeFleetInvalidation } from "../shared/fleet-invalidation.ts";
@@ -185,7 +186,7 @@ export function collectFleetSnapshot(
 ): FleetSnapshot {
 	const items: FleetItem[] = [];
 	const activeForegroundIds = new Set<string>();
-	const trackedJobs = state.fleetJobs ?? state.asyncJobs;
+	const trackedJobs = state.asyncJobs;
 	const workflowParentIds = new Set([...trackedJobs.values()]
 		.filter((job) => job.mode === "workflow" && belongsToCurrentSession(job.sessionId, state.currentSessionId))
 		.map((job) => job.asyncId));
@@ -242,12 +243,20 @@ export function collectFleetSnapshot(
 		const tracked = [...trackedJobs.values()]
 			.filter((job) => belongsToCurrentSession(job.sessionId, state.currentSessionId));
 		const byUpdate = (left: AsyncJobState, right: AsyncJobState) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0);
-		const active = tracked.filter((job) => job.status === "queued" || job.status === "running").sort(byUpdate);
-		const recent = tracked.filter((job) => job.status !== "queued" && job.status !== "running").sort(byUpdate).slice(0, options.limit ?? MAX_RECENT_ASYNC_RUNS);
+		const active = tracked.filter((job) => {
+			const status = projectLifecycleState(job.status);
+			return status === "queued" || status === "running";
+		}).sort(byUpdate);
+		const recent = tracked.filter((job) => {
+			const status = projectLifecycleState(job.status);
+			return status !== "queued" && status !== "running";
+		}).sort(byUpdate).slice(0, options.limit ?? MAX_RECENT_ASYNC_RUNS);
 		const trackedRuns: AsyncRunSummary[] = [];
 		for (const job of [...active, ...recent]) {
 			try {
-				trackedRuns.push(trackedJobSummary(job));
+				const summary = trackedJobSummary(job);
+				summary.state = projectLifecycleState(job.status);
+				trackedRuns.push(summary);
 				if (job.description) descriptions.set(job.asyncId, job.description);
 			} catch (cause) {
 				error = `Failed to inspect async run '${job.asyncId}': ${cause instanceof Error ? cause.message : String(cause)}`;
@@ -542,7 +551,7 @@ function workflowProgressLines(steps: AsyncJobStep[] | undefined): string[] {
 function asyncDetail(item: Extract<FleetItem, { kind: "async" }>, state: SubagentState): string[] {
 	const status = readStatus(item.run.asyncDir);
 	if (status) {
-		const trackedJob = state.fleetJobs?.get(item.runId) ?? state.asyncJobs.get(item.runId);
+		const trackedJob = state.asyncJobs.get(item.runId);
 		const lines = formatAsyncRunTranscript(status, item.run.asyncDir, {
 			index: item.index,
 			lines: TRANSCRIPT_LINES,
@@ -659,7 +668,7 @@ function transcriptTarget(item: FleetItem, state: SubagentState): { path: string
 	const transcriptPath = path.isAbsolute(recordedPath)
 		? recordedPath
 		: path.resolve(item.run.asyncDir, recordedPath);
-	const trackedJob = state.fleetJobs?.get(item.runId) ?? state.asyncJobs.get(item.runId);
+	const trackedJob = state.asyncJobs.get(item.runId);
 	return {
 		path: transcriptPath,
 		trustedRoots: uniquePaths([
@@ -916,7 +925,7 @@ export class SubagentFleetComponent implements Component {
 	private selectedSteerAction(): { runId: string; asyncDir: string; index?: number } | { reason: string } {
 		const item = this.snapshot.items[this.selected];
 		if (item?.kind === "foreground-active" && item.control.parentWorkflowRunId) {
-			const parent = this.state.asyncJobs.get(item.control.parentWorkflowRunId) ?? this.state.fleetJobs?.get(item.control.parentWorkflowRunId);
+			const parent = this.state.asyncJobs.get(item.control.parentWorkflowRunId);
 			if (!parent || !isActionableAsyncState(parent.status)) return { reason: "The parent workflow is no longer available for steering." };
 			return { runId: item.runId, asyncDir: parent.asyncDir, ...(item.index !== undefined ? { index: item.index } : {}) };
 		}

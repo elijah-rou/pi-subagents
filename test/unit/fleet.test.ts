@@ -452,7 +452,7 @@ describe("native subagent fleet", () => {
 			writeAsyncRun(root, { id: "older-failed", state: "failed", lastUpdate: 100 });
 			writeAsyncRun(root, { id: "newer-complete", state: "complete", lastUpdate: 300 });
 			const state = stateForTest();
-			state.fleetJobs = new Map([["active-workflow", {
+			state.asyncJobs = new Map([["active-workflow", {
 				asyncId: "active-workflow",
 				asyncDir: path.join(root, "active-workflow"),
 				sessionId: "session-current",
@@ -534,7 +534,7 @@ describe("native subagent fleet", () => {
 					{ agent: "review", workflowKey: "review", phase: "Review", status: "running", index: 1, currentTool: "grep" },
 				],
 			}, null, 2));
-			state.fleetJobs = new Map([["workflow-1", {
+			state.asyncJobs = new Map([["workflow-1", {
 				asyncId: "workflow-1",
 				asyncDir,
 				sessionId: "session-current",
@@ -662,8 +662,8 @@ describe("native subagent fleet", () => {
 	it("keeps every active async run ahead of the bounded recent-completion window", () => {
 		const state = stateForTest();
 		for (let index = 0; index < 22; index++) {
-			state.fleetJobs ??= new Map();
-			state.fleetJobs.set(`terminal-${index}`, {
+
+			state.asyncJobs.set(`terminal-${index}`, {
 				asyncId: `terminal-${index}`,
 				asyncDir: path.join(os.tmpdir(), `missing-terminal-${index}`),
 				sessionId: "session-current",
@@ -674,7 +674,7 @@ describe("native subagent fleet", () => {
 				updatedAt: index,
 			});
 		}
-		state.fleetJobs!.set("active-old", {
+		state.asyncJobs.set("active-old", {
 			asyncId: "active-old",
 			asyncDir: path.join(os.tmpdir(), "missing-active-old"),
 			sessionId: "session-current",

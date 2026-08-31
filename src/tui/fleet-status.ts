@@ -3,7 +3,7 @@ import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, v
 import { snapshotExternalRuns } from "../api/external-runs.ts";
 import { formatModelThinking } from "../shared/formatters.ts";
 import type { AsyncJobState, AsyncJobStep, FleetViewPlacement, HostStepState, HostStepVerdict, NestedRunSummary, NestedStepSummary, SubagentState } from "../shared/types.ts";
-import { projectAsyncWorkflowRows, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
+import { projectAsyncWorkflowRows, projectLifecycleState, type AsyncStatusWorkflowRow } from "../runs/shared/async-status-projection.ts";
 import { contextModeLabel } from "../runs/shared/context-mode.ts";
 import { formatWorkflowJsonPreview } from "../workflows/scripted-workflow.ts";
 import { hostStepReportName, hostStepVerdictLabel } from "../runs/shared/host-step-status.ts";
@@ -274,11 +274,11 @@ function activeLeafAgentCount(entries: FleetStatusEntry[]): number {
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	const activeWorkflowKeys = new Set([...state.asyncJobs.values()]
-		.filter((job) => job.mode === "workflow" && isActiveState(job.status))
+		.filter((job) => job.mode === "workflow" && isActiveState(projectLifecycleState(job.status)))
 		.map((job) => `async:${job.asyncId}`));
 	const materializedChildrenByWorkflow = new Map<string, Set<string>>();
 	for (const job of state.asyncJobs.values()) {
-		if (!isActiveState(job.status) || !job.parentWorkflowRunId) continue;
+		if (!isActiveState(projectLifecycleState(job.status)) || !job.parentWorkflowRunId) continue;
 		const parentKey = linkedWorkflowParentKey(job.parentWorkflowRunId, activeWorkflowKeys);
 		if (!parentKey) continue;
 		const childIds = materializedChildrenByWorkflow.get(parentKey) ?? new Set<string>();
@@ -331,7 +331,8 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 	}
 
 	for (const job of state.asyncJobs.values()) {
-		if (!isActiveState(job.status)) continue;
+		const lifecycleState = projectLifecycleState(job.status);
+		if (!isActiveState(lifecycleState)) continue;
 		const startedAt = job.startedAt ?? job.updatedAt ?? Date.now();
 		const linkedParentKey = linkedWorkflowParentKey(job.parentWorkflowRunId, activeWorkflowKeys);
 		if (job.mode === "workflow") {
@@ -347,7 +348,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				startedAt,
 				tokens: job.totalTokens?.total ?? 0,
 				...(job.totalTokens?.window !== undefined ? { window: job.totalTokens.window } : {}),
-				state: job.status,
+				state: lifecycleState,
 				...(workflowRows.length ? { workflowRows } : {}),
 				...(job.nestedChildren?.length ? { nestedChildren: job.nestedChildren } : {}),
 			});
@@ -369,7 +370,7 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				startedAt,
 				tokens: job.totalTokens?.total ?? 0,
 				...(job.totalTokens?.window !== undefined ? { window: job.totalTokens.window } : {}),
-				state: job.status,
+				state: lifecycleState,
 				...(job.nestedChildren?.length ? { nestedChildren: job.nestedChildren } : {}),
 			});
 			continue;

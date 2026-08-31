@@ -592,7 +592,7 @@ function withSpawnBudgetStatus(
 function hasActiveSubagentChildren(state: SubagentState): boolean {
 	if (state.subagentInProgress || state.foregroundControls.size > 0) return true;
 	const isActive = (status: string) => status === "queued" || status === "running";
-	return [...state.asyncJobs.values(), ...(state.fleetJobs?.values() ?? [])].some((job) => isActive(job.status));
+	return [...state.asyncJobs.values()].some((job) => isActive(job.status));
 }
 
 function countRequestedSubagentSpawns(params: SubagentParamsLike, config: ExtensionConfig): number {
@@ -4521,8 +4521,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				deps.state.workflowChildStops ??= new Map();
 				deps.state.workflowControllers.set(workflowRunId, controller);
 				deps.state.asyncJobs.set(workflowRunId, workflowJob);
-				deps.state.fleetJobs ??= new Map();
-				deps.state.fleetJobs.set(workflowRunId, workflowJob);
 				if (workflowCapacity) deps.state.activeAsyncCapacity = getActiveAsyncCapacitySnapshot(currentSessionId, resolveMaxActiveAsyncRunsPerSession(deps.config.maxActiveAsyncRunsPerSession), { liveWorkflowRunIds: new Set(deps.state.workflowControllers.keys()), abandonedSlotReleaseAfterMs: resolveAbandonedSlotReleaseAfterMs(deps.config.capacity?.abandonedSlotReleaseAfterMs) });
 				appendWorkflowEvent({ type: "subagent.workflow.started" });
 				const { workflowScript, async: _workflowAsync, chatProgress: _chatProgress, ...workflowRequest } = requestParams;

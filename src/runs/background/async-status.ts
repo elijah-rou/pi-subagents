@@ -470,13 +470,13 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 					if (resolveTargetedAsyncRun(asyncDirRoot, entry).kind === "exact") {
 						indexed.add(entry);
 						activeEntries.add(entry);
-					} else {
+					} else if (options.reconcile !== false) {
 						updateActiveRunIndex(path.join(asyncDirRoot, entry), "failed");
 					}
 				}
 			}
 			if (wantsTerminal) {
-				for (const entry of readRecentTerminalRunIndex(asyncDirRoot, { sessionId: options.sessionId, ...(options.entryLimit !== undefined ? { limit: options.entryLimit } : {}) })) indexed.add(entry);
+				for (const entry of readRecentTerminalRunIndex(asyncDirRoot, { sessionId: options.sessionId, ...(options.entryLimit !== undefined ? { limit: options.entryLimit } : {}), repair: options.reconcile !== false })) indexed.add(entry);
 			}
 			entries = [...indexed];
 		}
@@ -508,10 +508,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 			: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
 		const status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
 		if (!status) {
-			if (activeEntries.has(entry)) updateActiveRunIndex(asyncDir, "failed");
+			if (options.reconcile !== false && activeEntries.has(entry)) updateActiveRunIndex(asyncDir, "failed");
 			continue;
 		}
-		if (activeEntries.has(entry) && !isActiveAsyncState(status.state)) {
+		if (options.reconcile !== false && activeEntries.has(entry) && !isActiveAsyncState(status.state)) {
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId });
 			if (processTerminal?.state === "observed" || (activeRunMarkerAgeMs(asyncDir, options.now?.()) ?? 0) > DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS) releaseActiveRunIndex(asyncDir);
 		}

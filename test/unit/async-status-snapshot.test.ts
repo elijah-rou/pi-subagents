@@ -174,12 +174,12 @@ describe("async status snapshot", () => {
 		assert.ok(Buffer.byteLength(json(byteCapped), "utf8") <= 512);
 	});
 
-	it("uses current-session state and retained fleet jobs without rebuilding history", () => {
+	it("uses the canonical current-session lifecycle map without rebuilding history", () => {
 		const state = {
 			currentSessionId: "session-a",
 			foregroundControls: new Map(),
-			asyncJobs: new Map([["active", { asyncId: "active", asyncDir: "/tmp/active", sessionId: "session-a", status: "running", agents: ["worker"] }]]),
-			fleetJobs: new Map([
+			asyncJobs: new Map([
+				["active", { asyncId: "active", asyncDir: "/tmp/active", sessionId: "session-a", status: "running", agents: ["worker"] }],
 				["terminal", { asyncId: "terminal", asyncDir: "/tmp/terminal", sessionId: "session-a", status: "complete", agents: ["reviewer"], updatedAt: 300, outputFile: `/tmp/${privateNeedle}.log` }],
 				["foreign", { asyncId: "foreign", asyncDir: "/tmp/foreign", sessionId: "other", status: "running", agents: ["hidden"] }],
 			]),

@@ -44,19 +44,9 @@ interface AsyncJobTrackerOptions {
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
 const CONTROL_EVENT_SCAN_WINDOW_BYTES = 2 * 1024 * 1024;
-const MAX_RECENT_FLEET_JOBS = 20;
 const DEFAULT_LIVENESS_INTERVAL_MS = 5000;
 const EVENT_REFRESH_DEBOUNCE_MS = 25;
 const WATCH_ATTACHMENT_RETRY_MS = 100;
-
-function rememberFleetJob(state: SubagentState, job: AsyncJobState): void {
-	state.fleetJobs ??= new Map();
-	state.fleetJobs.set(job.asyncId, job);
-	const terminal = [...state.fleetJobs.values()]
-		.filter((candidate) => candidate.status === "complete" || candidate.status === "failed" || candidate.status === "paused" || candidate.status === "stopped")
-		.sort((left, right) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0));
-	for (const stale of terminal.slice(MAX_RECENT_FLEET_JOBS)) state.fleetJobs.delete(stale.asyncId);
-}
 
 export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: SubagentState, asyncDirRoot: string, options: AsyncJobTrackerOptions = {}): {
 	ensurePoller: () => void;
@@ -169,6 +159,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			workflowKey: run.workflowKey,
 			workflow: run.workflow,
 			workflowChildren: parseWorkflowChildSummary(run.workflowChildren),
+			processTerminal: run.processTerminal,
 		};
 	};
 	const cancelCleanup = (asyncId: string) => {
@@ -399,6 +390,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 				if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
 				job.workflowChildren = workflowChildren ?? job.workflowChildren;
+				job.processTerminal = status.processTerminal ?? job.processTerminal;
 				job.currentStep = status.currentStep ?? job.currentStep;
 				job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
 				job.startedAt = status.startedAt ?? job.startedAt;
@@ -435,7 +427,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.sessionFile = status.sessionFile ?? job.sessionFile;
 				if (terminalStatus(job.status)) {
 					if (!terminalStatus(previousStatus)) options.onJobTerminal?.();
-					rememberFleetJob(state, job);
 					if (!nestedRefreshFailed && !hasLiveNestedDescendants(job.nestedChildren) && (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))) {
 						scheduleCleanup(job.asyncId);
 					}
@@ -452,7 +443,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				job.status = "failed";
 				job.updatedAt = Date.now();
 			}
-			rememberFleetJob(state, job);
 			if (!hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) scheduleCleanup(job.asyncId);
 		}
 		return widgetRenderKey(job, widgetExpanded) !== widgetStateBefore;
@@ -616,7 +606,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			controlEventCursor: 0,
 		});
 		const job = state.asyncJobs.get(info.id)!;
-		rememberFleetJob(state, job);
 		watchJob(job);
 		scheduleJobRefresh(info.id, 0);
 		ensurePoller();
@@ -646,7 +635,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
 			}
 		}
-		if (job) rememberFleetJob(state, job);
 		rerenderLastWidget();
 		if (!nestedRefreshFailed && !hasLiveNestedDescendants(job?.nestedChildren)) scheduleCleanup(asyncId);
 	};
@@ -666,7 +654,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		for (const timer of state.cleanupTimers.values()) clearTimeout(timer);
 		state.cleanupTimers.clear();
 		state.asyncJobs.clear();
-		state.fleetJobs?.clear();
 		state.foregroundControls?.clear();
 		state.liveAsyncSessionRoots?.clear();
 		state.lastForegroundControlId = null;
@@ -691,7 +678,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		for (const run of runs) {
 			const job = summaryToJob(run);
 			state.asyncJobs.set(run.id, job);
-			rememberFleetJob(state, job);
 			watchJob(job);
 		}
 		if (runs.length === 0) return;

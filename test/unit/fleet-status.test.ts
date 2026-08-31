@@ -24,7 +24,6 @@ function stateForTest(): SubagentState {
 		baseCwd: process.cwd(),
 		currentSessionId: "session-current",
 		asyncJobs: new Map(),
-		fleetJobs: new Map(),
 		foregroundRuns: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
@@ -220,6 +219,21 @@ describe("below-editor subagent FleetView", () => {
 		} finally {
 			fleet.dispose();
 		}
+	});
+
+	it("keeps active jobs with projection-length ids visible", () => {
+		const state = stateForTest();
+		const asyncId = "x".repeat(161);
+		state.asyncJobs.set(asyncId, {
+			asyncId,
+			asyncDir: `/tmp/${asyncId}`,
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			startedAt: 10,
+		});
+
+		assert.deepEqual(collectFleetStatusEntries(state).map((entry) => entry.key), [`async:${asyncId}:0`]);
 	});
 
 	it("keeps one queued agent visible in the compact summary", () => {
@@ -1075,7 +1089,6 @@ describe("below-editor subagent FleetView", () => {
 			],
 		};
 		state.asyncJobs.set("workflow-1", workflowJob);
-		state.fleetJobs!.set("workflow-1", workflowJob);
 
 		assert.deepEqual(collectFleetStatusEntries(state).map((entry) => entry.key), ["async:workflow-1"]);
 		assert.deepEqual(collectFleetSnapshot(state).items.map((item) => item.key), ["async:workflow-1"]);
@@ -1146,7 +1159,6 @@ describe("below-editor subagent FleetView", () => {
 			],
 		};
 		state.asyncJobs.set(workflowJob.asyncId, workflowJob);
-		state.fleetJobs!.set(workflowJob.asyncId, workflowJob);
 
 		const workflow = collectFleetStatusEntries(state).find((entry) => entry.key === "async:workflow-host");
 		assert.deepEqual(workflow?.workflowRows?.map((row) => ({ kind: row.kind, state: row.state })), [
@@ -1270,7 +1282,6 @@ describe("below-editor subagent FleetView", () => {
 			steps: [{ agent: "reviewer", index: 0, status: "running" as const }],
 		};
 		state.asyncJobs.set(asyncJob.asyncId, asyncJob);
-		state.fleetJobs!.set(asyncJob.asyncId, asyncJob);
 
 		const statusKeys = collectFleetStatusEntries(state).map((entry) => entry.key).sort();
 		const inspectorKeys = collectFleetSnapshot(state).items.map((item) => item.key).sort();

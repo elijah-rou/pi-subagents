@@ -105,7 +105,7 @@ function recentMarkerFiles(dirs: string[], limit: number): string[] {
 		.map((marker) => path.join(marker.dir, marker.name));
 }
 
-export function readRecentTerminalRunIndex(asyncDirRoot: string, options: { sessionId?: string; limit?: number } = {}): string[] {
+export function readRecentTerminalRunIndex(asyncDirRoot: string, options: { sessionId?: string; limit?: number; repair?: boolean } = {}): string[] {
 	const limit = options.limit === undefined ? Number.POSITIVE_INFINITY : Math.max(0, Math.floor(options.limit));
 	const candidates = recentMarkerFiles(sessionDirs(asyncDirRoot, options.sessionId), limit);
 	const runIds: string[] = [];
@@ -118,17 +118,17 @@ export function readRecentTerminalRunIndex(asyncDirRoot: string, options: { sess
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
 		}
 		if (!entry || (options.sessionId !== undefined && entry.sessionId !== options.sessionId)) {
-			removeInvalidMarker(marker);
+			if (options.repair !== false) removeInvalidMarker(marker);
 			continue;
 		}
 		const asyncDir = path.join(asyncDirRoot, entry.runId);
 		const status = readStatus(asyncDir);
 		if (!status || !isTerminalState(status.state) || status.sessionId !== entry.sessionId || (status.runId && status.runId !== entry.runId)) {
-			removeInvalidMarker(marker);
+			if (options.repair !== false) removeInvalidMarker(marker);
 			continue;
 		}
 		if (seen.has(entry.runId)) {
-			removeInvalidMarker(marker);
+			if (options.repair !== false) removeInvalidMarker(marker);
 			continue;
 		}
 		seen.add(entry.runId);

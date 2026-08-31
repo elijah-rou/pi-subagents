@@ -1,4 +1,5 @@
 import type { AsyncJobState, SubagentState } from "../../shared/types.ts";
+import type { AsyncRunSummary } from "./async-status.ts";
 import {
 	projectAsyncStatusSnapshot,
 	type AsyncStatusSnapshotOptions,
@@ -27,16 +28,19 @@ export function buildAsyncStatusSnapshot(jobs: Iterable<AsyncJobState>, options:
 	return projectAsyncStatusSnapshot(jobs, options);
 }
 
+export function asyncRunSummaryToSnapshotJob(run: AsyncRunSummary): AsyncJobState {
+	return {
+		...run,
+		asyncId: run.id,
+		status: run.state,
+		agents: run.steps.map((step) => step.agent),
+		updatedAt: run.lastUpdate ?? run.endedAt ?? run.startedAt,
+	} as AsyncJobState;
+}
+
 export function asyncStatusSnapshotJobsForState(state: SubagentState | undefined, sessionId: string | null | undefined): AsyncJobState[] {
 	if (!state || !sessionId || state.currentSessionId !== sessionId) return [];
-	const jobs = new Map<string, AsyncJobState>();
-	for (const job of state.asyncJobs.values()) {
-		if (job.sessionId === sessionId) jobs.set(job.asyncId, job);
-	}
-	for (const job of state.fleetJobs?.values() ?? []) {
-		if (job.sessionId === sessionId && !jobs.has(job.asyncId)) jobs.set(job.asyncId, job);
-	}
-	return [...jobs.values()];
+	return [...state.asyncJobs.values()].filter((job) => job.sessionId === sessionId);
 }
 
 export function buildAsyncStatusSnapshotForState(state: SubagentState | undefined, sessionId: string | null | undefined, options: AsyncStatusSnapshotOptions = {}): AsyncStatusSnapshotV1 {

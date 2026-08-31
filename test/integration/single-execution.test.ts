@@ -1381,7 +1381,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		context.sessionManager.getSessionId = () => sessionId;
 		context.sessionManager.getSessionFile = () => null;
 		const state = {
-			baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), fleetJobs: new Map(),
+			baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(),
 			foregroundControls: new Map(), lastForegroundControlId: null, workflowControllers: new Map(),
 		} as unknown as SubagentState;
 		let persistedRunId: string | undefined;

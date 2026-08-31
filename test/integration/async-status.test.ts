@@ -892,7 +892,7 @@ describe("async status helpers", () => {
 		}
 	});
 
-	it("removes invalid terminal markers while reading the advisory index", () => {
+	it("leaves invalid terminal markers untouched during write-free reads", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-terminal-heal-"));
 		try {
 			const marker = path.join(root, TERMINAL_RUN_INDEX_DIR, encodeIndexSegment("session-a"), "0000000000000100-missing.json");
@@ -900,7 +900,7 @@ describe("async status helpers", () => {
 			fs.writeFileSync(marker, JSON.stringify({ version: 1, runId: "missing", sessionId: "session-a", endedAt: 100 }));
 
 			assert.deepEqual(listAsyncRuns(root, { sessionId: "session-a", states: ["complete"], reconcile: false }), []);
-			assert.equal(fs.existsSync(marker), false);
+			assert.equal(fs.existsSync(marker), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -921,7 +921,7 @@ describe("async status helpers", () => {
 		}
 	});
 
-	it("keeps terminal active markers until observed process-terminal proof releases them", () => {
+	it("does not repair terminal active markers during write-free reads", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-index-prune-"));
 		try {
 			const asyncDir = createAsyncDir(root, "finished", {
@@ -949,13 +949,13 @@ describe("async status helpers", () => {
 				instances: [{ kind: "runner", processInstanceId: "runner", closeObservedAt: 300, exitCode: 0, signal: null }],
 			}), "utf-8");
 			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false }), []);
-			assert.equal(fs.existsSync(markerPath), false);
+			assert.equal(fs.existsSync(markerPath), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
 
-	it("prunes old terminal active markers without process-terminal proof", () => {
+	it("does not age-prune terminal active markers during write-free reads", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-index-aged-prune-"));
 		try {
 			const asyncDir = createAsyncDir(root, "finished", {
@@ -974,7 +974,7 @@ describe("async status helpers", () => {
 			fs.utimesSync(markerPath, oldTime, oldTime);
 
 			assert.deepEqual(listAsyncRuns(root, { states: ["running"], reconcile: false, now: () => 1_000 + DEFAULT_STALE_TERMINAL_ACTIVE_MARKER_MS + 1 }), []);
-			assert.equal(fs.existsSync(markerPath), false);
+			assert.equal(fs.existsSync(markerPath), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

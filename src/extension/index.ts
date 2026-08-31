@@ -408,7 +408,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 		activeAsyncCapacity: { used: 0, limit: resolveMaxActiveAsyncRunsPerSession(config.maxActiveAsyncRunsPerSession) ?? 0 },
 		asyncJobs: new Map(),
-		fleetJobs: new Map(),
 		foregroundRuns: new Map(),
 		foregroundControls: new Map(),
 		lastForegroundControlId: null,
