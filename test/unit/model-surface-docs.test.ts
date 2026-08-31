@@ -20,6 +20,42 @@ function read(relativePath: string): string {
 }
 
 describe("model-facing docs and skill contract", () => {
+	it("routes broad work through one whole-program design contract", () => {
+		const skill = read("skills/pi-subagents/SKILL.md");
+		const programReference = "references/program-orchestration.md";
+		const routeRows = [...skill.matchAll(/^\| ([^|]+) \| `([^`]+)` \|$/gm)]
+			.filter((match) => match[2] === programReference);
+		assert.equal(routeRows.length, 1);
+		assert.match(routeRows[0]?.[1] ?? "", /broad.*predeclared.*multi-phase/i);
+
+		const programPath = path.join(root, "skills/pi-subagents", programReference);
+		assert.equal(fs.existsSync(programPath), true);
+		const program = fs.readFileSync(programPath, "utf-8");
+		const intakeOffset = program.indexOf("## Map intake before reconnaissance");
+		const executionOffset = program.indexOf("## Synthesize the execution map before mutation");
+		assert.ok(intakeOffset >= 0);
+		assert.ok(executionOffset > intakeOffset);
+		const intake = program.slice(intakeOffset, executionOffset);
+		assert.deepEqual([...intake.matchAll(/^- \*\*([^*]+):\*\*/gm)].map((match) => match[1]), [
+			"Phases", "Ordering", "Unknowns", "Mutation", "First wave",
+		]);
+		const executionFields = [...program.matchAll(/^\| ([^|]+) \| [^|]+ \|$/gm)]
+			.map((match) => match[1])
+			.filter((field) => field !== "Concern" && field !== "---");
+		assert.deepEqual(executionFields, [
+			"Dependencies", "Serial mutation path", "Read-only overlap", "Authority gates", "Validation", "Review", "Triggers",
+		]);
+		for (const shape of ["Direct execution", "Workflow script", "Parallel fanout", "Staged lanes"]) {
+			assert.equal(program.includes(`**${shape}:**`), true);
+		}
+		for (const primitive of ["`workflowScript`", "`runs.all([...])`", "`runs.lanes([...])`"]) {
+			assert.equal(program.includes(primitive), true);
+		}
+		assert.match(program, /Async is a scheduling choice, not workflow topology\./);
+		assert.match(program, /async singleton → blocking wait → status inspection → improvised singleton/);
+		assert.doesNotMatch(program, /top-level [`'"](?:chain|parallel)[`'"] execution/i);
+	});
+
 	it("documents the exact action and field inventories", () => {
 		assert.deepEqual(SUBAGENT_ACTIONS, expectedActions);
 		const reference = read("docs/tool-reference.md");
@@ -33,6 +69,7 @@ describe("model-facing docs and skill contract", () => {
 		const guideFiles = SUBAGENT_GUIDE_TOPICS.map((topic) => topic === "overview" ? "README.md" : `docs/${topic}.md`);
 		const modelGuidance = [
 			...guideFiles.map(read),
+			read("skills/pi-subagents/references/program-orchestration.md"),
 			read("skills/pi-subagents/references/execution-controls.md"),
 			read("skills/pi-subagents/references/management-authoring-rpc.md"),
 			read("skills/pi-subagents/references/constraints-and-recipes.md"),

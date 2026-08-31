@@ -12,6 +12,13 @@ description: |
 Parent owns orchestration. Children do not spawn subagents unless the parent
 explicitly delegated fanout and their resolved `tools` allow `subagent`.
 
+## Whole-program design gate
+
+For broad, predeclared, or multi-phase work, map the whole program before
+reconnaissance, then synthesize one execution map before any implementation
+mutation or mutation-capable child. Execute that map in bounded waves and return
+to the parent at authority gates. Small one-child tasks skip this machinery.
+
 ## Launch shape
 
 | Need | Use |
@@ -59,6 +66,7 @@ that runner explicitly supports the option.
 
 | Branch | Read |
 | --- | --- |
+| Design broad, predeclared, or multi-phase work before reconnaissance or mutation | `references/program-orchestration.md` |
 | Delegate or choose roles, prompts, models, or slash commands | `references/prompting-and-roles.md` |
 | Execute single, scripted, async, stateful, forked, oracle, or intercom workflows | `references/execution-controls.md` |
 | Review, validate, triage gate failures, or prepare delivery | `references/review-and-validation.md` |
@@ -66,9 +74,9 @@ that runner explicitly supports the option.
 | List, create, edit, disable, eject, or expose agents/RPC | `references/management-authoring-rpc.md` |
 | Check safety constraints, recipes, or error handling | `references/constraints-and-recipes.md` |
 
-For complex work, read `prompting-and-roles.md` and `execution-controls.md`, then
-load `review-and-validation.md` and `constraints-and-recipes.md` before launch or
-review.
+Load only the reference for the current branch. Program design comes first for
+broad work; load execution, lane, or review detail only when the mapped program
+reaches that branch.
 
 ## Operating rules
 
