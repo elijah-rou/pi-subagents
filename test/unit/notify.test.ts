@@ -11,6 +11,8 @@ import registerSubagentNotify, {
 } from "../../src/runs/background/notify.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT } from "../../src/shared/types.ts";
 import { createResultDeliveryOwnership } from "../../src/runs/background/result-delivery-ownership.ts";
+import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
+import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
 
 const COMPLETION_OWNER_ID = "completion-owner-a";
 
@@ -114,6 +116,53 @@ function completionResult(overrides: Record<string, unknown> = {}) {
 }
 
 describe("registerSubagentNotify", () => {
+	it("wakes an interactive parent exactly once for batched success, failure, and needs attention", async () => {
+		const clock = createFakeClock();
+		const { notifier, sent } = createBatchingPi(clock);
+		const success = completionResult({ id: "interactive-success", agent: "successful-worker" });
+		const failure = completionResult({ id: "interactive-failure", agent: "failed-worker", success: false, summary: "boom", exitCode: 1 });
+
+		const firstSuccess = notifier.deliver(success);
+		const duplicateSuccess = notifier.deliver(success);
+		assert.equal(sent.length, 0, "successful completion stays batched until the deterministic debounce fires");
+		clock.advance(150);
+		assert.equal(await firstSuccess, true);
+		assert.equal(await duplicateSuccess, true);
+
+		assert.equal(await notifier.deliver(failure), true);
+		assert.equal(await notifier.deliver(failure), true);
+
+		const visibleControlNotices = new Set<string>();
+		const attentionEvent: ControlEvent = {
+			type: "needs_attention",
+			to: "needs_attention",
+			ts: 1,
+			runId: "interactive-attention",
+			agent: "attention-worker",
+			index: 0,
+			message: "worker needs attention",
+			reason: "idle",
+		};
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			handleSubagentControlNotice({
+				pi: { sendMessage(message, options) { sent.push({ message, options }); } },
+				state: { asyncJobs: new Map() } as SubagentState,
+				visibleControlNotices,
+				details: { source: "async", event: attentionEvent },
+			});
+		}
+
+		assert.equal(sent.length, 3);
+		assert.deepEqual(sent.map(({ options }) => options), [
+			{ triggerTurn: true },
+			{ triggerTurn: true },
+			{ triggerTurn: true },
+		]);
+		assert.match((sent[0]!.message as { content: string }).content, /successful-worker/);
+		assert.match((sent[1]!.message as { content: string }).content, /failed-worker/);
+		assert.match((sent[2]!.message as { content: string }).content, /needs attention/i);
+	});
+
 	it("keeps a successful background completion hidden while waking the originating session", () => {
 		const { events, sent } = createPi();
 

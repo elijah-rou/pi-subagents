@@ -309,6 +309,19 @@ The package documents that an interactive parent may yield after an async launch
 - Completion remains visible through status and durable artifacts even when delivery fails.
 - Packaged examples do not pair a detached singleton launch with an immediate blocking wait unless they name the same-turn requirement.
 
+### Workstream 7 implementation record
+
+Current runtime behavior passed, so production runtime code was not changed. A deterministic notifier test uses injected timers, submits duplicate successful and failed completion payloads plus a duplicate async `needs_attention` event, and observes exactly three `triggerTurn: true` deliveries. The successful completion remains queued until the injected batch debounce fires. Existing exact-run subscription tests prove that unrelated runs do not wake a non-blocking subscriber and that completion, attention, and timeout do. Existing auto-drain tests prove headless execution blocks on all current-session work, includes work added during draining, and fails closed on run failure or attention.
+
+Commands and evidence:
+
+- `node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/notify.test.ts test/unit/control-notices.test.ts test/unit/wait-subscriptions.test.ts test/unit/auto-drain.test.ts test/unit/async-execution.test.ts` passed: 69 tests, 0 failed. This covers exact-once completion/failure/attention wakes, completion batching and deduplication, exact-run non-blocking subscriptions, interactive launch guidance, and headless auto-drain.
+- `node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/tool-description.test.ts test/unit/subagent-guide.test.ts` passed: 23 tests, 0 failed. Packaged model-facing surfaces remained readable after the execution-guidance update.
+- `npm run typecheck` passed with no TypeScript errors.
+- `git diff --check` passed with no whitespace errors.
+
+Residual risk: the wake proof uses the production notifier and control-notice delivery functions with a deterministic fake Pi event/message boundary, not a live provider/model session. Pi's `sendMessage(..., { triggerTurn: true })` host behavior remains covered by that API contract rather than a timing-dependent end-to-end model run. Status and result artifacts remain authoritative when message delivery is rejected, as covered by the existing notifier and result-watcher tests.
+
 ## 8. Define authoritative usage accounting
 
 ### Problem

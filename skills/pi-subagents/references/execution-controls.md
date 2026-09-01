@@ -42,7 +42,9 @@ Before launching a predeclared workflow, `action: "validate"` returns a bounded 
 
 ## Status and control
 
-Use `status` and `debug.run` for bounded lifecycle views. Use `children.list` before `resume` and resume only rows reported resumable. `steer` is acknowledged delivery; it is not proof of compliance. `interrupt` pauses current work when supported. `stop` remains ownership-controlled. Use `subagent_wait` rather than sleep or status polling when the current turn must consume async completion.
+Async controls scheduling, not workflow topology. In an interactive session, when no same-turn result is required, do independent work or end the parent turn after launch. Completion, failure, or `needs_attention` wakes the parent; do not sleep or poll `status` to manufacture a wake-up. Successful sibling completions may arrive in one batched wake. Use `subagent_wait({ id, nonBlocking: true })` only to subscribe to one exact run or timeout, and return immediately after arming it.
+
+Use `status` and `debug.run` for bounded lifecycle views. Use `children.list` before `resume` and resume only rows reported resumable. `steer` is acknowledged delivery; it is not proof of compliance. `interrupt` pauses current work when supported. `stop` remains ownership-controlled. Use blocking `subagent_wait` only when the current turn must consume async completion. Headless run-to-completion uses automatic draining at `agent_end`; it does not depend on a future interactive turn.
 
 Background work remains visible through Fleet, status, events, artifacts, and completion notifications.
 
