@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { SUBAGENT_GUIDE_TOPICS } from "../../src/extension/subagent-guide.ts";
+import { SubagentParams } from "../../src/extension/schemas.ts";
 import { SUBAGENT_ACTIONS } from "../../src/shared/types.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -11,9 +12,7 @@ const expectedActions = [
 	"list", "get", "models", "children.list", "guide", "validate", "worktree.discard", "lane.status",
 	"status", "debug.run", "interrupt", "resume", "steer", "stop", "doctor",
 ];
-const expectedFields = [
-	"agent", "task", "extensionBindings", "action", "id", "runId", "dir", "handoffPath", "laneId", "index", "childId", "view", "lines", "topic", "message", "mode", "steeringRecovery", "workflowScript", "workflowScriptPath", "preflight", "chatProgress", "isolation", "worktree", "lane", "context", "async", "timeoutMs", "maxRuntimeMs", "checkpointAfterMs", "toolTimeoutMs", "toolBudget", "usageBudget", "agentScope", "cwd", "artifacts", "includeProgress", "sessionDir", "control", "output", "outputMode", "skill", "model", "fast", "outputSchema", "agentContract", "acceptance", "gate",
-];
+const expectedFields = Object.keys((SubagentParams as unknown as { properties: Record<string, unknown> }).properties);
 
 function read(relativePath: string): string {
 	return fs.readFileSync(path.join(root, relativePath), "utf-8");
@@ -192,7 +191,7 @@ describe("model-facing docs and skill contract", () => {
 		const documentedFields = [...reference.matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]);
 		assert.deepEqual(documentedFields, expectedFields);
 		for (const action of expectedActions) assert.match(reference, new RegExp(`\\b${action.replace(".", "\\.")}\\b`));
-		assert.match(reference, /primary schema has exactly these 47 top-level fields/i);
+		assert.match(reference, new RegExp(`primary schema has exactly these ${expectedFields.length} top-level fields`, "i"));
 	});
 
 	it("does not instruct models to call removed administration", () => {

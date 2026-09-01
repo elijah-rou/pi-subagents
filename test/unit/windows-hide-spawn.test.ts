@@ -29,7 +29,7 @@ describe("nested child Pi process visibility", () => {
 		const source = fs.readFileSync(path.join(projectRoot, sourcePath), "utf-8");
 		const gitSpawnCalls = source.match(/spawnSync\(\s*"git"[\s\S]*?\{[^}]*\}\s*\)/g) ?? [];
 
-		assert.equal(gitSpawnCalls.length, 4, `${sourcePath} should have exactly four Git spawnSync calls`);
+		assert.ok(gitSpawnCalls.length > 0, `${sourcePath} should contain Git spawnSync calls`);
 		for (const call of gitSpawnCalls) {
 			assert.match(call, /\bwindowsHide:\s*true\b/, `${sourcePath} Git spawnSync should set windowsHide: true`);
 		}

@@ -18,12 +18,14 @@ Package 2a removed mission and goal administration and all new mission writes. O
 
 ## Parameters
 
-The primary schema has exactly these 47 top-level fields:
+The primary schema has exactly these 49 top-level fields:
 
 | Field | Purpose |
 |---|---|
 | `agent` | Direct child agent, or target for retained discovery actions. |
 | `task` | Optional direct-child task. |
+| `delegationReason` | Required launch provenance: `user_async`, `independent_parallel_lane`, `manager_continuity`, `unresolved_ownership`, `semantic_review`, or `elevated_risk_review`. Management and `validate` calls are exempt. |
+| `delegationBasis` | Required for `independent_parallel_lane` as `{ ownership: string[], deliverable: string }`, or for `unresolved_ownership` as `{ inspected: string[], unresolved: string }`; omit for other reasons. |
 | `extensionBindings` | Bounded namespaced metadata delivered to the child runtime. |
 | `action` | One of the 15 actions above. |
 | `id` | Run identifier or prefix for status/control. |
@@ -75,17 +77,17 @@ Removed primary fields are rejected or absent from the provider schema. In parti
 ## Direct execution
 
 ```js
-{ agent: "worker", task: "Implement the approved change", async: true }
+{ agent: "worker", task: "Implement the approved change", delegationReason: "user_async", async: true }
 ```
 
 Direct execution starts exactly one child. Do not combine `agent`/`task` with an action or workflow script.
 
-External CLI agent profiles use their own fail-closed runner contract. They do not support native Pi child options such as model override, structured output, acceptance contracts, tool budgets, fork context, skills, or native Pi tools unless the runner explicitly implements them.
+External CLI agent profiles use their own fail-closed runner contract. They do not support native Pi child options such as model override, structured output, tool budgets, fork context, skills, or native Pi tools unless the runner explicitly implements them. Host acceptance contracts remain enforced against the external runner's canonical report.
 
 ## Workflow execution
 
 ```js
-{ workflowScript: `
+{ delegationReason: "semantic_review", workflowScript: `
   const scan = await runs.run("scan", { agent: "scout", task: "Find affected files" });
   const reviews = await runs.all([
     { key: "correctness", agent: "reviewer", task: "Review correctness: " + scan.output },

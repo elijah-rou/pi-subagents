@@ -6,7 +6,7 @@ import {
 	type SubagentDelegationUpdate,
 	type SubagentDelegationValue,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, Usage } from "../shared/types.ts";
+import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, RunFanoutBudgetDescriptor, ToolBudgetConfig, Usage } from "../shared/types.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
 
 export interface PromptTemplateDelegationRequest {
@@ -132,6 +132,9 @@ export interface DelegatedSubagentExecutionParams {
 	delegatedThinkingOverride?: SubagentDelegationThinking;
 	/** Internal-only capability accepted and stripped by executeDelegated. */
 	delegatedAllowZeroToolBudget?: true;
+	/** Trusted bridge-owned cumulative fan-out admission. */
+	runFanoutBudget?: RunFanoutBudgetDescriptor;
+	runFanoutAdmitted?: boolean;
 	async: false;
 	foregroundOnly: true;
 	clarify: false;

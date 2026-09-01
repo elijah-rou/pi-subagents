@@ -788,6 +788,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 
 	it("lets explicit fast false opt out async external single runs from inherited fast mode", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
 		const agentConfig = makeAgent("external", {
+				defaultAcceptance: false,
 			fast: true,
 			runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('external async fast false')"] },
 		} as never);
@@ -796,6 +797,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "external",
 			task: "Run external",
 			agentConfig,
+			acceptance: false,
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
 			shareEnabled: false,
@@ -808,6 +810,7 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			agent: "external",
 			task: "Run external",
 			agentConfig,
+			acceptance: false,
 			fast: false,
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },

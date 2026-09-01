@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
@@ -555,13 +556,47 @@ export function formatParallelHandoffError(error: unknown): string {
 	return `Worktree handoff unavailable: ${error instanceof Error ? error.message : String(error)}`;
 }
 
+function validatePreservedWorktreeDiscard(manifest: ParallelHandoffManifest): void {
+	const seenPaths = new Set<string>();
+	for (const group of manifest.groups) {
+		let repoRoot: string;
+		try {
+			repoRoot = fs.realpathSync(group.repoRoot);
+		} catch (error) {
+			throw new Error(`Preserved worktree repository is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		const gitRoot = fs.realpathSync(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: repoRoot, encoding: "utf-8" }).trim());
+		if (gitRoot !== repoRoot || path.resolve(group.repoRoot) !== repoRoot) throw new Error(`Preserved worktree repository identity mismatch: ${group.repoRoot}`);
+		execFileSync("git", ["cat-file", "-e", `${group.baseCommit}^{commit}`], { cwd: repoRoot, stdio: "ignore" });
+		const records = execFileSync("git", ["worktree", "list", "--porcelain", "-z"], { cwd: repoRoot, encoding: "utf-8" }).split("\0\0");
+		const worktrees = new Map<string, string>();
+		for (const record of records) {
+			const lines = record.split("\0").flatMap((line) => line.split("\n")).filter(Boolean);
+			const worktree = lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length);
+			const branch = lines.find((line) => line.startsWith("branch refs/heads/"))?.slice("branch refs/heads/".length);
+			if (worktree && branch) worktrees.set(fs.realpathSync(worktree), branch);
+		}
+		for (const task of group.cleanup.tasks.filter((candidate) => candidate.preserved && (!candidate.worktreeRemoved || !candidate.branchRemoved))) {
+			if (!task.branch.startsWith("pi-parallel-") || !task.branch.endsWith(`-${task.index}`)) throw new Error(`Preserved worktree branch identity mismatch for task ${task.index}.`);
+			const absolutePath = path.resolve(task.path);
+			const realPath = fs.realpathSync(absolutePath);
+			if (absolutePath !== realPath || fs.lstatSync(absolutePath).isSymbolicLink()) throw new Error(`Preserved worktree path must be canonical and non-symlinked: ${task.path}`);
+			if (seenPaths.has(realPath)) throw new Error(`Duplicate preserved worktree path: ${realPath}`);
+			seenPaths.add(realPath);
+			if (worktrees.get(realPath) !== task.branch) throw new Error(`Preserved worktree path/branch does not match git worktree state: ${task.path}`);
+		}
+	}
+}
+
 export function discardPreservedWorktrees(
 	manifestPath: string,
 	authorization: Extract<WorktreeCleanupIntent, { kind: "discard" }>["authorization"],
 ): { manifest: ParallelHandoffManifest; text: string } {
 	const resolvedPath = path.resolve(manifestPath);
+	if (fs.lstatSync(resolvedPath).isSymbolicLink()) throw new Error(`Parallel handoff manifest must not be a symlink: ${resolvedPath}`);
 	const manifest = readParallelHandoffManifest(resolvedPath);
 	if (!manifest) throw new Error(`Parallel handoff manifest not found: ${resolvedPath}`);
+	validatePreservedWorktreeDiscard(manifest);
 	let attempted = 0;
 	for (const group of manifest.groups) {
 		const pending = group.cleanup.tasks.filter((task) => task.preserved && (!task.worktreeRemoved || !task.branchRemoved));

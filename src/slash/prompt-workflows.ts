@@ -213,6 +213,7 @@ function workflowParams(workflow: PromptWorkflow, args: string[], runtime: Retur
 function promptWorkflowExecutionParams(workflows: PromptWorkflow[], args: string[], runtime: ReturnType<typeof parseRuntimeOptions>): SubagentParamsLike {
 	return {
 		workflowScript: promptWorkflowScript(workflows, args, runtime),
+		delegationReason: "user_async",
 		agentScope: "both",
 		async: runtime.bg ? true : false,
 	};

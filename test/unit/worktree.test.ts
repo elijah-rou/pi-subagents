@@ -660,36 +660,36 @@ setTimeout(() => {
 });
 
 describe("manifest-backed worktree discard", () => {
-	it("keeps incomplete cleanup actionable with exact manual Git commands", async () => {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worktree-discard-manifest-"));
+	it("rejects a tampered task branch without deleting the worktree or real branch", async () => {
+		const repo = createRepo("pi-worktree-discard-manifest-");
+		const runId = `discard-${Date.now().toString(36)}`;
+		const setup = createWorktrees(repo, runId, 1);
+		const original = setup.worktrees[0]!;
 		try {
-			const manifestPath = path.join(root, "handoff.json");
-			const worktreePath = path.join(root, "preserved-worktree");
-			fs.mkdirSync(worktreePath);
+			const manifestPath = path.join(repo, "handoff.json");
 			fs.writeFileSync(manifestPath, JSON.stringify({
 				version: 1,
-				runId: "discard-run",
+				runId,
 				mode: "parallel",
 				source: "foreground",
-				cwd: root,
+				cwd: repo,
 				createdAt: 1,
 				updatedAt: 1,
 				groups: [{
 					stepIndex: 0,
-					baseCommit: "deadbeef",
-					repoRoot: root,
+					baseCommit: setup.baseCommit,
+					repoRoot: setup.cwd,
 					children: [],
-					cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktreePath, branch: "pi-parallel-discard", worktreeRemoved: false, branchRemoved: false, preserved: true }] },
+					cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: original.path, branch: "pi-parallel-tampered-0", worktreeRemoved: false, branchRemoved: false, preserved: true }] },
 				}],
 			}), "utf-8");
 			const { discardPreservedWorktrees } = await import("../../src/runs/shared/parallel-handoff.ts");
-			const discarded = discardPreservedWorktrees(manifestPath, { kind: "confirmed" });
-			assert.match(discarded.text, /git -C .* worktree remove --force/);
-			assert.match(discarded.text, /branch -D/);
-			assert.equal(discarded.manifest.groups[0]?.cleanup.state, "partial");
-			assert.equal(discarded.manifest.groups[0]?.cleanup.tasks[0]?.preserved, true);
+			assert.throws(() => discardPreservedWorktrees(manifestPath, { kind: "confirmed" }), /does not match git worktree state/);
+			assert.match(git(repo, ["worktree", "list", "--porcelain"]), new RegExp(original.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assert.doesNotThrow(() => git(repo, ["show-ref", "--verify", `refs/heads/${original.branch}`]));
 		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
+			cleanupWorktrees(setup, { kind: "discard", authorization: { kind: "confirmed" } });
+			cleanupRepo(repo);
 		}
 	});
 });

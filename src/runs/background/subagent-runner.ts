@@ -1329,6 +1329,38 @@ async function runSingleStepInner(
 	}
 	transcriptWriter?.writeInitialUserMessage(`${PROMPT_REDACTED}; live Prompt Audit only.`);
 
+	const settleExternalAcceptance = async (input: { output: string; exitCode: number | null; error?: string; timedOut?: boolean; stopped?: boolean }) => {
+		const stopped = input.stopped === true || ctx.stopSignal?.aborted === true;
+		const timedOut = !stopped && (input.timedOut === true || ctx.timeoutSignal?.aborted === true);
+		const evaluated = step.effectiveAcceptance && !stopped && !timedOut && !ctx.skipAcceptance?.()
+			? await evaluateAcceptance(omitUndefinedProperties({
+				acceptance: step.effectiveAcceptance,
+				output: input.output,
+				cwd: step.cwd ?? ctx.cwd,
+				signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]),
+				abortMessage: ctx.stopSignal?.aborted ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.",
+				reportOptional: isAgentContractV1(step.agentContract) && step.effectiveAcceptance.explicit,
+				artifactsDir: ctx.artifactsDir,
+				runId: ctx.id,
+			}))
+			: undefined;
+		const acceptance = step.effectiveAcceptance
+			? stopped
+				? buildSkippedAcceptanceLedger(step.effectiveAcceptance, { id: "stopped", message: "Acceptance was not evaluated because the subagent was stopped." })
+				: timedOut
+					? buildSkippedAcceptanceLedger(step.effectiveAcceptance, { id: "timeout", message: "Acceptance was not evaluated because the subagent timed out." })
+					: evaluated
+			: undefined;
+		const decision = decideChildTerminal({
+			exitCode: input.exitCode ?? 1,
+			error: input.error,
+			timedOut,
+			stopped,
+			...(acceptance ? { acceptance: { status: acceptance.status, diagnostic: acceptanceFailureMessage(acceptance), required: acceptance.effectiveAcceptance.onFailure === "fail" } } : {}),
+		});
+		return { output: stripAcceptanceReport(input.output), acceptance, exitCode: decision.exitCode, error: decision.error, timedOut, stopped };
+	};
+
 	if (step.runner?.type === "external-cli") {
 		const externalCwd = step.cwd ?? ctx.cwd;
 		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
@@ -1359,15 +1391,16 @@ async function runSingleStepInner(
 			stopMessage: ctx.stopMessage,
 			onProcess: ctx.onExternalProcess,
 		}));
-		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
-		const resolvedOutput = step.outputPath && external.exitCode === 0
-			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
-			: { fullOutput: external.output };
+		const settled = await settleExternalAcceptance(external);
+		try { fs.writeFileSync(ctx.outputFile, settled.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
+		const resolvedOutput = step.outputPath && settled.exitCode === 0
+			? resolveSingleOutput(step.outputPath, settled.output, outputSnapshot, step.outputClaimPath)
+			: { fullOutput: settled.output };
 		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
-		const exitCode = resolvedOutput.fatalError ? 1 : external.exitCode;
+		const exitCode = resolvedOutput.fatalError ? 1 : settled.exitCode;
 		const error = resolvedOutput.fatalError && resolvedOutput.saveError
-			? external.error ? `${external.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
-			: external.error;
+			? settled.error ? `${settled.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
+			: settled.error;
 		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
 			fullOutput: resolvedOutput.fullOutput,
 			outputPath: step.outputPath,
@@ -1381,8 +1414,8 @@ async function runSingleStepInner(
 			? persistStepArtifacts({
 				artifactPaths,
 				artifactConfig: ctx.artifactConfig,
-				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: external.externalProcess, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
+				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalProcess: external.externalProcess, exitCode, error, acceptance: settled.acceptance, timestamp: Date.now() },
 			})
 			: {};
 		return omitUndefinedProperties({
@@ -1390,17 +1423,19 @@ async function runSingleStepInner(
 			...(childSessionName ? { sessionName: childSessionName } : {}),
 			context: step.context,
 			output: finalizedOutput.displayOutput,
-			outputState: external.output.trim() ? "present" : "absent",
+			outputState: settled.output.trim() ? "present" : "absent",
 			exitCode,
 			error,
-			timedOut: external.timedOut,
-			stopped: external.stopped,
+			timedOut: settled.timedOut,
+			stopped: settled.stopped,
 			processSignal: external.processSignal,
 			artifactPaths,
 			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
 			externalProcess: external.externalProcess,
+			acceptance: settled.acceptance,
+			...(step.effectiveAcceptance ? { acceptanceInput: persistResolvedAcceptance(step.effectiveAcceptance) } : {}),
 		});
 	}
 
@@ -1409,6 +1444,7 @@ async function runSingleStepInner(
 			type: "external-job",
 			provider: step.runner.provider,
 			options: step.runner.options ?? {},
+			authority: { access: "read-only", publication: "prohibited", protocol: 1 },
 			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
 		const outputSnapshot = captureAttemptOutputSnapshot();
@@ -1429,15 +1465,16 @@ async function runSingleStepInner(
 			onExternalJob: ctx.onExternalJob,
 			followUp: step.externalJobFollowUp,
 		}));
-		try { fs.writeFileSync(ctx.outputFile, external.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
-		const resolvedOutput = step.outputPath && external.exitCode === 0
-			? resolveSingleOutput(step.outputPath, external.output, outputSnapshot, step.outputClaimPath)
-			: { fullOutput: external.output };
+		const settled = await settleExternalAcceptance(external);
+		try { fs.writeFileSync(ctx.outputFile, settled.output, "utf-8"); } catch { /* Observability output is best-effort. */ }
+		const resolvedOutput = step.outputPath && settled.exitCode === 0
+			? resolveSingleOutput(step.outputPath, settled.output, outputSnapshot, step.outputClaimPath)
+			: { fullOutput: settled.output };
 		const outputReference = resolvedOutput.savedPath ? formatSavedOutputReference(resolvedOutput.savedPath, resolvedOutput.fullOutput) : undefined;
-		const exitCode = resolvedOutput.fatalError ? 1 : external.exitCode;
+		const exitCode = resolvedOutput.fatalError ? 1 : settled.exitCode;
 		const error = resolvedOutput.fatalError && resolvedOutput.saveError
-			? external.error ? `${external.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
-			: external.error;
+			? settled.error ? `${settled.error}\n${resolvedOutput.saveError}` : resolvedOutput.saveError
+			: settled.error;
 		const finalizedOutput = finalizeSingleOutput(omitUndefinedProperties({
 			fullOutput: resolvedOutput.fullOutput,
 			outputPath: step.outputPath,
@@ -1451,8 +1488,8 @@ async function runSingleStepInner(
 			? persistStepArtifacts({
 				artifactPaths,
 				artifactConfig: ctx.artifactConfig,
-				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode: external.exitCode, error: external.error, usage: external.usage, timestamp: Date.now() },
+				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
+				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode, error, acceptance: settled.acceptance, usage: external.usage, timestamp: Date.now() },
 			})
 			: {};
 		return omitUndefinedProperties({
@@ -1460,17 +1497,19 @@ async function runSingleStepInner(
 			...(childSessionName ? { sessionName: childSessionName } : {}),
 			context: step.context,
 			output: finalizedOutput.displayOutput,
-			outputState: external.output.trim() ? "present" : "absent",
+			outputState: settled.output.trim() ? "present" : "absent",
 			exitCode,
 			error,
-			timedOut: external.timedOut,
-			stopped: external.stopped,
+			timedOut: settled.timedOut,
+			stopped: settled.stopped,
 			artifactPaths,
 			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
 			...(external.usage ? { usage: external.usage } : {}),
 			externalJob: external.externalJob,
+			acceptance: settled.acceptance,
+			...(step.effectiveAcceptance ? { acceptanceInput: persistResolvedAcceptance(step.effectiveAcceptance) } : {}),
 		});
 	}
 
@@ -1537,6 +1576,7 @@ async function runSingleStepInner(
 		if (effectiveStructuredOutput) {
 			try {
 				if (fs.existsSync(effectiveStructuredOutput.outputPath)) fs.unlinkSync(effectiveStructuredOutput.outputPath);
+				if (effectiveStructuredOutput.acceptanceReportPath && fs.existsSync(effectiveStructuredOutput.acceptanceReportPath)) fs.unlinkSync(effectiveStructuredOutput.acceptanceReportPath);
 			} catch {
 				// Missing/stale structured-output files are handled after the child exits.
 			}
@@ -2146,6 +2186,7 @@ function externalRunnerStatus(runner: SubagentStep["runner"]): ExternalCliRunner
 			type: "external-job",
 			provider: runner.provider,
 			options: runner.options ?? {},
+			authority: { access: "read-only", publication: "prohibited", protocol: 1 },
 			capabilities: { stop: false, steer: false, resume: false, structuredOutput: false, toolEvents: false },
 		};
 	}

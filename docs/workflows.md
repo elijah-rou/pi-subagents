@@ -57,7 +57,7 @@ subagent({ action: "validate", workflowScript: `
 For a script stored in a file, use `workflowScriptPath` instead of `workflowScript`:
 
 ```js
-subagent({ workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" });
+subagent({ delegationReason: "user_async", workflowScriptPath: "workflows/review.js", cwd: "/path/to/project" });
 subagent({ action: "validate", workflowScriptPath: "workflows/review.js" });
 ```
 
@@ -69,6 +69,7 @@ Composite workflows have no default parent deadline. Add bounds only when the wo
 
 ```js
 subagent({
+  delegationReason: "user_async",
   workflowScript: `
     const scan = await runs.run("scan", { agent: "scout", task: "Inspect the named files." });
     return runs.run("review", { agent: "reviewer", task: "Review:\n" + scan.output });
@@ -91,7 +92,7 @@ Invalid scripts return `{ ok: false, errors }` as a tool error and include line 
 Validation checks syntax, portable nested-async rules, literal `runs.run` and `runs.all` keys, direct keyed access to a known `runs.all` result, and statically clear non-JSON boundary values. A workflow that only wraps one ordinary child receives a non-failing advisory to use direct `{ agent, task }` execution. The preview is limited to 64 groups, 64 steps, 32 lanes, 16 unknown-region diagnostics, 256-character claim strings, and 64 KiB of topology JSON. Validation does not discover agents, launch children, scan the filesystem, call a model, or create run artifacts.
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const scan = await runs.run("scan", { agent: "scout", task: "Scan the codebase" });
   const reviews = await runs.all([
     { key: "correctness", agent: "reviewer", task: "Review correctness: " + scan.output },
@@ -104,7 +105,7 @@ subagent({ workflowScript: `
 Keep helper functions portable across Node and Bun. Use top-level `await`, plain helper functions that return `runs.run(...)`, or explicit Promise chains. Do not define nested `async function` helpers, async arrows, or async methods inside `workflowScript`; native async helpers hide child-launch observation in Bun and are rejected.
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   function scan() {
     return runs.run("scan", { agent: "scout", task: "Scan the codebase" });
   }
@@ -116,7 +117,7 @@ subagent({ workflowScript: `
 Chaining is still supported. The supported form is scripted chaining: await one `runs.run(...)` result, then pass its output into the next step. Parallel fanout uses `runs.all(...)` inside the same script.
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const plan = await runs.run("plan", { agent: "scout", task: "Plan the migration" });
   const patch = await runs.run("patch", { agent: "worker", task: "Implement this plan:\n" + plan.output });
   return patch.output;
@@ -128,7 +129,7 @@ subagent({ workflowScript: `
 For a bounded set of independent chains, `runs.lanes(...)` removes the mechanical loop that would otherwise connect each lane's stages. It is a helper inside `workflowScript`, not a new top-level `subagent` execution mode:
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const board = await runs.lanes([
     {
       key: "api",
@@ -173,7 +174,7 @@ The board is bounded and contains only lane/stage keys, state, success, retained
 Use `runs.host(...)` when the operator wants one non-interactive command to be part of the workflow evidence instead of a child-agent run:
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const tests = await runs.host("unit-tests", {
     kind: "command",
     command: "npm run test:unit",
@@ -193,7 +194,7 @@ The first version supports only `kind: "command"`. `command` and `timeoutMs` are
 Use `await runs.steer(key, message, options?)` after `runs.run` or `runs.all` has launched that stable key. Scripts do not target raw run ids. The optional fields are `mode: "steer" | "follow_up" | "auto"`, a non-negative child `index`, and a positive `ackTimeoutMs`.
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const writer = runs.run("writer", { agent: "worker", task: "Implement the change" });
   const evidence = await runs.run("evidence", { agent: "scout", task: "Find the exact contract" });
   const receipt = await runs.steer("writer", "Also check: " + evidence.output, { mode: "follow_up" });
@@ -210,7 +211,7 @@ Always await or return a `runs.steer` promise. The workflow waits for an observe
 `runs.run` starts a keyed child when you call it. You do not need separate `runs.start`, `runs.next`, or `runs.collect` helpers for rolling councils or staged reviews. This is the advanced exception to ordinary `runs.all` fanout: keep launched promises only when the script later observes each one with direct `await`, `Promise.race`, or `Promise.all`. Use `Promise.race` to wait for the next completed child, steer a still-running sibling by its stable key, and use `Promise.all` to collect the remaining children.
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   let pending = [
     { key: "analysis-a", promise: runs.run("analysis-a", { agent: "reviewer", task: "Analyze option A" }).then((result) => ({ key: "analysis-a", result })) },
     { key: "analysis-b", promise: runs.run("analysis-b", { agent: "reviewer", task: "Analyze option B" }).then((result) => ({ key: "analysis-b", result })) },
@@ -233,7 +234,7 @@ The workflow trace records the run completions and steering receipt. Scripts sti
 Use named outputs when later workflow steps need structured data or durable references:
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const inventory = await runs.run("inventory", {
     agent: "scout",
     task: "List the files that need review.",
@@ -254,7 +255,7 @@ subagent({ workflowScript: `
 For dynamic fanout, have one step return a structured list, check it in JavaScript, then map the bounded entries into `runs.all(...)`:
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const targets = await runs.run("targets", {
     agent: "scout",
     task: "Return up to five source files that need review.",
@@ -277,7 +278,7 @@ subagent({ workflowScript: `
 For intermediate data that only later steps need, prefer the prior child's returned output or `structuredOutput` instead of writing shared files:
 
 ```js
-subagent({ workflowScript: `
+subagent({ delegationReason: "user_async", workflowScript: `
   const scan = await runs.run("scan", { agent: "scout", task: "Find the files that need fixes." });
   return runs.run("fix", { agent: "worker", task: "Implement these findings:\n" + scan.output });
 ` });

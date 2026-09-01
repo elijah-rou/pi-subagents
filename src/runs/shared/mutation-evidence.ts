@@ -85,12 +85,22 @@ export function fingerprintWorkspace(cwd: string, limits: { maxUntrackedFiles: n
 		} catch (error) {
 			return { ...base, cacheable: false, uncacheableReason: `cannot read untracked path ${relativePath}: ${error instanceof Error ? error.message : String(error)}` };
 		}
-		if (!stat.isFile()) continue;
-		totalBytes += stat.size;
+		let kind: "file" | "symlink";
+		let content: Buffer;
+		if (stat.isFile()) {
+			kind = "file";
+			content = fs.readFileSync(absolutePath);
+		} else if (stat.isSymbolicLink()) {
+			kind = "symlink";
+			content = Buffer.from(fs.readlinkSync(absolutePath));
+		} else {
+			return { ...base, cacheable: false, uncacheableReason: `unsupported untracked path type ${relativePath}` };
+		}
+		totalBytes += content.byteLength;
 		if (totalBytes > limits.maxUntrackedBytes) {
 			return { ...base, cacheable: false, uncacheableReason: `untracked content bytes exceed limit ${limits.maxUntrackedBytes}` };
 		}
-		untrackedHash.update(relativePath).update("\0").update(fs.readFileSync(absolutePath)).update("\0");
+		untrackedHash.update(kind).update("\0").update(relativePath).update("\0").update(content).update("\0");
 	}
 	const untrackedDigest = untrackedHash.digest("hex");
 	const digest = createHash("sha256").update(JSON.stringify({ repositoryRoot, head, indexDigest, trackedDigest, untrackedDigest })).digest("hex");

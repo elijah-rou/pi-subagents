@@ -882,7 +882,7 @@ export function registerSlashCommands(
 			if (inline.skill !== undefined) child.skill = inline.skill;
 			if (inline.model) child.model = inline.model;
 			if (fork) child.context = "fork";
-			launchCommand(ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
+			launchCommand(ctx, { workflowScript: slashRunWorkflowScript("run", child), delegationReason: "user_async", async: bg ? true : false });
 		},
 	});
 

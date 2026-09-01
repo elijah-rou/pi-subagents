@@ -504,6 +504,7 @@ async function runSingleAttempt(
 	if (options.structuredOutput) {
 		try {
 			if (existsSync(options.structuredOutput.outputPath)) unlinkSync(options.structuredOutput.outputPath);
+			if (options.structuredOutput.acceptanceReportPath && existsSync(options.structuredOutput.acceptanceReportPath)) unlinkSync(options.structuredOutput.acceptanceReportPath);
 		} catch {
 			// Missing/stale structured-output files are handled after the child exits.
 		}

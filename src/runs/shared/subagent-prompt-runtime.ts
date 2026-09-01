@@ -712,8 +712,12 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 				}
 				fs.mkdirSync(path.dirname(structuredOutputPath), { recursive: true });
 				fs.writeFileSync(structuredOutputPath, JSON.stringify(params.value), { mode: 0o600 });
-				if (structuredAcceptanceReportPath && params.acceptanceReport !== undefined) {
-					fs.writeFileSync(structuredAcceptanceReportPath, JSON.stringify(params.acceptanceReport), { mode: 0o600 });
+				if (structuredAcceptanceReportPath) {
+					if (params.acceptanceReport !== undefined) {
+						fs.writeFileSync(structuredAcceptanceReportPath, JSON.stringify(params.acceptanceReport), { mode: 0o600 });
+					} else if (fs.existsSync(structuredAcceptanceReportPath)) {
+						fs.unlinkSync(structuredAcceptanceReportPath);
+					}
 				}
 				return {
 					content: [{ type: "text", text: "Structured output captured." }],

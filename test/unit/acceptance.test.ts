@@ -524,6 +524,12 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("does not mask a malformed explicit report with a later valid fence", () => {
+		const parsed = parseAcceptanceReport(`\`\`\`acceptance-report\n{\n\`\`\`\n\`\`\`acceptance-report\n{"manualNotes":"ok"}\n\`\`\``);
+		assert.equal(parsed.report, undefined);
+		assert.match(parsed.error ?? "", /Failed to parse acceptance-report/);
+	});
+
 	it("recovers a valid report from an unterminated explicit fence only", () => {
 		const recovered = parseAcceptanceReport(`done\n\`\`\`acceptance-report\n${JSON.stringify(reportData())}`);
 		assert.deepEqual(recovered.report?.changedFiles, ["src/file.ts"]);
@@ -1399,14 +1405,16 @@ describe("acceptance gates", () => {
 
 	it("memoizes host verification by tracked Git state, including failures", async () => {
 		const cwd = tempGitRepo();
-		const artifactsDir = path.join(cwd, ".artifacts");
+		const artifactsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-acceptance-artifacts-"));
+		const countPath = path.join(artifactsDir, "count.txt");
+		const failCountPath = path.join(artifactsDir, "fail-count.txt");
 		const previousInheritedSecret = process.env.GATE_INHERITED_SECRET;
 		process.env.GATE_INHERITED_SECRET = "host-secret-not-persisted";
 		try {
 			const passing = resolveEffectiveAcceptance({
 				agentName: "worker",
 				task: "run gate",
-				explicit: { level: "verified", verify: [{ id: "gate", command: `${process.execPath} -e "process.stdout.write(process.env.GATE_SECRET+':'+process.env.GATE_INHERITED_SECRET);require('node:fs').appendFileSync('count.txt','x')"`, env: { GATE_SECRET: "not-persisted" } }] },
+				explicit: { level: "verified", verify: [{ id: "gate", command: `${process.execPath} -e "process.stdout.write(process.env.GATE_SECRET+':'+process.env.GATE_INHERITED_SECRET);require('node:fs').appendFileSync(process.env.COUNT_PATH,'x')"`, env: { GATE_SECRET: "not-persisted", COUNT_PATH: countPath } }] },
 				agentContract: { version: 1 },
 			});
 			const evaluate = () => evaluateAcceptance({ acceptance: passing, output: "done", cwd, reportOptional: true, artifactsDir, runId: "memo-run" });
@@ -1418,11 +1426,11 @@ describe("acceptance gates", () => {
 			const inheritedChanged = await evaluate();
 			fs.writeFileSync(path.join(cwd, "file.txt"), "tracked change\n", "utf-8");
 			const tracked = await evaluate();
-			assert.equal(fs.readFileSync(path.join(cwd, "count.txt"), "utf-8"), "xxx");
+			assert.equal(fs.readFileSync(countPath, "utf-8"), "xxxx");
 			assert.equal(first.verifyRuns[0]?.memoized, false);
 			assert.equal(first.verifyRuns[0]?.stdout, "[REDACTED]:[REDACTED]");
 			assert.equal(same.verifyRuns[0]?.memoized, true);
-			assert.equal(untracked.verifyRuns[0]?.memoized, true);
+			assert.equal(untracked.verifyRuns[0]?.memoized, false);
 			assert.equal(inheritedChanged.verifyRuns[0]?.memoized, false);
 			assert.equal(inheritedChanged.verifyRuns[0]?.stdout, "[REDACTED]:[REDACTED]");
 			assert.equal(tracked.verifyRuns[0]?.memoized, false);
@@ -1435,7 +1443,7 @@ describe("acceptance gates", () => {
 			const failing = resolveEffectiveAcceptance({
 				agentName: "worker",
 				task: "run gate",
-				explicit: { level: "verified", verify: [{ id: "gate", command: `${process.execPath} -e "require('node:fs').appendFileSync('fail-count.txt','x');process.exit(7)"` }] },
+				explicit: { level: "verified", verify: [{ id: "gate", command: `${process.execPath} -e "require('node:fs').appendFileSync(process.env.COUNT_PATH,'x');process.exit(7)"`, env: { COUNT_PATH: failCountPath } }] },
 				agentContract: { version: 1 },
 			});
 			const failOnce = await evaluateAcceptance({ acceptance: failing, output: "done", cwd, reportOptional: true, artifactsDir, runId: "failure-run" });
@@ -1444,11 +1452,12 @@ describe("acceptance gates", () => {
 			assert.equal(failCached.status, "rejected");
 			assert.equal(failCached.verifyRuns[0]?.memoized, true);
 			assert.equal(failCached.verifyRuns[0]?.exitCode, 7);
-			assert.equal(fs.readFileSync(path.join(cwd, "fail-count.txt"), "utf-8"), "x");
+			assert.equal(fs.readFileSync(failCountPath, "utf-8"), "x");
 		} finally {
 			if (previousInheritedSecret === undefined) delete process.env.GATE_INHERITED_SECRET;
 			else process.env.GATE_INHERITED_SECRET = previousInheritedSecret;
 			fs.rmSync(cwd, { recursive: true, force: true });
+			fs.rmSync(artifactsDir, { recursive: true, force: true });
 		}
 	});
 

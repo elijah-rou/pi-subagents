@@ -267,6 +267,43 @@ export function claimRunFanoutBatch(descriptor: RunFanoutBudgetDescriptor, paths
 	return commitRunFanoutBatch(descriptor, paths, (snapshot) => snapshot);
 }
 
+/** Admit each logical path at most once so transport retries do not consume fan-out twice. */
+export function claimRunFanoutPathsOnce(descriptor: RunFanoutBudgetDescriptor, paths: string[]): RunFanoutBudgetSnapshot {
+	const valid = validateRunFanoutBudgetDescriptor(descriptor);
+	const qualified = qualifyRunFanoutPaths(valid, paths);
+	return withAdmissionLock(valid.directory, () => {
+		const claimedPaths = new Set<string>();
+		for (const entry of fs.readdirSync(path.join(valid.directory, "claims"))) {
+			if (!/^\d{6}\.json$/.test(entry)) continue;
+			try {
+				const claim = JSON.parse(fs.readFileSync(path.join(valid.directory, "claims", entry), "utf-8")) as Partial<ClaimV1>;
+				if (claim.version === 1 && typeof claim.path === "string") claimedPaths.add(claim.path);
+			} catch {
+				throw new Error(`Run fan-out claim '${entry}' is unreadable.`);
+			}
+		}
+		const unclaimed = qualified.filter((claimPath, index) => !claimedPaths.has(claimPath) && qualified.indexOf(claimPath) === index);
+		if (unclaimed.length === 0) return getRunFanoutBudgetSnapshot(valid);
+		const before = getRunFanoutBudgetSnapshot(valid);
+		if (unclaimed.length > before.remaining) {
+			throw new RunFanoutLimitError({ code: "RUN_FANOUT_LIMIT", path: unclaimed[before.remaining] ?? unclaimed[0]!, requested: unclaimed.length, ...before });
+		}
+		for (const claimPath of unclaimed) {
+			for (let slot = 0; slot < valid.limit; slot++) {
+				const slotPath = path.join(valid.directory, "claims", `${String(slot).padStart(6, "0")}.json`);
+				try {
+					fs.writeFileSync(slotPath, `${JSON.stringify({ version: 1, claimId: randomUUID(), path: claimPath, claimedAt: Date.now() } satisfies ClaimV1)}\n`, { mode: 0o600, flag: "wx" });
+					break;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+					throw error;
+				}
+			}
+		}
+		return getRunFanoutBudgetSnapshot(valid);
+	});
+}
+
 export function formatRunFanoutBudget(snapshot: RunFanoutBudgetSnapshot): string {
 	return `Run fan-out: ${snapshot.used}/${snapshot.limit} used, ${snapshot.remaining} remaining`;
 }

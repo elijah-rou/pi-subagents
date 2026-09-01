@@ -67,6 +67,7 @@ import { resolveChildCwd } from "../../shared/path-resolution.ts";
 import { compactForegroundDetails, getSingleResultOutput, readStatus, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
 import { accountChildUsage } from "../../shared/usage-accounting.ts";
 import { createTaskMutationArbiter } from "../shared/llm-intent-arbiter.ts";
+import { classifyTaskMutationIntent } from "../shared/task-intent.ts";
 import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, writeParallelHandoffGroup, writePendingParallelHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import {
@@ -1389,6 +1390,9 @@ async function resumeExternalJobFollowUp(input: {
 	if (externalJob.state !== "completed") return { content: [{ type: "text", text: `External-job run '${input.target.runId}' provider state is ${externalJob.state}. Wait for completion, then use action='resume'.` }], isError: true, details: { mode: "management", results: [] } };
 	const support = providerFollowUpSupport(runner.provider);
 	if (!support.ok) return { content: [{ type: "text", text: support.message }], isError: true, details: { mode: "management", results: [] } };
+	if (input.baseAgentConfig.acceptanceRole !== "read-only" || classifyTaskMutationIntent(input.target.agent, input.followUp).kind !== "read-only") {
+		return { content: [{ type: "text", text: "External-job protocol v1 is advisory-only. Follow-up requires an agent declared acceptanceRole='read-only' and an explicitly read-only task." }], isError: true, details: { mode: "management", results: [] } };
+	}
 
 	const promptDigest = externalJobPromptDigest(input.followUp);
 	const requestDigest = externalJobFollowUpRequestDigest({ provider: runner.provider, parentProviderJobId: externalJob.providerJobId, promptDigest, options: runner.options });
@@ -2569,6 +2573,9 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 		&& (a.model === undefined || (a.modelSource?.type === "subagents.defaultModel" && a.model === a.modelSource.model));
 	if ((a.runner?.type === "external-cli" || a.runner?.type === "external-job") && (params.fast ?? a.fast) === true) {
 		return buildRequestedModeError(params, `Agent '${a.name}' uses runner.type='${a.runner.type}' and does not support fast mode.`);
+	}
+	if (a.runner?.type === "external-job" && (a.acceptanceRole !== "read-only" || classifyTaskMutationIntent(a.name, params.task ?? "").kind !== "read-only")) {
+		return buildRequestedModeError(params, `Agent '${a.name}' uses external-job protocol v1, which is advisory-only. The agent must declare acceptanceRole='read-only' and the task must be explicitly read-only.`);
 	}
 	const modelScopes = resolveModelScopesForAgent(data.modelScope, a.name, parentModel);
 	const modelOverride = a.runner?.type === "external-cli" || a.runner?.type === "external-job"
@@ -3888,6 +3895,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	) => Promise<AgentToolResult<Details>>;
+	createStructuredFanoutBudget: (ownerRunId: string) => RunFanoutBudgetDescriptor;
 } {
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
@@ -5951,5 +5959,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		return withAggregatedToolUsage(await execute(id, delegatedParams, signal, onUpdate, ctx));
 	};
 
-	return { execute: executeWithSingleDispatchGuard, executePublic, executeTrustedHost, executeDelegated };
+	return {
+		execute: executeWithSingleDispatchGuard,
+		executePublic,
+		executeTrustedHost,
+		executeDelegated,
+		createStructuredFanoutBudget: (ownerRunId) => createRunFanoutBudget(ownerRunId, resolveMaxSubagentSpawnsPerRun(deps.config.maxSubagentSpawnsPerRun)),
+	};
 }

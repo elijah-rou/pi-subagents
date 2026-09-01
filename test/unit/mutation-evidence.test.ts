@@ -39,6 +39,19 @@ describe("tracked mutation evidence", () => {
 		});
 	});
 
+	it("binds cache identity to an untracked symlink target without following it", () => {
+		withRepo((repo) => {
+			fs.symlinkSync("first-target", path.join(repo, "untracked-link"));
+			const before = fingerprintWorkspace(repo);
+			fs.unlinkSync(path.join(repo, "untracked-link"));
+			fs.symlinkSync("second-target", path.join(repo, "untracked-link"));
+			const after = fingerprintWorkspace(repo);
+			assert.equal(before.cacheable, true);
+			assert.notEqual(before.digest, after.digest);
+			assert.notEqual(before.untrackedDigest, after.untrackedDigest);
+		});
+	});
+
 	it("marks an over-bound untracked workspace uncacheable", () => {
 		withRepo((repo) => {
 			fs.writeFileSync(path.join(repo, "untracked.txt"), "too large");

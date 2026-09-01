@@ -1113,13 +1113,8 @@ export interface AcceptanceVerifyResult {
 	memoized?: boolean;
 	envKeys?: string[];
 	envHash?: string;
-	workspaceState?: {
-		kind: "git-tracked";
-		repoRoot: string;
-		cwdRelative: string;
-		head: string;
-		diffHash: string;
-	};
+	workspaceFingerprint?: WorkspaceFingerprintV1;
+	receipt?: VerificationReceiptV1;
 	artifactError?: string;
 }
 
@@ -1730,6 +1725,7 @@ export interface ExternalJobRunnerStatus {
 	type: "external-job";
 	provider: string;
 	options: Record<string, unknown>;
+	authority: { access: "read-only"; publication: "prohibited"; protocol: 1 };
 	capabilities: {
 		stop: false;
 		steer: false;
@@ -2780,7 +2776,7 @@ export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): nu
 	return configured !== undefined && configured > 0 ? configured : DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION;
 }
 
-export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 16;
+export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 64;
 
 export function normalizeMaxSubagentSpawnsPerRun(value: unknown): number | undefined {
 	const normalized = normalizeNonNegativeInteger(value);

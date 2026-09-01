@@ -525,7 +525,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	it("resume action starts a completed external-job follow-up and dedupes the same message", async () => {
 		const sourceRunId = `resume-external-job-${Date.now()}`;
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
-		const followUpMessage = "What changed after the first answer?";
+		const followUpMessage = "Review only. What changed after the first answer?";
 		const requestDigest = externalJobFollowUpRequestDigest({
 			provider: "surf-oracle",
 			parentProviderJobId: "job-parent",
@@ -567,7 +567,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: externalJobPromptDigest("original prompt"), options: { tier: "pro" }, state: "completed" },
 				}],
 			}, null, 2), "utf-8");
-			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
+			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { acceptanceRole: "read-only", defaultAcceptance: false, runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
 			const first = await executor.execute("resume-external-job-first", { action: "resume", id: sourceRunId, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
@@ -605,7 +605,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	it("resume action starts an indexed external-job follow-up from multi-child async runs", async () => {
 		const sourceRunId = `resume-external-job-multi-${Date.now()}`;
 		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
-		const followUpMessage = "Continue the selected advisor";
+		const followUpMessage = "Review only. Continue the selected advisor";
 		const requestDigest = externalJobFollowUpRequestDigest({
 			provider: "surf-oracle",
 			parentProviderJobId: "job-second",
@@ -648,7 +648,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					externalJob: { provider: "surf-oracle", providerJobId: "job-second", promptDigest: externalJobPromptDigest("original prompt"), options: { tier: "pro" }, state: "completed" },
 				}],
 			}, null, 2), "utf-8");
-			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
+			const { executor } = makeExecutor({ agents: [makeAgent("gpt-pro", { acceptanceRole: "read-only", defaultAcceptance: false, runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
 			const first = await executor.execute("resume-external-job-indexed", { action: "resume", id: sourceRunId, index: 1, message: followUpMessage }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 			assert.equal(first.isError, undefined, first.content[0]?.text ?? "follow-up failed");
@@ -706,7 +706,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 						externalJob: { provider: "surf-oracle", providerJobId: "job-parent", promptDigest: externalJobPromptDigest("original prompt"), options: suffix === "mismatch" ? { tier: "old" } : { tier: "pro" }, state: providerState },
 					}],
 				}, null, 2), "utf-8");
-				const { executor, events } = makeExecutor({ agents: [makeAgent("gpt-pro", { runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
+				const { executor, events } = makeExecutor({ agents: [makeAgent("gpt-pro", { acceptanceRole: "read-only", defaultAcceptance: false, runner: { type: "external-job", provider: "surf-oracle", options: { tier: "pro" } } })] });
 
 				const result = await executor.execute(`resume-external-job-${suffix}`, { action: "resume", id: sourceRunId, message: "Follow up" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 				assert.equal(result.isError, true);

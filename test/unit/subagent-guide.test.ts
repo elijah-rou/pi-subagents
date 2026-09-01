@@ -72,7 +72,7 @@ describe("subagent guide", () => {
 
 	it("keeps the tool reference aligned with the contracted fields", () => {
 		const guide = readSubagentGuide("tool-reference");
-		assert.match(guide, /primary schema has exactly these 47 top-level fields/i);
+		assert.match(guide, /primary schema has exactly these 49 top-level fields/i);
 		assert.ok(guide.includes("| `topic` |"));
 		assert.ok(guide.includes("| `context` |"));
 		assert.match(guide, /`fresh`, `fork`, or `profile`/);

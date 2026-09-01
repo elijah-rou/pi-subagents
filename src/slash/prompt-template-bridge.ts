@@ -21,6 +21,8 @@ import {
 	type PromptTemplateDelegationRequest,
 	type PromptTemplateDelegationResponse,
 } from "./delegation-adapters.ts";
+import type { RunFanoutBudgetDescriptor } from "../shared/types.ts";
+import { claimRunFanoutPathsOnce } from "../runs/shared/run-fanout-budget.ts";
 
 export const PROMPT_TEMPLATE_SUBAGENT_REQUEST_EVENT = SUBAGENT_DELEGATION_REQUEST_EVENT;
 export const PROMPT_TEMPLATE_SUBAGENT_STARTED_EVENT = SUBAGENT_DELEGATION_STARTED_EVENT;
@@ -43,6 +45,8 @@ interface PromptTemplateBridgeOptions<Ctx extends { cwd?: string }> {
 		ctx: Ctx,
 		onUpdate: (result: PromptTemplateBridgeResult) => void,
 	) => Promise<PromptTemplateBridgeResult>;
+	/** Creates the bridge-owned budget for one authenticated context and owner tree. */
+	createStructuredFanoutBudget?: (ownerRunId: string, ctx: Ctx) => RunFanoutBudgetDescriptor;
 	/** Concurrent-safe executor for structured delegation requests. */
 	executeStructured?: (
 		requestId: string,
@@ -78,6 +82,7 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 	const pendingAttemptCancels = new Map<string, true>();
 	const activeOwnedNodes = new Map<string, { attemptKey: string; controller: AbortController }>();
 	const settledAttempts = new Map<string, true>();
+	const ownerBudgets = new WeakMap<Ctx, Map<string, RunFanoutBudgetDescriptor>>();
 	const subscriptions: Array<() => void> = [];
 	let disposed = false;
 	let identitySaturated = false;
@@ -255,6 +260,32 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 				} satisfies PromptTemplateDelegationResponse);
 			}
 			return;
+		}
+
+		if (structuredRequest && key && options.createStructuredFanoutBudget) {
+			let budgets = ownerBudgets.get(ctx);
+			if (!budgets) {
+				budgets = new Map();
+				ownerBudgets.set(ctx, budgets);
+			}
+			let budget = budgets.get(structuredRequest.ownerRunId);
+			if (!budget) {
+				budget = options.createStructuredFanoutBudget(structuredRequest.ownerRunId, ctx);
+				budgets.set(structuredRequest.ownerRunId, budget);
+			}
+			try {
+				claimRunFanoutPathsOnce(budget, [`owned/${structuredRequest.nodeId}`]);
+				params = { ...params, runFanoutBudget: budget, runFanoutAdmitted: true };
+			} catch (error) {
+				emitTerminal(key, {
+					requestId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
+					status: "failed",
+					error: error instanceof Error ? error.message : String(error),
+				});
+				return;
+			}
 		}
 
 		const controller = new AbortController();

@@ -1711,6 +1711,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const markerPath = path.join(tempDir, "external-started");
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("external result")`] },
 				model: "mock/default-model",
 				modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
@@ -1750,6 +1751,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const markerPath = path.join(tempDir, "external-awaited-started");
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("awaited external result")`] },
 				model: "mock/default-model",
 				modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
@@ -1838,6 +1840,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("preserves canonical unknown external accounting across an async workflow await and status action", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", `process.stdout.write("canonical external result")`] },
 			}),
 		]);
@@ -1892,6 +1895,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const markerPath = path.join(tempDir, "external-single-omitted-async-started");
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("single async result")`] },
 				model: "mock/default-model",
 				modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
@@ -1931,6 +1935,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const markerPath = path.join(tempDir, "external-fast-false-started");
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				fast: true,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started"); process.stdout.write("external fast false result")`] },
 			}),
@@ -1980,6 +1985,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const markerPath = path.join(tempDir, "external-fallback-started");
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`] },
 				fallbackModels: ["mock/fallback"],
 			}),
@@ -2031,6 +2037,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		});
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "started")`] },
 				defaultContext: "fork",
 				fallbackModels: ["mock/fallback"],
@@ -2057,6 +2064,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("rejects explicit model overrides for external CLI agents", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('unreachable')"] },
 			}),
 		]);
@@ -2080,6 +2088,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("rejects external CLI agent models that differ from inherited subagents.defaultModel", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('unreachable')"] },
 				model: "mock/override-model",
 				modelSource: { type: "subagents.defaultModel", scope: "user", path: "/settings.json", model: "mock/default-model" },
@@ -2101,6 +2110,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	it("rejects external CLI agent models that equal inherited subagents.defaultModel without provenance", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const executor = makeExecutor([
 			makeAgent("external", {
+				defaultAcceptance: false,
 				runner: { type: "external-cli", command: process.execPath, args: ["-e", "process.stdout.write('unreachable')"] },
 				model: "mock/default-model",
 			}),

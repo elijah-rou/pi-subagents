@@ -85,6 +85,7 @@ Example shape:
 
 ```typescript
 subagent({
+  delegationReason: "user_async",
   workflowScript: `
     const results = await runs.all([
       { key: "deslop", agent: "reviewer", task: "Apply the available 'deslop' skill to review the current diff for concrete cleanup findings only. Do not modify files.", skill: "deslop" },

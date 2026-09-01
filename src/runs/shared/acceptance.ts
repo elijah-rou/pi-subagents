@@ -26,7 +26,10 @@ import type {
 	ResolvedAcceptanceConfig,
 	ResolvedAcceptanceGate,
 	SubagentRunMode,
+	VerificationReceiptV1,
+	WorkspaceFingerprintV1,
 } from "../../shared/types.ts";
+import { fingerprintWorkspace } from "./mutation-evidence.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
 const VALID_LEVELS = new Set<AcceptanceLevel>(["auto", "none", "attested", "checked", "verified", "reviewed"]);
@@ -1039,17 +1042,15 @@ export const ACCEPTANCE_REPORT_NOT_FOUND = "Structured acceptance report not fou
 export function parseAcceptanceReport(output: string): { report?: AcceptanceReport; error?: string } {
 	const explicitFencePresent = /```acceptance[-_]report\b/i.test(output);
 	const fenced = fencedBlocks(output, "acceptance[-_]report");
-	const parseErrors: string[] = [];
 	for (const body of fenced) {
 		try {
 			const validation = parseAcceptanceReportBody(body);
 			if (validation.report) return { report: validation.report };
-			parseErrors.push(`Invalid acceptance-report: ${validation.errors.join("; ")}`);
+			return { error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}` };
 		} catch (error) {
-			parseErrors.push(error instanceof Error ? error.message : String(error));
+			return { error: `Failed to parse acceptance-report: ${error instanceof Error ? error.message : String(error)}` };
 		}
 	}
-	if (parseErrors.length > 0) return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}` };
 	if (explicitFencePresent) {
 		const recovered = parseUnterminatedAcceptanceReportFence(output);
 		if (recovered.report || recovered.error) return recovered;
@@ -1458,29 +1459,6 @@ function hash(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-interface VerifyWorkspaceState {
-	kind: "git-tracked";
-	repoRoot: string;
-	cwdRelative: string;
-	head: string;
-	diffHash: string;
-}
-
-function readVerifyWorkspaceState(cwd: string): VerifyWorkspaceState | undefined {
-	const repo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", windowsHide: true });
-	if (repo.status !== 0 || !repo.stdout.trim()) return undefined;
-	const repoRoot = fs.realpathSync(repo.stdout.trim());
-	const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf-8", windowsHide: true });
-	const diff = spawnSync("git", ["diff", "--binary", "--full-index", "HEAD", "--"], { cwd: repoRoot, encoding: "utf-8", maxBuffer: 50 * 1024 * 1024, windowsHide: true });
-	if (head.status !== 0 || diff.status !== 0 || !head.stdout.trim()) return undefined;
-	return {
-		kind: "git-tracked",
-		repoRoot,
-		cwdRelative: path.relative(repoRoot, fs.realpathSync(cwd)) || ".",
-		head: head.stdout.trim(),
-		diffHash: hash(diff.stdout),
-	};
-}
 
 function isCachedVerifyResult(value: unknown): value is AcceptanceVerifyResult {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -1509,52 +1487,89 @@ async function runMemoizedVerifyCommand(command: AcceptanceVerifyCommand, defaul
 		durationMs: 0,
 		stderr: options.abortMessage ?? "Acceptance verification timed out because the run deadline was exhausted.",
 	};
-	let workspaceState: VerifyWorkspaceState | undefined;
+	let workspaceFingerprint: WorkspaceFingerprintV1 | undefined;
 	try {
-		workspaceState = readVerifyWorkspaceState(cwd);
+		workspaceFingerprint = fingerprintWorkspace(cwd);
 	} catch {
-		workspaceState = undefined;
+		workspaceFingerprint = undefined;
 	}
-	if (!workspaceState || !options.artifactsDir || !options.runId) {
-		return runVerifyCommand(command, defaultCwd, options);
+	if (!workspaceFingerprint || !workspaceFingerprint.cacheable || !workspaceFingerprint.digest || !options.artifactsDir || !options.runId) {
+		const result = await runVerifyCommand(command, defaultCwd, options);
+		if (!workspaceFingerprint || !options.runId) return workspaceFingerprint ? { ...result, workspaceFingerprint } : result;
+		const finishedAt = new Date();
+		const receipt: VerificationReceiptV1 = {
+			version: 1,
+			attemptId: `${options.runId}:${command.id}`,
+			tool: "acceptance-verify",
+			action: "command",
+			outcome: result.status,
+			repositoryRoot: workspaceFingerprint.repositoryRoot,
+			workspaceFingerprint,
+			startedAt: new Date(finishedAt.getTime() - result.durationMs).toISOString(),
+			finishedAt: finishedAt.toISOString(),
+			durationMs: result.durationMs,
+			command: command.command,
+			...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+			truncated: false,
+			artifactReferences: [],
+		};
+		return { ...result, memoized: false, workspaceFingerprint, receipt };
 	}
+	const cwdRelative = path.relative(workspaceFingerprint.repositoryRoot, fs.realpathSync(cwd)) || ".";
 	const envKeys = Object.keys(command.env ?? {}).sort();
 	const envHash = hash(JSON.stringify(Object.fromEntries(Object.entries(effectiveVerifyEnv(command.env)).sort(([left], [right]) => left.localeCompare(right)))));
 	const timeoutMs = command.timeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS;
 	const cacheKey = hash(JSON.stringify({
 		version: 1,
 		command: command.command,
-		cwdRelative: workspaceState.cwdRelative,
+		cwdRelative,
 		envKeys,
 		envHash,
 		timeoutMs,
 		allowFailure: command.allowFailure === true,
-		head: workspaceState.head,
-		diffHash: workspaceState.diffHash,
+		workspaceDigest: workspaceFingerprint.digest,
 	}));
 	const artifactPath = path.join(options.artifactsDir, "acceptance", "verify", options.runId, `${cacheKey}.json`);
 	try {
 		const cached = JSON.parse(fs.readFileSync(artifactPath, "utf-8")) as { cacheKey?: unknown; result?: unknown };
 		if (cached.cacheKey === cacheKey && isCachedVerifyResult(cached.result)) {
-			return { ...cached.result, id: command.id, command: command.command, cwd, artifactPath, cacheKey, memoized: true, envKeys, envHash, workspaceState };
+			return { ...cached.result, id: command.id, command: command.command, cwd, artifactPath, cacheKey, memoized: true, envKeys, envHash, workspaceFingerprint };
 		}
 	} catch {
 		// A cache miss or unreadable artifact must not prevent host verification.
 	}
 	const result = await runVerifyCommand(command, defaultCwd, options);
-	const evidenced: AcceptanceVerifyResult = { ...result, artifactPath, cacheKey, memoized: false, envKeys, envHash, workspaceState };
+	const finishedAt = new Date();
+	const receipt: VerificationReceiptV1 = {
+		version: 1,
+		attemptId: `${options.runId}:${command.id}`,
+		tool: "acceptance-verify",
+		action: "command",
+		outcome: result.status,
+		repositoryRoot: workspaceFingerprint.repositoryRoot,
+		workspaceFingerprint,
+		startedAt: new Date(finishedAt.getTime() - result.durationMs).toISOString(),
+		finishedAt: finishedAt.toISOString(),
+		durationMs: result.durationMs,
+		command: command.command,
+		...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+		truncated: false,
+		artifactReferences: [],
+	};
+	const evidenced: AcceptanceVerifyResult = { ...result, artifactPath, cacheKey, memoized: false, envKeys, envHash, workspaceFingerprint, receipt };
 	try {
 		fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
 		fs.writeFileSync(artifactPath, JSON.stringify({
 			version: 1,
 			cacheKey,
 			command: command.command,
-			cwdRelative: workspaceState.cwdRelative,
+			cwdRelative,
 			envKeys,
 			envHash,
 			timeoutMs,
 			allowFailure: command.allowFailure === true,
-			workspaceState,
+			workspaceFingerprint,
+			receipt,
 			result: evidenced,
 		}, null, 2), "utf-8");
 	} catch (error) {
