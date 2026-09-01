@@ -187,6 +187,22 @@ Whole-program design needs a focused reference, not a return to one large orches
 - Cross-references resolve, and no safety or control requirement becomes branch-dependent by accident.
 - Record before-and-after byte counts for the references loaded by representative review, async, management, and multi-phase tasks.
 
+### Workstream 4 measurement record
+
+Counts are repository-file UTF-8 bytes (`Buffer.byteLength`), so they do not
+include absolute paths, filesystem metadata, or other machine-specific data.
+Each scenario includes the top-level skill and exactly the routed reference.
+The baseline is commit `94b27239`.
+
+| Scenario | Before | After |
+| --- | ---: | ---: |
+| one-child-review | 10753 | 8012 |
+| basic-async | 11064 | 8323 |
+| management | 9173 | 6432 |
+| broad-intake | 14126 | 11385 |
+| top-level skill | 7316 | 4575 |
+| full skill tree | 69926 | 67185 |
+
 ## 5. Bound commissioning and child handoffs
 
 ### Problem

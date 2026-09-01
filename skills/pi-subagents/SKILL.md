@@ -1,97 +1,74 @@
 ---
 name: pi-subagents
 description: |
-  Delegate to builtin or custom subagents for single-agent handoffs, parallel
-  review, scripted chaining, async work, forked context, and coordinated
-  workflows. Use when one parent agent should stay in control while children
-  supply focused context, planning, review, or execution.
+  Delegate to builtin or custom subagents for focused execution, review, async
+  work, management, and coordinated workflows while the parent stays in control.
 ---
 
 # Pi Subagents
 
-Parent owns orchestration. Children do not spawn subagents unless the parent
-explicitly delegated fanout and their resolved `tools` allow `subagent`.
+The parent owns orchestration, decisions, acceptance, and delegation authority.
+Children do not spawn subagents unless the parent explicitly delegates fanout
+and their resolved tools allow `subagent`.
 
 ## Whole-program design gate
 
 For broad, predeclared, or multi-phase work, map the whole program before
 reconnaissance, then synthesize one execution map before any implementation
-mutation or mutation-capable child. Execute that map in bounded waves and return
+mutation or mutation-capable child. Execute the map in bounded waves and return
 to the parent at authority gates. Small one-child tasks skip this machinery.
 
-## Launch shape
+## Route before acting
 
-| Need | Use |
-| --- | --- |
-| One bounded task for one child | direct `{ agent, task }` |
-| JavaScript control flow or data-dependent branching; sequence, fanout, retry, rolling fanout, or aggregation | `workflowScript` with `runs.run(...)` / `runs.all(...)` |
-| A broad plan split into visible narrow stages per lane | `workflowScript` with `runs.lanes([{ key, stages: [...] }])` |
-| Independent worktree or repository lanes | `references/multi-lane-orchestration.md` |
-| Council of advisors | `../council-mode/SKILL.md` |
-| Management, status, steering, authoring, or inspection | `action` |
+Choose the single current branch below and read exactly its reference. Do not
+preload adjacent branches. Re-route only when the task reaches a new gate. In
+particular, broad intake loads only program design; execution, lanes, and review
+remain unloaded until the mapped program reaches them.
 
-`workflowScript` is code-driven: `runs.run(...)` for keyed steps,
-`runs.all([...])` for fanout, plain JavaScript for branching and aggregation.
-Keep scripts portable: use top-level `await`, plain helpers, or explicit Promise
-chains, not nested async helpers. Legacy top-level `chain` / `tasks` inputs and
-durable `.chain.md` execution are inspection or migration material only.
+| Branch key | Current task | Read now |
+| --- | --- | --- |
+| `broad-intake` | Design broad, predeclared, or multi-phase work before reconnaissance or mutation | `references/program-orchestration.md` |
+| `one-child-review` | Review one child or diff, validate, triage a gate, or prepare delivery | `references/review-and-validation.md` |
+| `basic-async` | Launch or control direct, scripted, async, stateful, forked, oracle, or intercom execution | `references/execution-controls.md` |
+| `independent-lanes` | Coordinate independent worktree, repository, or writer lanes | `references/multi-lane-orchestration.md` |
+| `management` | List, inspect, create, edit, disable, eject, or expose agents or RPC | `references/management-authoring-rpc.md` |
+| `commissioning` | Choose roles, prompts, models, slash commands, or child handoffs | `references/prompting-and-roles.md` |
+| `constraints` | Diagnose safety constraints, error handling, or a packaged recipe | `references/constraints-and-recipes.md` |
 
-Use `runs.lanes(...)` only inside a `workflowScript`, not as a top-level mode. It
-keeps a predeclared staged plan visible: first stages batch across lanes, later
-stages sequence per lane, and the returned board exposes lane/stage results. See
-the [canonical staged-lane example](../../docs/workflows.md#parallel-sequential-lanes).
-When staged seams are available, do not give a low-tier writer an end-to-end
-issue. Split it into narrow stages, such as a scout/red test, helper-only change,
-one render seam, validation, minimality challenge, or fresh review, and give the
-writer only its assigned implementation stage.
+A task with several named phases starts at `broad-intake`, even when later phases
+include implementation or review. A bounded review starts at `one-child-review`;
+it does not load orchestration or execution recipes. Basic async launch starts at
+`basic-async`. Human/model agent administration starts at `management`.
 
-Use async/background by default. Set `async:false` only when the parent must
-block. Final reviews, validation gates, oracle checks, and publication checks
-stay async. Use Fleet, status, and results for visibility.
+## Always-on controls
 
-In an ordinary interactive session, yield after launching or triaging useful
-async lanes and let Pi wake the parent on completion; do not call blocking
-`subagent_wait()` merely because a child is active. Use blocking
-`subagent_wait()` only when a headless/run-to-completion contract or a required
-same-turn artifact makes the result necessary before this turn ends. For
-“continue/orchestrate/work until done,” keep the lane board moving while a safe
-immediate action remains; if only async lanes are running, record the revisit
-trigger and yield.
+- Keep planning, product/API/security decisions, finding disposition,
+  acceptance, publication, and merge/release authority with the parent. Escalate
+  unresolved choices to the parent or operator; never infer authority from a
+  child, workflow, receipt, check, or review.
+- Keep one writer per checkout or cwd/worktree. Isolate concurrent mutation in
+  separate worktrees with disjoint ownership. Do not launch overlapping writers
+  while ownership is uncertain.
+- Preserve capability ceilings: child tool limits, allowed-agent restrictions,
+  permissions, isolation, and external-runner capability declarations. A child
+  may use only capabilities its resolved contract actually supplies.
+- For cross-codebase or cross-repository work, record each repository, explicit
+  `cwd`, target ref, authority boundary, shared contract, and expected output
+  before launch.
+- Require observable completion evidence: concrete outputs, changed files when
+  mutation was expected, validation results, and residual risks or an explicit
+  blocked state. Child claims, CI, review bots, and receipts are evidence, not authority.
+  Fail closed when required evidence is absent.
+- Keep background work bounded and visible through status, Fleet, events,
+  artifacts, and completion delivery. Use ownership-controlled steering,
+  interruption, stop, and cleanup; destructive operations retain operator gates.
+- Return to the parent when scope, architecture, compatibility, security,
+  publication, merge/release, destructive action, or required evidence is
+  unresolved. Do not bury an authority gate inside an autonomous workflow.
+- For backlog maintenance, releases, merge queues, or other public-repository
+  policy, load the matching user/project skill. This package defines delegation
+  primitives, not repository policy.
 
-Package agents appear in `subagent({ action: "list" })`. External CLI/job agents
-use their own runner contract. Do not pass native Pi child options to them unless
-that runner explicitly supports the option.
-
-## Read the reference for the branch
-
-| Branch | Read |
-| --- | --- |
-| Design broad, predeclared, or multi-phase work before reconnaissance or mutation | `references/program-orchestration.md` |
-| Delegate or choose roles, prompts, models, or slash commands | `references/prompting-and-roles.md` |
-| Execute single, scripted, async, stateful, forked, oracle, or intercom workflows | `references/execution-controls.md` |
-| Review, validate, triage gate failures, or prepare delivery | `references/review-and-validation.md` |
-| Coordinate lanes, worktrees, repositories, or writer waves | `references/multi-lane-orchestration.md` |
-| List, create, edit, disable, eject, or expose agents/RPC | `references/management-authoring-rpc.md` |
-| Check safety constraints, recipes, or error handling | `references/constraints-and-recipes.md` |
-
-Load only the reference for the current branch. Program design comes first for
-broad work; load execution, lane, or review detail only when the mapped program
-reaches that branch.
-
-## Operating rules
-
-- Keep simple, low-risk one-tool-call work local; delegate asynchronously to a child or `workflowScript` for most non-trivial requests needing multiple tool calls, independent research, broad inspection, risky edits, fresh review, or progress while the parent handles another lane. Avoid duplicate scouts, overlapping writers, and vague prompts without a concrete deliverable; follow the existing `runs.lanes(...)`, worktree, and async-yield guidance.
-- Keep the parent on the ordinary strong default model. Route workers/scouts to a fast capable tier, serious reviews to a strong tier, and top reasoning to bounded read-only critique.
-- Exact model names are deployment policy. Put them in user/project settings or explicit agent definitions, not package guidance.
-- Give every child a compact meta-prompt checklist: objective; repo/cwd/ref; authority/edit boundary; relevant files/contracts and constraints; success/acceptance criteria; validation; expected output/report; and stop/ask conditions. See `references/prompting-and-roles.md`.
-- For mutation work, use an isolated lane/worktree when isolation, overlap, or concurrent juggling matters; keep one writer per cwd/worktree. See `references/multi-lane-orchestration.md` for lane mechanics.
-- Keep long/high-output validation out of chat: prefer `interactive_shell` dispatch/background monitors, bounded logs, or subagent-owned reports; return a concise summary plus report path unless same-turn output is required. See `references/execution-controls.md`.
-- For cross-codebase work, record the repo, explicit `cwd`, authority boundary, and expected output before launch.
-- Make parallel prompts distinct by source seam, evidence, and decision. Do not clone prompts with only item numbers swapped.
-- Prefer fresh-context review/validation fanout, then synthesize and apply fixes in the parent.
-- For Pi extension repos under `~/.pi/agent/extensions`, put lane worktrees outside extension auto-discovery, such as `~/.pi/agent/worktrees`.
-- Preserve capability ceilings, including child tool limits and allowed-agent restrictions.
-- Keep planning, product/API/security decisions, acceptance, publication, and merge/release authority with the parent; escalate unresolved choices.
-- Treat receipts, CI, review bots, and external-run records as evidence, not authority.
-- For backlog maintenance, releases, merge queues, or other public-repo mutation policy, load the matching user/project skill. This package defines delegation primitives, not private policy.
-- As a conservative orchestration policy, do not pass a hard `toolBudget` or tight `usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools. If interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.
+As a conservative orchestration policy, do not pass a hard `toolBudget` or tight
+`usageBudget` to mutation-capable workers. The default tool budget blocks read/search tools rather than mutation tools.
+If interrupted after a tool call starts, checkpoint after the current tool returns with changed files, build/test state, and commit or PR state.

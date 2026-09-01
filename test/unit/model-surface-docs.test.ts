@@ -19,14 +19,27 @@ function read(relativePath: string): string {
 	return fs.readFileSync(path.join(root, relativePath), "utf-8");
 }
 
+function skillRoutes(skill: string): Map<string, string[]> {
+	const routes = new Map<string, string[]>();
+	for (const match of skill.matchAll(/^\| `([^`]+)` \| [^|]+ \| `([^`]+)` \|$/gm)) {
+		assert.equal(routes.has(match[1]), false, `duplicate skill route: ${match[1]}`);
+		routes.set(match[1], [match[2]]);
+	}
+	return routes;
+}
+
+function loadedBytes(paths: string[]): number {
+	return paths.reduce((total, relativePath) => total + Buffer.byteLength(read(relativePath)), 0);
+}
+
 describe("model-facing docs and skill contract", () => {
 	it("routes broad work through one whole-program design contract", () => {
 		const skill = read("skills/pi-subagents/SKILL.md");
 		const programReference = "references/program-orchestration.md";
-		const routeRows = [...skill.matchAll(/^\| ([^|]+) \| `([^`]+)` \|$/gm)]
-			.filter((match) => match[2] === programReference);
+		const routeRows = [...skill.matchAll(/^\| `([^`]+)` \| ([^|]+) \| `([^`]+)` \|$/gm)]
+			.filter((match) => match[3] === programReference);
 		assert.equal(routeRows.length, 1);
-		assert.match(routeRows[0]?.[1] ?? "", /broad.*predeclared.*multi-phase/i);
+		assert.match(routeRows[0]?.[2] ?? "", /broad.*predeclared.*multi-phase/i);
 
 		const programPath = path.join(root, "skills/pi-subagents", programReference);
 		assert.equal(fs.existsSync(programPath), true);
@@ -54,6 +67,49 @@ describe("model-facing docs and skill contract", () => {
 		assert.match(program, /Async is a scheduling choice, not workflow topology\./);
 		assert.match(program, /async singleton → blocking wait → status inspection → improvised singleton/);
 		assert.doesNotMatch(program, /top-level [`'"](?:chain|parallel)[`'"] execution/i);
+	});
+
+	it("loads exactly one branch reference and preserves top-level controls", () => {
+		const skillPath = "skills/pi-subagents/SKILL.md";
+		const skill = read(skillPath);
+		const routes = skillRoutes(skill);
+		const scenarios = new Map([
+			["one-child-review", "references/review-and-validation.md"],
+			["basic-async", "references/execution-controls.md"],
+			["management", "references/management-authoring-rpc.md"],
+			["broad-intake", "references/program-orchestration.md"],
+		]);
+		for (const [scenario, expectedReference] of scenarios) {
+			assert.deepEqual(routes.get(scenario), [expectedReference], `${scenario} must load no unrelated reference`);
+		}
+
+		const routedReferences = [...routes.values()].flat();
+		assert.equal(new Set(routedReferences).size, routedReferences.length);
+		for (const reference of routedReferences) {
+			assert.equal(fs.existsSync(path.join(root, "skills/pi-subagents", reference)), true, `missing routed reference: ${reference}`);
+		}
+
+		for (const invariant of [
+			/parent.*(?:owns|authority)/i,
+			/one writer per (?:checkout|cwd\/worktree)/i,
+			/capability ceilings/i,
+			/cross-(?:codebase|repository)/i,
+			/evidence,\s+not authority/i,
+			/escalate\s+unresolved/i,
+		]) assert.match(skill, invariant);
+
+		const baselineBytes = new Map([
+			["one-child-review", 10_753],
+			["basic-async", 11_064],
+			["management", 9_173],
+			["broad-intake", 14_126],
+		]);
+		const measurements = read("docs/delegation-efficiency-plan.md");
+		for (const [scenario, reference] of scenarios) {
+			const after = loadedBytes([skillPath, `skills/pi-subagents/${reference}`]);
+			assert.ok(after < (baselineBytes.get(scenario) ?? 0), `${scenario} loaded bytes must decrease`);
+			assert.match(measurements, new RegExp(`\\| ${scenario} \\| ${baselineBytes.get(scenario)} \\| ${after} \\|`));
+		}
 	});
 
 	it("documents the exact action and field inventories", () => {
