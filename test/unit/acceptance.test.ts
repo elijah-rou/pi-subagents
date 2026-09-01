@@ -652,6 +652,35 @@ describe("acceptance gates", () => {
 		}
 	});
 
+	it("fails closed for criterion aliases and missing per-criterion evidence in fenced reports", async () => {
+		const acceptance = resolveEffectiveAcceptance({
+			agentName: "worker",
+			explicit: { level: "checked", criteria: [{ id: "criterion-1", must: "Prove the change" }] },
+		});
+		const cases = [
+			{
+				criteriaSatisfied: [{ criterion: "criterion-1", status: "satisfied", evidence: "verified" }],
+				diagnostic: "Failed to parse acceptance-report: Invalid acceptance-report: criteriaSatisfied[0].criterion: unsupported acceptance criterion field",
+			},
+			{
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied" }],
+				diagnostic: "Failed to parse acceptance-report: Invalid acceptance-report: criteriaSatisfied[0].evidence: expected non-empty string; got missing",
+			},
+		] as const;
+
+		for (const { criteriaSatisfied, diagnostic } of cases) {
+			const output = report({ criteriaSatisfied });
+			const parsed = parseAcceptanceReport(output);
+			assert.equal(parsed.report, undefined);
+			assert.equal(parsed.error, diagnostic);
+
+			const ledger = await evaluateAcceptance({ acceptance, output, cwd: process.cwd() });
+			assert.equal(ledger.status, "rejected");
+			assert.equal(ledger.childReport, undefined);
+			assert.equal(ledger.childReportParseError, diagnostic);
+		}
+	});
+
 	it("rejects unknown enums, duplicate criterion ids, and blank evidence", () => {
 		for (const [overrides, expected] of [
 			[{ commandsRun: [{ command: "npm test", result: "maybe", summary: "passed" }] }, /commandsRun\[0\]\.result.*got "maybe"/],
