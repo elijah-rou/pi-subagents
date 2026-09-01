@@ -81,21 +81,21 @@ describe("resolveMaxSubagentSpawnsPerSession", () => {
 		for (const value of ["garbage", "-1", "1.5"]) {
 			process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = value;
 			assert.equal(resolveMaxSubagentSpawnsPerSession(7), 7);
-			assert.equal(resolveMaxSubagentSpawnsPerSession(undefined), undefined);
+			assert.equal(resolveMaxSubagentSpawnsPerSession(undefined), 32);
 		}
 	});
 
-	it("is unlimited by default", () => {
+	it("uses the finite default", () => {
 		delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
-		assert.equal(resolveMaxSubagentSpawnsPerSession(undefined), undefined);
-		assert.equal(resolveMaxSubagentSpawnsPerSession(-1), undefined);
+		assert.equal(resolveMaxSubagentSpawnsPerSession(undefined), 32);
+		assert.equal(resolveMaxSubagentSpawnsPerSession(-1), 32);
 	});
 
-	it("treats zero as an explicit unlimited override", () => {
+	it("does not let zero disable the finite ceiling", () => {
 		process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION = "0";
-		assert.equal(resolveMaxSubagentSpawnsPerSession(7), undefined);
+		assert.equal(resolveMaxSubagentSpawnsPerSession(7), 7);
 		delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION;
-		assert.equal(resolveMaxSubagentSpawnsPerSession(0), undefined);
+		assert.equal(resolveMaxSubagentSpawnsPerSession(0), 32);
 	});
 });
 

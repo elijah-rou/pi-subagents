@@ -914,7 +914,7 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 		});
 	});
 
-	it("/run preserves existing relative reads and omits missing reads", async () => {
+	it("/run rejects missing typed read references before launch", async () => {
 		await withTempProject("pi-slash-reads-", async (root) => {
 			fs.writeFileSync(path.join(root, ".pi", "agents", "scout.md"), `---
 name: scout
@@ -925,11 +925,10 @@ Inspect
 `, "utf-8");
 			fs.writeFileSync(path.join(root, "context.md"), "context");
 
-			const run = await captureSlashCommandParams("run", "scout[reads=context.md+missing.md] Inspect", root);
-			assert.deepEqual(run.params, {
-				workflowScript: "return runs.run(\"run\", {\"agent\":\"scout\",\"task\":\"[Read from: context.md]\\n\\nInspect\",\"agentScope\":\"both\"})",
-				async: false,
-			});
+			await assert.rejects(
+				() => captureSlashCommandParams("run", "scout[reads=context.md+missing.md] Inspect", root),
+				/Typed handoff reads reference missing path: missing.md/,
+			);
 		});
 	});
 

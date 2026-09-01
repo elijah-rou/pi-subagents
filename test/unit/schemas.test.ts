@@ -166,9 +166,9 @@ try {
 }
 
 describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not available" : undefined }, () => {
-	it("exposes exactly 47 primary fields and omits administration-only fields", () => {
+	it("exposes exactly 49 primary fields and omits administration-only fields", () => {
 		const properties = Object.keys(SubagentParams?.properties ?? {});
-		assert.equal(properties.length, 47);
+		assert.equal(properties.length, 49);
 		for (const removed of [
 			"name", "repo", "merge", "supersession", "additional", "scope", "target", "focus", "thinking",
 			"at", "every", "on", "timezone", "overlap", "catchUp", "missionId", "mission", "missionUpdate",

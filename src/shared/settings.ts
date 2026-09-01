@@ -173,7 +173,12 @@ export function resolveExistingReadInstructionPaths(reads: readonly string[], in
 }
 
 export function resolveExistingReadPaths(reads: readonly string[], cwd: string): string[] {
-	return resolveExistingReadInstructionPaths(reads, cwd);
+	const resolved = resolveExistingReadInstructionPaths(reads, cwd);
+	if (resolved.length !== reads.length) {
+		const missing = reads.filter((filePath) => !fs.existsSync(resolveChainPath(filePath, cwd)));
+		throw new Error(`Typed handoff reads reference missing path${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`);
+	}
+	return resolved;
 }
 
 export type { ParallelTaskResult } from "../runs/shared/parallel-utils.ts";

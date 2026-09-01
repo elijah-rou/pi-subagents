@@ -141,7 +141,7 @@ describe("Codex exec adapter", () => {
 		assert.equal(receipt.entries.codex?.externalAdapter?.outputArtifacts?.finalOutputPath, "/tmp/final");
 		assert.doesNotMatch(JSON.stringify(receipt), /trusted final message|turn\.completed|rawOutput/);
 		const writer = externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "codex-exec-writer", command: "codex" }) });
-		assert.deepEqual(writer.safety, { access: "workspace-write", sandbox: "workspace-write", approvalPolicy: "never", ephemeral: true });
+		assert.deepEqual(writer.safety, { access: "workspace-write", sandbox: "workspace-write", approvalPolicy: "never", ephemeral: true, publication: "blocked-by-sandbox" });
 		const writerRoot = tempDir();
 		const writerDir = path.join(writerRoot, "writer");
 		fs.mkdirSync(writerDir);

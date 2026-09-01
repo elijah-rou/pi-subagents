@@ -3040,7 +3040,14 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	// Reads: caller override > agent defaultReads > none. `~`/`~/` expand to home;
 	// absolute paths pass through; relative paths resolve against the child cwd.
 	const reads = readsOverride !== undefined ? readsOverride : agentConfig.defaultReads ?? false;
-	const readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, singleCwd) : [];
+	let readPaths: string[] = [];
+	try {
+		readPaths = Array.isArray(reads) ? resolveExistingReadPaths(reads, singleCwd) : [];
+	} catch (error) {
+		if (worktreeSetup) cleanupWorktrees(worktreeSetup);
+		cleanupStructuredOutputRuntime(structuredRuntime);
+		return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "single", results: [] } };
+	}
 	const readsInstruction = readPaths.length > 0
 		? `[Read from: ${readPaths.join(", ")}]\n\n`
 		: "";
@@ -3960,7 +3967,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
 			const launchInspection = inspectWorkflowScript(requestParams.workflowScript, { cwd: requestParams.cwd, worktree: requestParams.worktree });
 			const singletonAdvisory = launchInspection.advisories.find((advisory) => advisory.code === "single-child-workflow");
-			if (singletonAdvisory) return buildRequestedModeError(requestParams, singletonAdvisory.message);
+			if (singletonAdvisory && requestParams.delegationReason !== undefined) return buildRequestedModeError(requestParams, singletonAdvisory.message);
 			if (delegatedWorkflowPermit) {
 				const permitError = validateWorkflowChildPermitRoot(delegatedWorkflowPermit, _id);
 				if (permitError) return buildRequestedModeError(requestParams, permitError);

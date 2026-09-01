@@ -128,7 +128,7 @@ describe("slash subagent bridge requester context", () => {
       });
     });
 
-    events.emit(REQUEST, { requestId: "structured-single", params: { agent: "worker", task: "work", async: false } });
+    events.emit(REQUEST, { requestId: "structured-single", params: { agent: "worker", task: "work", delegationReason: "semantic_review", async: false } });
     await done;
   });
 

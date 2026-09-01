@@ -144,7 +144,7 @@ describe("Claude Code adapter", () => {
 
 	it("publishes strict writer safety metadata and reads legacy local Claude receipts", () => {
 		const writer = externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "claude-code-writer", command: "claude" }) });
-		assert.deepEqual(writer.safety, { access: "workspace-write", authentication: "existing-cli-required", permissionMode: "acceptEdits", tools: CLAUDE_CODE_WRITER_TOOLS, mcp: "empty-strict", settingSources: "user", userSettingsTrust: "required", sessionPersistence: false });
+		assert.deepEqual(writer.safety, { access: "workspace-write", authentication: "existing-cli-required", permissionMode: "acceptEdits", tools: CLAUDE_CODE_WRITER_TOOLS, mcp: "empty-strict", settingSources: "user", userSettingsTrust: "required", sessionPersistence: false, publication: "blocked-by-tool-allowlist" });
 
 		const root = tempDir();
 		const writerDir = path.join(root, "writer");

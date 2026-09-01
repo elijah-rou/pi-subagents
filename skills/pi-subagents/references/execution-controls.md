@@ -2,6 +2,12 @@
 
 This reference describes only the model-facing Package 1 contract.
 
+Typed handoff fields are contracts. Every `reads` and `handoffPath` reference must exist before launch or handoff publication; a missing reference is terminal and is never silently omitted. Do not encode file manifests in natural-language task text.
+
+Async control is event-driven. Do not poll status. Wait only at a real dependency barrier. A queued steer or follow-up must be independent of the pending result or invariant under every expected result; dependent work is sent only after observing the result. Keep queues bounded and preserve caller order.
+
+Native child markers and capability ceilings do not grant publication authority. External mutation adapters are eligible only when their enforced sandbox or tool allowlist blocks publication; otherwise use a read-only adapter. No child may push, merge, deploy, or publish.
+
 ## Surface
 
 Actions are exactly `list`, `get`, `models`, `children.list`, `guide`, `validate`, `worktree.discard`, `lane.status`, `status`, `debug.run`, `interrupt`, `resume`, `steer`, `stop`, and `doctor`.

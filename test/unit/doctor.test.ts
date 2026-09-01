@@ -58,7 +58,7 @@ describe("buildDoctorReport", () => {
 				currentSessionId: "session-default-cap",
 			});
 			assert.match(report, /Active async capacity\n- usage: 0\/4 used/);
-			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; config key: perRunConcurrencyLimit\)/);
+			assert.match(report, /Per-run child concurrency\n- configured limit: 6 \(default; config key: perRunConcurrencyLimit\)/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -139,11 +139,11 @@ describe("buildDoctorReport", () => {
 			assert.match(report, /Spawn budget\n- usage: 3\/5 used, 2 remaining \(configured 4; granted 1; grant allowance 3\)/);
 			assert.match(report, /- recent grants: \+1 at 1970-01-01T00:00:00\.000Z \(4 → 5\)/);
 			assert.match(report, /new parent session resets usage and grants; compaction does not/);
-			assert.match(report, /Run fan-out budget\n- configured limit: 64 \(default\)/);
+			assert.match(report, /Run fan-out budget\n- configured limit: 16 \(default\)/);
 			assert.match(report, /cumulative claims are never released; a new top-level run creates a new budget/);
 			assert.match(report, /Active async capacity\n- usage: 0\/2 used/);
 			assert.match(report, /scope: top-level async runs in the current parent session; foreground and nested\/workflow children are excluded/);
-			assert.match(report, /Per-run child concurrency\n- configured limit: 20 \(default; config key: perRunConcurrencyLimit\)/);
+			assert.match(report, /Per-run child concurrency\n- configured limit: 6 \(default; config key: perRunConcurrencyLimit\)/);
 			assert.match(report, /scope: children running within each top-level run; not shared across runs, parent sessions, or machines/);
 			assert.match(report, /terminal state plus matching observed process-terminal proof, or abandoned-timeout for failed runs with a dead runner PID and stale activity when enabled; false keeps unknown-proof slots/);
 			assert.match(report, /Workflow script\n- helpers: runs\.run, runs\.all, runs\.steer, runs\.status, runs\.ref\/refs, emit, console/);

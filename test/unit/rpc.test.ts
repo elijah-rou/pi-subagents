@@ -441,7 +441,7 @@ describe("subagent extension RPC bridge", () => {
 			},
 		});
 
-		const reply = await request(events, "spawn-1", "spawn", { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Do work' })" });
+		const reply = await request(events, "spawn-1", "spawn", { delegationReason: "user_async", workflowScript: "return runs.run('main', { agent: 'worker', task: 'Do work' })" });
 
 		assert.equal(reply.success, true);
 		assert.equal(executedParams.workflowScript, "return runs.run('main', { agent: 'worker', task: 'Do work' })");
@@ -464,7 +464,7 @@ describe("subagent extension RPC bridge", () => {
 			},
 		});
 
-		const reply = await request(events, "spawn-worktree", "spawn", { workflowScript: "return runs.run('main', { agent: 'worker', task: 'Do work' })", worktree: true });
+		const reply = await request(events, "spawn-worktree", "spawn", { delegationReason: "user_async", workflowScript: "return runs.run('main', { agent: 'worker', task: 'Do work' })", worktree: true });
 
 		assert.equal(reply.success, true);
 		assert.equal(executedParams.worktree, true);
@@ -505,7 +505,7 @@ describe("subagent extension RPC bridge", () => {
 			},
 		});
 
-		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work" });
+		const reply = await request(events, "spawn-structured", "spawn", { agent: "worker", task: "Do work", delegationReason: "user_async" });
 		assert.equal(reply.success, true);
 		assert.equal(executedParams.agent, "worker");
 		assert.equal(executedParams.task, "Do work");
@@ -527,7 +527,7 @@ describe("subagent extension RPC bridge", () => {
 			},
 		});
 
-		const foreground = await request(events, "spawn-foreground", "spawn", { agent: "worker", task: "Do work", async: false });
+		const foreground = await request(events, "spawn-foreground", "spawn", { agent: "worker", task: "Do work", delegationReason: "user_async", async: false });
 		const management = await request(events, "spawn-management", "spawn", { action: "list" });
 
 		assert.equal(foreground.success, false);

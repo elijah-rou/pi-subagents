@@ -17,7 +17,7 @@ import {
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import { RUNTIME_EXTENSION_ACK_EVENT, RUNTIME_EXTENSION_ACK_PATH_ENV } from "../../src/runs/shared/runtime-acknowledged-extensions.ts";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
+import { STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV, STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { getAgentDir } from "../../src/shared/config-paths.ts";
 import { PERMISSION_POLICY_ENV } from "../../src/runs/shared/permissions.ts";
@@ -35,6 +35,10 @@ import registerSubagentPromptRuntime, {
 	stripProjectContext,
 	stripSubagentOrchestrationSkill,
 } from "../../src/runs/shared/subagent-prompt-runtime.ts";
+
+delete process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
+delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
+delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
 
 const envSnapshot = {
 	PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
@@ -98,10 +102,9 @@ afterEach(() => {
 	else process.env[SUBAGENT_STEER_CAPABILITY_ENV] = envSnapshot.PI_SUBAGENT_STEER_CAPABILITY;
 	if (envSnapshot.PI_SUBAGENT_STEER_ACK_DIR === undefined) delete process.env[SUBAGENT_STEER_ACK_DIR_ENV];
 	else process.env[SUBAGENT_STEER_ACK_DIR_ENV] = envSnapshot.PI_SUBAGENT_STEER_ACK_DIR;
-	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE === undefined) delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
-	else process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
-	if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined) delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
-	else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
+	delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
+	delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
+	delete process.env[STRUCTURED_OUTPUT_ACCEPTANCE_CAPTURE_ENV];
 	if (envSnapshot.PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS === undefined) delete process.env[RUNTIME_EXTENSION_ACK_PATH_ENV];
 	else process.env[RUNTIME_EXTENSION_ACK_PATH_ENV] = envSnapshot.PI_SUBAGENT_RUNTIME_ACKNOWLEDGED_EXTENSIONS;
 	if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];

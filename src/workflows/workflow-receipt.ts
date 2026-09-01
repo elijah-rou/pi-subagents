@@ -142,9 +142,9 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	} else if (adapterRecord.id === "codex-exec-writer") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "sandbox", "approvalPolicy", "ephemeral"].includes(field));
+		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "sandbox", "approvalPolicy", "ephemeral", "publication"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-		if (safetyRecord.access !== "workspace-write" || safetyRecord.sandbox !== "workspace-write" || safetyRecord.approvalPolicy !== "never" || safetyRecord.ephemeral !== true) throw new Error(`${label}.safety is invalid.`);
+		if (safetyRecord.access !== "workspace-write" || safetyRecord.sandbox !== "workspace-write" || safetyRecord.approvalPolicy !== "never" || safetyRecord.ephemeral !== true || safetyRecord.publication !== "blocked-by-sandbox") throw new Error(`${label}.safety is invalid.`);
 	} else if (adapterRecord.id === "claude-code") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;
@@ -159,16 +159,16 @@ function parseExternalCliReceiptMetadata(value: unknown, key: string, source: st
 	} else if (adapterRecord.id === "claude-code-writer") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "permissionMode", "tools", "mcp", "settingSources", "userSettingsTrust", "sessionPersistence"].includes(field));
+		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "permissionMode", "tools", "mcp", "settingSources", "userSettingsTrust", "sessionPersistence", "publication"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
-		if (safetyRecord.access !== "workspace-write" || safetyRecord.authentication !== "existing-cli-required" || safetyRecord.permissionMode !== "acceptEdits" || safetyRecord.tools !== "Read,Write,Edit,Glob,Grep" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "user" || safetyRecord.userSettingsTrust !== "required" || safetyRecord.sessionPersistence !== false) throw new Error(`${label}.safety is invalid.`);
+		if (safetyRecord.access !== "workspace-write" || safetyRecord.authentication !== "existing-cli-required" || safetyRecord.permissionMode !== "acceptEdits" || safetyRecord.tools !== "Read,Write,Edit,Glob,Grep" || safetyRecord.mcp !== "empty-strict" || safetyRecord.settingSources !== "user" || safetyRecord.userSettingsTrust !== "required" || safetyRecord.sessionPersistence !== false || safetyRecord.publication !== "blocked-by-tool-allowlist") throw new Error(`${label}.safety is invalid.`);
 	} else if (adapterRecord.id === "cursor-agent" || adapterRecord.id === "cursor-agent-writer") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;
-		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "mode", "sandbox", "workspaceTrust", "sessionReuse"].includes(field));
+		const unknownSafety = Object.keys(safetyRecord).filter((field) => !["access", "authentication", "mode", "sandbox", "workspaceTrust", "sessionReuse", "publication"].includes(field));
 		if (unknownSafety.length > 0) throw new Error(`${label}.safety has unsupported fields: ${unknownSafety.join(", ")}.`);
 		const writer = adapterRecord.id === "cursor-agent-writer";
-		if (safetyRecord.access !== (writer ? "workspace-write" : "read-only") || safetyRecord.authentication !== "cursor-api-key-or-existing-login" || safetyRecord.mode !== (writer ? "print" : "ask") || safetyRecord.sandbox !== "enabled" || safetyRecord.workspaceTrust !== "existing-required" || safetyRecord.sessionReuse !== false) throw new Error(`${label}.safety is invalid.`);
+		if (safetyRecord.access !== (writer ? "workspace-write" : "read-only") || safetyRecord.authentication !== "cursor-api-key-or-existing-login" || safetyRecord.mode !== (writer ? "print" : "ask") || safetyRecord.sandbox !== "enabled" || safetyRecord.workspaceTrust !== "existing-required" || safetyRecord.sessionReuse !== false || (writer && safetyRecord.publication !== "blocked-by-sandbox") || (!writer && safetyRecord.publication !== undefined)) throw new Error(`${label}.safety is invalid.`);
 	} else if (adapterRecord.id === "grok-build") {
 		if (!safety || typeof safety !== "object" || Array.isArray(safety)) throw new Error(`${label}.safety is missing.`);
 		const safetyRecord = safety as Record<string, unknown>;

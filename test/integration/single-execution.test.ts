@@ -359,7 +359,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		providedState?: SubagentState,
 		writeInitialWorkflowStatus?: (filePath: string, status: Record<string, unknown>) => void,
 	) {
-		return createSubagentExecutor!({
+		const executor = createSubagentExecutor!({
 			pi: { events: piEvents, getSessionName: () => undefined },
 			state: providedState ?? {
 				baseCwd: tempDir,
@@ -379,6 +379,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			allowMutatingManagementActions,
 			...(writeInitialWorkflowStatus ? { writeInitialWorkflowStatus } : {}),
 		});
+		const executePublic = executor.executePublic.bind(executor);
+		executor.executePublic = (id, params, ...rest) => executePublic(id, params.action === undefined ? { delegationReason: "semantic_review", ...params } : params, ...rest);
+		return executor;
 	}
 
 	it("spawns agent and captures output", async () => {
@@ -998,7 +1001,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(tempDir, ".git")), false);
 		mockPi.onCall({ output: "shared cwd" });
 		const executor = makeExecutor([makeAgent("echo")]);
-		const script = `return runs.run("main", { agent: "echo", task: "work" })`;
+		const script = `state.set("purpose", "isolation-check"); return runs.run("main", { agent: "echo", task: "work" })`;
 
 		const shared = await executor.executePublic(
 			"isolation-none",
@@ -1355,7 +1358,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 	});
 
 	it("executes a workflow loaded from workflowScriptPath", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		fs.writeFileSync(path.join(tempDir, "workflow.js"), `return runs.run("main", { agent: "echo", task: "from file" });`);
+		fs.writeFileSync(path.join(tempDir, "workflow.js"), `state.set("source", "file"); return runs.run("main", { agent: "echo", task: "from file" });`);
 		mockPi.onCall({ output: "loaded workflow" });
 		const executor = makeExecutor([makeAgent("echo")]);
 
@@ -4331,6 +4334,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 	it("routes registered structured text delegation through the concurrent executor", async () => {
 		const literalJsonText = '{"looks":"json"}';
+		fs.writeFileSync(path.join(tempDir, "context.md"), "context");
+		fs.writeFileSync(path.join(tempDir, "plan.md"), "plan");
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("read", { path: "package.json" })], delay: 20 },
@@ -4515,17 +4520,17 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 2, "both detached mock children should start before test cleanup");
 	});
 
-	it("does not impose a cumulative spawn cap by default", async () => {
-		mockPi.onCall({ output: "continued after forty launches" });
-		const spawnState = { sessionId: "session-123", count: 40 };
+	it("imposes the finite cumulative spawn cap by default", async () => {
+		const spawnState = { sessionId: "session-123", count: 32 };
 		const executor = makeExecutor([makeAgent("echo")], {}, false, spawnState);
 		const ctx = makeMinimalCtx(tempDir);
 
 		const result = await executor.execute("forty-one", { agent: "echo", task: "Continue work" }, new AbortController().signal, undefined, ctx);
 
-		assert.equal(result.isError, undefined);
-		assert.equal(mockPi.callCount(), 1);
-		assert.equal(spawnState.count, 40, "unlimited sessions should bypass cumulative accounting");
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /32\/32 used/);
+		assert.equal(mockPi.callCount(), 0);
+		assert.equal(spawnState.count, 32);
 	});
 
 	it("blocks total subagent spawns after an opt-in per-session quota", async () => {
@@ -4569,7 +4574,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const status = await executor.execute("status", { action: "status" }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
 
-		assert.match(status.content[0]?.text ?? "", /^Status target: active runs\nSpawn budget: 3\/5 used, 2 remaining.*\nTop-level async capacity \(current parent session\): 0\/4 used\nScope: async runs only; foreground and nested\/workflow children excluded\nPer-run child concurrency: 20 \(perRunConcurrencyLimit; not shared across runs, parent sessions, or machines\)/);
+		assert.match(status.content[0]?.text ?? "", /^Status target: active runs\nSpawn budget: 3\/5 used, 2 remaining.*\nTop-level async capacity \(current parent session\): 0\/4 used\nScope: async runs only; foreground and nested\/workflow children excluded\nPer-run child concurrency: 6 \(perRunConcurrencyLimit; not shared across runs, parent sessions, or machines\)/);
 		assert.deepEqual(status.details?.spawnBudget, {
 			used: 3,
 			configuredLimit: 4,

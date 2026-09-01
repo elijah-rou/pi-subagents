@@ -199,7 +199,7 @@ describe("Cursor Agent adapter", () => {
 		const read = externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "cursor-agent", command: "cursor-agent" }) });
 		const writer = externalCliReceiptMetadata({ runner: resolveExternalCliRunnerStatus({ adapter: "cursor-agent-writer", command: "cursor-agent" }) });
 		assert.deepEqual(read.safety, { access: "read-only", authentication: "cursor-api-key-or-existing-login", mode: "ask", sandbox: "enabled", workspaceTrust: "existing-required", sessionReuse: false });
-		assert.deepEqual(writer.safety, { access: "workspace-write", authentication: "cursor-api-key-or-existing-login", mode: "print", sandbox: "enabled", workspaceTrust: "existing-required", sessionReuse: false });
+		assert.deepEqual(writer.safety, { access: "workspace-write", authentication: "cursor-api-key-or-existing-login", mode: "print", sandbox: "enabled", workspaceTrust: "existing-required", sessionReuse: false, publication: "blocked-by-sandbox" });
 		const receipt = buildWorkflowReceipt({
 			workflowRunId: "cursor-workflow",
 			state: "complete",

@@ -214,8 +214,8 @@ describe("mapConcurrent", () => {
 });
 
 describe("DEFAULT_GLOBAL_CONCURRENCY_LIMIT", () => {
-	it("is 20", () => {
-		assert.equal(DEFAULT_GLOBAL_CONCURRENCY_LIMIT, 20);
+	it("is 6", () => {
+		assert.equal(DEFAULT_GLOBAL_CONCURRENCY_LIMIT, 6);
 	});
 });
 

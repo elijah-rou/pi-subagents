@@ -3,7 +3,7 @@ import * as assert from "node:assert";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { expandHomePath, resolveChainPath } from "../../src/shared/settings.ts";
+import { expandHomePath, resolveChainPath, resolveExistingReadPaths } from "../../src/shared/settings.ts";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-reads-resolution-"));
 const homeDir = path.join(tmpDir, "home");
@@ -48,6 +48,9 @@ describe("reads path resolution", () => {
 	});
 
 	describe("resolveChainPath", () => {
+		test("fails closed when a typed read reference is missing", () => {
+			assert.throws(() => resolveExistingReadPaths(["missing.md"], chainDir), /Typed handoff reads reference missing path: missing.md/);
+		});
 		test("expands ~ before resolving", () => {
 			assert.equal(
 				resolveChainPath("~/.zprofile", chainDir),

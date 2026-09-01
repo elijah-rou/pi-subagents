@@ -7,12 +7,6 @@ description: |
 
 # Pi Subagents
 
-## Launch gate and provenance
-
-Direct parent work is the default. Launch only for `user_async`, `independent_parallel_lane`, `manager_continuity`, `unresolved_ownership`, `semantic_review`, or `elevated_risk_review`, and pass that value as `delegationReason` on every new single or workflow execution. Management actions and retained resumes are exempt. `independent_parallel_lane` also requires `delegationBasis: { ownership: string[], deliverable: string }`; `unresolved_ownership` requires `{ inspected: string[], unresolved: string }`. Bounded multi-file work, duration, complexity, or context preservation alone do not justify delegation.
-
-Use direct `{ agent, task, delegationReason }` for one reviewer or worker. A statically provable one-child workflow with no host gate, state, retained reference, control flow, or continuity behavior is rejected. Review is separate from acceptance: zero reviewers for deterministic low-risk work, one fresh reviewer for unresolved semantic judgment, and two distinct reviewers, including an alternate model, only for elevated boundaries.
-
 The parent owns orchestration, decisions, acceptance, and delegation authority.
 Children do not spawn subagents unless the parent explicitly delegates fanout
 and their resolved tools allow `subagent`.
