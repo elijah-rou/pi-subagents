@@ -3,11 +3,12 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ArtifactPaths, TimeoutRecoveryProjection, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
+import type { ArtifactPaths, TimeoutRecoveryProjection, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot, WorkspaceFingerprintV1 } from "../../shared/types.ts";
 
 const MAX_TRACKED_PATHS = 500;
 const MAX_HASH_BYTES = 1024 * 1024;
 const MAX_TIMEOUT_FILES = 20;
+export const DEFAULT_WORKSPACE_FINGERPRINT_LIMITS = { maxUntrackedFiles: 500, maxUntrackedBytes: 8 * 1024 * 1024 } as const;
 
 function gitArguments(args: string[]): string[] {
 	// Mutation evidence must not block child startup on a stale fsmonitor daemon.
@@ -62,6 +63,38 @@ function fingerprintPath(cwd: string, relativePath: string): TrackedMutationFing
 function sameFingerprint(left: TrackedMutationFingerprint | undefined, right: TrackedMutationFingerprint): boolean {
 	if (!left || left.kind !== "diff" || right.kind !== "diff") return false;
 	return left.digest === right.digest;
+}
+
+export function fingerprintWorkspace(cwd: string, limits: { maxUntrackedFiles: number; maxUntrackedBytes: number } = DEFAULT_WORKSPACE_FINGERPRINT_LIMITS): WorkspaceFingerprintV1 {
+	const repositoryRoot = gitOutput(cwd, ["rev-parse", "--show-toplevel"]).trim();
+	const head = gitOutput(repositoryRoot, ["rev-parse", "HEAD"]).trim();
+	const indexDigest = createHash("sha256").update(gitOutput(repositoryRoot, ["write-tree"])).digest("hex");
+	const trackedDigest = createHash("sha256").update(gitOutput(repositoryRoot, ["diff", "--no-ext-diff", "--binary", "HEAD", "--"], 64 * 1024 * 1024)).digest("hex");
+	const untrackedPaths = splitNul(gitOutput(repositoryRoot, ["ls-files", "--others", "--exclude-standard", "-z"], 16 * 1024 * 1024)).sort();
+	const base = { version: 1 as const, repositoryRoot, head, indexDigest, trackedDigest, untrackedDigest: "", untrackedFiles: untrackedPaths.length };
+	if (untrackedPaths.length > limits.maxUntrackedFiles) {
+		return { ...base, cacheable: false, uncacheableReason: `untracked file count ${untrackedPaths.length} exceeds limit ${limits.maxUntrackedFiles}` };
+	}
+	const untrackedHash = createHash("sha256");
+	let totalBytes = 0;
+	for (const relativePath of untrackedPaths) {
+		const absolutePath = path.join(repositoryRoot, relativePath);
+		let stat: fs.Stats;
+		try {
+			stat = fs.lstatSync(absolutePath);
+		} catch (error) {
+			return { ...base, cacheable: false, uncacheableReason: `cannot read untracked path ${relativePath}: ${error instanceof Error ? error.message : String(error)}` };
+		}
+		if (!stat.isFile()) continue;
+		totalBytes += stat.size;
+		if (totalBytes > limits.maxUntrackedBytes) {
+			return { ...base, cacheable: false, uncacheableReason: `untracked content bytes exceed limit ${limits.maxUntrackedBytes}` };
+		}
+		untrackedHash.update(relativePath).update("\0").update(fs.readFileSync(absolutePath)).update("\0");
+	}
+	const untrackedDigest = untrackedHash.digest("hex");
+	const digest = createHash("sha256").update(JSON.stringify({ repositoryRoot, head, indexDigest, trackedDigest, untrackedDigest })).digest("hex");
+	return { ...base, untrackedDigest, cacheable: true, digest };
 }
 
 export function snapshotTrackedMutations(cwd: string): TrackedMutationSnapshot {

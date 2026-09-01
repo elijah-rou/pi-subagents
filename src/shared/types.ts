@@ -551,6 +551,37 @@ export interface TrackedMutationEvidence {
 	unavailable?: string;
 }
 
+export interface WorkspaceFingerprintV1 {
+	version: 1;
+	repositoryRoot: string;
+	head: string;
+	indexDigest: string;
+	trackedDigest: string;
+	untrackedDigest: string;
+	untrackedFiles: number;
+	cacheable: boolean;
+	digest?: string;
+	uncacheableReason?: string;
+}
+
+export interface VerificationReceiptV1 {
+	version: 1;
+	attemptId: string;
+	tool: string;
+	action: string;
+	outcome: string;
+	repositoryRoot: string;
+	workspaceFingerprint: WorkspaceFingerprintV1;
+	startedAt: string;
+	finishedAt: string;
+	durationMs: number;
+	command?: string;
+	exitCode?: number;
+	signal?: string;
+	truncated: boolean;
+	artifactReferences: Array<{ path: string; digest: string }>;
+}
+
 export interface TimeoutRecoverySummary {
 	termination: "timed-out" | "stopped";
 	changedFiles: string[];
@@ -1040,7 +1071,7 @@ export interface ResolvedAcceptanceConfig {
 
 export interface AcceptanceReport {
 	criteriaSatisfied?: Array<{
-		id?: string;
+		id: string;
 		status: "satisfied" | "not-satisfied" | "not-applicable";
 		evidence: string;
 	}>;

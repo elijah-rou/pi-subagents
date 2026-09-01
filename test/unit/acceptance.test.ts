@@ -14,6 +14,7 @@ import {
 	mergeAcceptanceInputs,
 	normalizeGateAcceptance,
 	parseAcceptanceReport,
+	ACCEPTANCE_REPORT_JSON_SCHEMA,
 	persistResolvedAcceptance,
 	quoteExecutableForShell,
 	resolveEffectiveAcceptance,
@@ -65,6 +66,13 @@ function tempGitRepo(): string {
 }
 
 describe("acceptance gates", () => {
+	it("publishes one canonical report schema and rejects noncanonical criterion fields", () => {
+		const item = ((ACCEPTANCE_REPORT_JSON_SCHEMA.properties.criteriaSatisfied as { items: { required: string[] } }).items);
+		assert.deepEqual(item.required, ["id", "status", "evidence"]);
+		const parsed = parseAcceptanceReport(report({ criteriaSatisfied: [{ criterion: "criterion-1", status: "satisfied", evidence: "proof" }] }));
+		assert.equal(parsed.report, undefined);
+		assert.match(parsed.error ?? "", /criterion.*unsupported acceptance criterion field/);
+	});
 	it("supports canonical off switches and enforced auto", async () => {
 		const disabled = resolveEffectiveAcceptance({ agentName: "worker", task: "Implement a risky fix", explicit: false, async: true });
 		assert.equal(disabled.level, "none");
@@ -660,7 +668,7 @@ describe("acceptance gates", () => {
 		const cases = [
 			{
 				criteriaSatisfied: [{ criterion: "criterion-1", status: "satisfied", evidence: "verified" }],
-				diagnostic: "Failed to parse acceptance-report: Invalid acceptance-report: criteriaSatisfied[0].criterion: unsupported acceptance criterion field",
+				diagnostic: "Failed to parse acceptance-report: Invalid acceptance-report: criteriaSatisfied[0].criterion: unsupported acceptance criterion field; criteriaSatisfied[0].id: expected non-empty string; got missing",
 			},
 			{
 				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied" }],
@@ -744,7 +752,7 @@ describe("acceptance gates", () => {
 			criteriaSatisfied: [{ id: 7, status: "maybe", evidence: "" }],
 		}));
 		assert.equal(invalidCriteriaReport.report, undefined);
-		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.id: expected string; got number 7/);
+		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.id: expected non-empty string; got number 7/);
 		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.status: expected one of "satisfied", "not-satisfied", "not-applicable"; got "maybe"/);
 		assert.match(invalidCriteriaReport.error ?? "", /criteriaSatisfied\[0\]\.evidence: expected non-empty string; got ""/);
 	});

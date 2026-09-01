@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/config-paths.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
+import { ACCEPTANCE_REPORT_JSON_SCHEMA } from "./acceptance.ts";
 
 export const STRUCTURED_OUTPUT_SCHEMA_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
 export const STRUCTURED_OUTPUT_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE";
@@ -66,7 +67,7 @@ export function createStructuredOutputToolParameters(schema: JsonSchemaObject, o
 		type: "object",
 		properties: {
 			value: rewriteLocalJsonPointerRefs(schema, "#/properties/value"),
-			...(options.acceptanceReport ? { acceptanceReport: { type: "object" } } : {}),
+			...(options.acceptanceReport ? { acceptanceReport: ACCEPTANCE_REPORT_JSON_SCHEMA } : {}),
 		},
 		required: ["value"],
 		additionalProperties: false,

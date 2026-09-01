@@ -777,6 +777,48 @@ function extractBalancedJson(text: string, start: number): string | undefined {
 	return undefined;
 }
 
+export const ACCEPTANCE_REPORT_JSON_SCHEMA = {
+	type: "object",
+	properties: {
+		criteriaSatisfied: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: {
+					id: { type: "string", minLength: 1 },
+					status: { type: "string", enum: ["satisfied", "not-satisfied", "not-applicable"] },
+					evidence: { type: "string", minLength: 1 },
+				},
+				required: ["id", "status", "evidence"],
+				additionalProperties: false,
+			},
+		},
+		changedFiles: { type: "array", items: { type: "string", minLength: 1 } },
+		testsAddedOrUpdated: { type: "array", items: { type: "string", minLength: 1 } },
+		commandsRun: {
+			type: "array",
+			items: {
+				type: "object",
+				properties: {
+					command: { type: "string", minLength: 1 },
+					result: { type: "string", enum: ["passed", "failed", "not-run"] },
+					summary: { type: "string", minLength: 1 },
+				},
+				required: ["command", "result", "summary"],
+				additionalProperties: false,
+			},
+		},
+		validationOutput: { type: "array", items: { type: "string", minLength: 1 } },
+		residualRisks: { type: "array", items: { type: "string", minLength: 1 } },
+		noStagedFiles: { type: "boolean" },
+		diffSummary: { type: "string", minLength: 1 },
+		reviewFindings: { type: "array", items: { type: "string", minLength: 1 } },
+		manualNotes: { type: "string" },
+		notes: { type: "string" },
+	},
+	additionalProperties: false,
+} as const;
+
 const ACCEPTANCE_REPORT_WRAPPERS = new Set(["acceptance", "acceptance-report", "acceptance_report", "acceptanceReport"]);
 
 const ACCEPTANCE_REPORT_FIELDS: Record<string, keyof AcceptanceReport> = {
@@ -1146,9 +1188,9 @@ function validateAcceptanceReport(value: unknown, pathLabel = ""): { report?: Ac
 					continue;
 				}
 				const criterion = item as { id?: unknown; status?: unknown; evidence?: unknown };
-				if (criterion.id !== undefined && typeof criterion.id !== "string") {
-					pushTypeError(errors, `${itemPath}.id`, "string", criterion.id);
-				} else if (typeof criterion.id === "string" && criterion.id) {
+				if (typeof criterion.id !== "string" || !criterion.id.trim()) {
+					pushTypeError(errors, `${itemPath}.id`, "non-empty string", criterion.id);
+				} else {
 					if (criterionIds.has(criterion.id)) errors.push(`${itemPath}.id: duplicate normalized criterion id '${criterion.id}'`);
 					criterionIds.add(criterion.id);
 				}

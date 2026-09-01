@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../../src/runs/shared/mutation-evidence.ts";
+import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, fingerprintWorkspace, snapshotTrackedMutations } from "../../src/runs/shared/mutation-evidence.ts";
 import { evaluateCompletionMutationGuard } from "../../src/runs/shared/completion-guard.ts";
 
 function git(cwd: string, args: string[]): void {
@@ -27,6 +27,27 @@ function withRepo(run: (repo: string) => void): void {
 }
 
 describe("tracked mutation evidence", () => {
+	it("binds cache identity to bounded untracked content", () => {
+		withRepo((repo) => {
+			fs.writeFileSync(path.join(repo, "untracked.txt"), "one\n");
+			const before = fingerprintWorkspace(repo);
+			fs.writeFileSync(path.join(repo, "untracked.txt"), "two\n");
+			const after = fingerprintWorkspace(repo);
+			assert.equal(before.cacheable, true);
+			assert.notEqual(before.digest, after.digest);
+			assert.notEqual(before.untrackedDigest, after.untrackedDigest);
+		});
+	});
+
+	it("marks an over-bound untracked workspace uncacheable", () => {
+		withRepo((repo) => {
+			fs.writeFileSync(path.join(repo, "untracked.txt"), "too large");
+			const fingerprint = fingerprintWorkspace(repo, { maxUntrackedFiles: 1, maxUntrackedBytes: 2 });
+			assert.equal(fingerprint.cacheable, false);
+			assert.equal(fingerprint.digest, undefined);
+			assert.match(fingerprint.uncacheableReason ?? "", /bytes exceed limit/);
+		});
+	});
 	it("detects edits to a tracked file that was already dirty at child start", () => {
 		withRepo((repo) => {
 			fs.writeFileSync(path.join(repo, "tracked.txt"), "dirty before child\n", "utf-8");
