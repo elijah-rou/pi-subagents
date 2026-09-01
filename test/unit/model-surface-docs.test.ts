@@ -119,7 +119,14 @@ describe("model-facing docs and skill contract", () => {
 		const contract = read(contractPath);
 		const routes = skillRoutes(skill);
 		assert.deepEqual(routes.get("commissioning"), ["references/commissioning.md"]);
-		assert.ok(loadedBytes([skillPath, contractPath]) < 36_877);
+		assert.match(skill, /detailed scout synthesis, review-to-fix, resume, or other role handoffs/i);
+		const packetFields = [
+			"Objective/deliverable", "Repo/cwd/ref", "Authority/edit boundary", "Parent-decided seams/constraints",
+			"Observable acceptance", "Targeted validation", "Output/artifact", "Stop/escalation",
+		];
+		for (const field of packetFields) assert.ok(skill.includes(`\`${field}\``), `top-level skill missing packet field: ${field}`);
+		assert.match(skill, /authority field explicitly[\s\S]*edit, commit, push, comment, merge, publish,[\s\S]*release, or launch children/i);
+		assert.ok(Buffer.byteLength(skill) < 36_877);
 
 		const packetMatch = contract.match(/```text\nObjective\/deliverable:[\s\S]*?\n```/);
 		assert.ok(packetMatch);
@@ -139,7 +146,14 @@ describe("model-facing docs and skill contract", () => {
 		assert.match(contract, /evidence keyed to the decisions or code seams/i);
 		assert.match(contract, /parent verifies citations, resolves conflicts, owns decisions, and writes a\s+new canonical worker packet/i);
 		assert.match(contract, /Do not paste scout transcripts, full research\s+reports, or broad parent history/i);
-		assert.match(contract, /only:\n\n```text\nAccepted findings:\n- <ID>:[\s\S]*evidence obligation:[\s\S]*affected seams:/);
+		assert.match(contract, /- <ID> \[<P0\|P1\|P2>\] <FIX\|ESCALATE\|BLOCK\|DEFER\|REJECT>:/);
+		assert.match(contract, /Valid P0\/P1 findings may not be deferred/i);
+		assert.match(contract, /only:\n\n```text\nAccepted findings:\n- <ID> \[<P0\|P1>\]:[\s\S]*evidence obligation:[\s\S]*affected seams:/);
+		const exampleAuthorities = contract.match(/Authority\/edit boundary: (?:Read-only|Sole writer)[^\n]+/g) ?? [];
+		assert.equal(exampleAuthorities.length, 2);
+		for (const example of exampleAuthorities) {
+			for (const action of ["edit", "commit", "push", "comment", "merge", "publish", "release", "launch children"]) assert.match(example, new RegExp(`\\b${action}\\b`));
+		}
 		assert.match(contract, /Resume only when[\s\S]*same child's bounded\s+working state/i);
 		assert.match(contract, /Launch a fresh child[\s\S]*new role, adversarial or\s+independent review[\s\S]*unrelated\s+phase/i);
 
@@ -159,14 +173,14 @@ describe("model-facing docs and skill contract", () => {
 		assert.match(gather, /bounded evidence keyed to named\s+decisions or seams/i);
 		assert.match(gather, /parent synthesis, never copied child output or parent history/i);
 		const reviewLoop = read("prompts/review-loop.md");
-		assert.match(reviewLoop, /accepted finding IDs, required outcomes, evidence obligations, affected seams/i);
+		assert.match(reviewLoop, /accepted finding IDs, severity, required outcomes, evidence obligations, affected seams/i);
 		assert.match(reviewLoop, /not reviewer transcripts or full reports/i);
 		assert.match(reviewLoop, /Resume an existing worker only for the same role, seam, repo\/cwd\/ref, authority boundary, and bounded working state/i);
 		assert.match(reviewLoop, /fresh child for a new role, adversarial review, or unrelated phase/i);
 
 		const measurements = read("docs/delegation-efficiency-plan.md");
 		for (const row of [
-			`| commissioning initial context | 36877 | ${loadedBytes([skillPath, contractPath])} |`,
+			`| commissioning initial context | 36877 | ${Buffer.byteLength(skill)} |`,
 			`| scout synthesis prompt | 756 | ${Buffer.byteLength(gather)} |`,
 			`| review-to-fix prompt | 5275 | ${Buffer.byteLength(reviewLoop)} |`,
 		]) assert.ok(measurements.includes(row), `missing measurement: ${row}`);

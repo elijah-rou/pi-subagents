@@ -105,6 +105,47 @@ Orchestrate from the parent.
 		assert.doesNotMatch(candidate?.body ?? "", /pstack|cursor|claude|gpt-/i);
 	});
 
+	it("packages bounded review and validation contracts", () => {
+		const readPackageFile = (relativePath: string): string => fs.readFileSync(path.join(process.cwd(), relativePath), "utf-8");
+		const reviewLoop = readPackageFile("prompts/review-loop.md");
+		const parallelReview = readPackageFile("prompts/parallel-review.md");
+		const parallelCleanup = readPackageFile("prompts/parallel-cleanup.md");
+		const reviewReference = readPackageFile("skills/pi-subagents/references/review-and-validation.md");
+		const programReference = readPackageFile("skills/pi-subagents/references/program-orchestration.md");
+		const rolesReference = readPackageFile("skills/pi-subagents/references/prompting-and-roles.md");
+		const boundedDefaults = [reviewLoop, reviewReference, programReference, rolesReference];
+
+		assert.ok(Buffer.byteLength(reviewLoop) < 5_275, "review-to-fix prompt must remain below its Workstream 5 baseline");
+		for (const contract of boundedDefaults) {
+			assert.match(contract, /one fresh (?:high-quality |high quality )?`?reviewer/i);
+			assert.match(contract, /two (?:reviewers )?only/i);
+			assert.match(contract, /distinct elevated[- ]risks?/i);
+			assert.match(contract, /security, concurrency, architecture, or high blast radius/i);
+			assert.match(contract, /parent-only inspection/i);
+			assert.match(contract, /deterministic (?:corrections|fixes|gates)/i);
+			assert.match(contract, /broad re-review/i);
+			assert.match(contract, /focused re-review only for unresolved semantics or [^.;\n]*fix blast radius/i);
+			assert.match(contract, /never silently skip[^.\n]*known P0 or P1/i);
+		}
+
+		assert.match(reviewLoop, /one broad review round by default/i);
+		assert.match(reviewLoop, /focused finding re-review is outside that default broad-round budget/i);
+		assert.match(reviewLoop, /specify a cap, honor it as a ceiling and count every broad or focused review invocation/i);
+		assert.match(reviewLoop, /cap prevents required focused re-review[^.]*report blocked/i);
+		assert.match(reviewLoop, /explicitly request parallel review or a reviewer count, honor that fanout/i);
+		assert.match(reviewLoop, /targeted checks for each changed slice/i);
+		assert.match(reviewLoop, /checkpoint or full-suite checks after dependent groups/i);
+		assert.match(reviewLoop, /final validation against the complete delivery/i);
+		assert.match(parallelReview, /explicit fanout request/i);
+		assert.match(parallelReview, /two reviewers when I provide no count/i);
+		assert.match(parallelReview, /preserve severity in every disposition/i);
+		assert.doesNotMatch(parallelReview, /fourth reviewer/i);
+		assert.match(parallelCleanup, /explicitly requests the two specialized reviewers/i);
+		assert.match(parallelCleanup, /skills\/pi-subagents\/references\/commissioning\.md/);
+		assert.match(reviewReference, /Valid P0\/P1:[^\n]*Preserve severity[^\n]*fix, escalate, or report blocked/i);
+		assert.doesNotMatch([reviewLoop, parallelReview, rolesReference].join("\n"), /prefer three reviewers|default to (?:a maximum of )?3 review rounds/i);
+	});
+
 	it("runs a named workflow through native subagent execution", async () => {
 		writePrompt(path.join(cwd, ".pi", "prompts"), "native-run", `---
 description: Run native prompt

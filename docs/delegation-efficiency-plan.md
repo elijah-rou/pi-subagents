@@ -196,12 +196,12 @@ The baseline is commit `94b27239`.
 
 | Scenario | Before | After |
 | --- | ---: | ---: |
-| one-child-review | 10753 | 8205 |
-| basic-async | 11064 | 8434 |
-| management | 9173 | 6543 |
-| broad-intake | 14126 | 11608 |
-| top-level skill | 7316 | 4686 |
-| full skill tree | 69926 | 66595 |
+| one-child-review | 10753 | 9658 |
+| basic-async | 11064 | 8940 |
+| management | 9173 | 7049 |
+| broad-intake | 14126 | 12948 |
+| top-level skill | 7316 | 5192 |
+| full skill tree | 69926 | 70057 |
 
 ## 5. Bound commissioning and child handoffs
 
@@ -242,18 +242,19 @@ Broad prompts also blur responsibility. One worker should not simultaneously own
 ### Workstream 5 measurement record
 
 Counts are repository-file UTF-8 bytes (`Buffer.byteLength`) at baseline commit
-`7e1e9076`. The initial-context row is the top-level skill plus the reference
-routed for child commissioning: the 32 KB prompting/roles omnibus before and the
-focused commissioning contract after. Prompt rows are the complete packaged
+`7e1e9076`. The initial-context row is the context required for a routine child launch: the
+32 KB prompting/roles omnibus before and the top-level skill's always-on compact
+packet fields after. Detailed scout and role handoffs still route to the focused
+commissioning reference. Prompt rows are the complete packaged
 prompt files used for the representative scout-synthesis and review-to-fix
 flows. Authority, observable acceptance, targeted validation, output, and
 stop/escalation remain required through the canonical packet.
 
 | Representative surface | Before | After |
 | --- | ---: | ---: |
-| commissioning initial context | 36877 | 10302 |
+| commissioning initial context | 36877 | 5192 |
 | scout synthesis prompt | 756 | 716 |
-| review-to-fix prompt | 5275 | 5053 |
+| review-to-fix prompt | 5275 | 4437 |
 
 ## 6. Bound packaged review and validation recipes
 

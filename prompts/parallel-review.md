@@ -2,7 +2,7 @@
 description: Parallel subagents review
 ---
 
-Launch parallel reviewers for an adversarial review of the current work.
+Launch parallel reviewers for an adversarial review of the current work. This command is an explicit fanout request: use the reviewer count I provide, or two reviewers when I provide no count.
 
 Use fresh context, not forked context, unless I explicitly ask for forked context. Commission each reviewer with the canonical packet in `skills/pi-subagents/references/commissioning.md`. Reviewers inspect the repository, instructions, and current diff directly; do not rely on main-conversation history.
 
@@ -24,9 +24,7 @@ Choose or adapt angles when the work calls for it:
 - UI-heavy changes: include UX, accessibility, copy, and visual quality.
 - Security-sensitive changes: include unsafe input/output handling, auth boundaries, privacy, and data exposure.
 - Docs-heavy changes: include clarity, accuracy, completeness, reader flow, and non-robotic prose.
-- Large multi-file changes: consider a fourth reviewer for structural friction, module boundaries, and testability.
-
-Prefer three strong reviewers over many vague reviewers.
+Keep every reviewer contract distinct. Without an explicit count, do not add implicit fanout above this recipe's two-reviewer default.
 
 Give every reviewer a specific task prompt naming its angle. Ask reviewers to return concise, evidence-backed findings with file/line references and suggested fixes. Filter on evidence, not severity: a finding must be concrete, current, caused or made reachable by the target diff, and supported by source proof, a test or repro, or a contract contradiction. Label findings P0/P1/P2. P0 blocks merge. P1 should be fixed before release. P2 is report-only. End each review with `Merge verdict: BLOCK`, `Merge verdict: OK`, or `Merge verdict: OK with notes`. If nothing qualifies, ask the reviewer to say exactly `No issues found.` The response should be review feedback, not a context summary. Reviewers must not edit files unless I explicitly ask for a writer pass.
 
@@ -34,10 +32,10 @@ Do not default first-pass reviews to `blockers only`. That phrase is valid only 
 
 For a targeted follow-up review, ask only whether the named finding was resolved, whether the fix introduced a new defect in the fix blast radius, and whether prior P1/P2 notes still stand. For bot or PR-comment triage, classify each comment as VALID, STALE, INVALID, or OUT-OF-POLICY against current HEAD, then assign P0/P1/P2 only to VALID comments.
 
-While reviewers run, do your own narrow inspection if useful. After they return, assign stable finding IDs and synthesize the feedback into:
-- fixes worth doing now, with evidence obligations and affected seams
-- optional improvements
-- feedback to ignore or defer, with a short reason
+While reviewers run, do your own narrow inspection if useful. After they return, assign stable finding IDs and preserve severity in every disposition:
+- valid P0/P1: fix, escalate, or report blocked, with evidence obligations and affected seams
+- valid P2: fix or defer with a short reason
+- stale/invalid/out-of-policy feedback: reject or escalate with a short reason
 
 A later fix worker receives only the accepted finding packet inside the canonical contract, never reviewer transcripts or full reports.
 

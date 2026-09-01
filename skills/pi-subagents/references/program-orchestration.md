@@ -46,8 +46,8 @@ program. Record:
 | Serial mutation path | The writer critical path and the one writer that owns each checkout or isolated worktree |
 | Read-only overlap | Research, preparation, review, and validation that can run in parallel or ahead once inputs are stable |
 | Authority gates | Owner decisions and parent finding-disposition or acceptance points that stop autonomous progress |
-| Validation | Targeted checks near each change and checkpoint or full-suite checks after coherent groups and at final delivery |
-| Review | Reviewer count and focus justified by concrete risk and remaining uncertainty |
+| Validation | Targeted slice checks near each change, checkpoint or full-suite checks after dependent groups, and final validation against the complete delivery |
+| Review | Before implementation, allocate one fresh high-quality reviewer for an ordinary coherent behavioral change; two only for distinct elevated risks such as security, concurrency, architecture, or high blast radius; parent-only inspection for trivial or fully machine-decided changes when review was not requested |
 | Triggers | Completion evidence, failure or blocked conditions, and the event that revisits each deferred phase or lane |
 
 Every named phase must appear. Identify mutation ownership before commissioning
@@ -55,9 +55,7 @@ the first writer. Keep one writer per checkout; isolate concurrent mutation
 lanes in separate worktrees with disjoint ownership. If ownership, authority, or
 required evidence is ambiguous, stop before mutation and resolve it.
 
-Update the execution map when evidence changes a dependency, risk, or authority
-boundary. Record the change and its reason. Do not improvise a new launch that
-bypasses the parent synthesis.
+Default to one broad review round; necessary focused re-review is outside that budget. Honor explicit fanout. An explicit cap counts every review invocation; if it prevents required re-review, report blocked. Otherwise revise allocation only for new risk. Update the execution map when evidence changes a dependency, risk, or authority boundary. Record the change and its reason. Do not improvise a new launch that bypasses the parent synthesis.
 
 ## Select execution shapes by topology
 
@@ -99,6 +97,8 @@ operator gate is named. At commissioning, re-route to
 [`commissioning.md`](commissioning.md) and give each child that canonical packet. When a child fails, evidence is missing, a finding is
 unresolved, or a gate cannot be evaluated, mark the lane blocked and return to
 the parent. Do not infer success or launch the next mutation stage.
+
+After deterministic corrections, rerun the affected deterministic gates without broad re-review. Use focused re-review only for unresolved semantics or the fix blast radius. Preserve finding severity. Never silently skip or optionally defer a known P0 or P1: fix it, escalate it, or report the program blocked.
 
 Completion requires the mapped phases to be terminal or explicitly blocked,
 with changed files or outputs, required validation, review dispositions,

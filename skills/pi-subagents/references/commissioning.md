@@ -58,7 +58,7 @@ Example scout-to-worker flow:
 Scout packet
 Objective/deliverable: Locate the parser and tests governing malformed report fields; return seam-keyed evidence.
 Repo/cwd/ref: pi-subagents; /repo/pi-subagents; HEAD
-Authority/edit boundary: Read-only. No edits, commits, publication, or child launches.
+Authority/edit boundary: Read-only; may not edit, commit, push, comment, merge, publish, release, or launch children.
 Parent-decided seams/constraints: Inspect acceptance parsing only; runtime compatibility is unresolved.
 Observable acceptance: Cite parser, prompt, and production-path test seams; name conflicts or gaps.
 Targeted validation: Read the cited tests; no suite run required.
@@ -70,7 +70,7 @@ Parent synthesis: malformed fields remain fail-closed; edit parser diagnostics a
 Worker packet
 Objective/deliverable: Improve malformed-field diagnostics and add the production-path regression.
 Repo/cwd/ref: pi-subagents; /repo/pi-subagents; HEAD
-Authority/edit boundary: Sole writer; edit parser/tests only; no commit, push, publication, or child launches.
+Authority/edit boundary: Sole writer; may edit parser/tests only; may not commit, push, comment, merge, publish, release, or launch children.
 Parent-decided seams/constraints: Preserve fail-closed parsing; parser.ts and acceptance.test.ts are the verified seams.
 Observable acceptance: `criterion` is rejected precisely and the documented shape succeeds.
 Targeted validation: Run the focused acceptance test and typecheck.
@@ -82,12 +82,19 @@ Stop/escalation: Stop for a compatibility/API choice or failure outside the name
 
 Reviewers return stable finding IDs with severity, affected seams, concrete
 source/test/contract evidence, and the evidence that would prove resolution.
-The parent checks each finding against current HEAD and accepts, rejects, or
-defers it. A fix worker receives only:
+The parent checks each finding against current HEAD and records disposition
+without dropping severity:
+
+```text
+- <ID> [<P0|P1|P2>] <FIX|ESCALATE|BLOCK|DEFER|REJECT>: <reason and evidence obligation>
+```
+
+Valid P0/P1 findings may not be deferred: fix, escalate, or report blocked. A
+fix worker receives only:
 
 ```text
 Accepted findings:
-- <ID>: <required outcome>; evidence obligation: <proof>; affected seams: <files/symbols/tests>
+- <ID> [<P0|P1>]: <required outcome>; evidence obligation: <proof>; affected seams: <files/symbols/tests>
 ```
 
 Put that list inside the canonical packet. Do not pass rejected/deferred

@@ -8,37 +8,40 @@ Use the smallest loop that proves the change:
 
 1. Inspect the source, diff, issue, or plan directly.
 2. Keep one writer for each cwd or worktree.
-3. Run focused validation that can fail for the changed behavior.
-4. Use fresh-context read-only review for substantial, risky, public, or hard-to-see changes.
+3. Run targeted slice checks that can fail for the changed behavior.
+4. Use fresh-context read-only review when the review budget below requires it.
 5. Re-route to [`commissioning.md`](commissioning.md) and give the fix writer only accepted finding IDs, evidence obligations, and affected seams.
-6. Re-run affected validation and review only the changed blast radius.
-7. Inspect the final diff and evidence before parent acceptance.
+6. After deterministic corrections, re-run affected deterministic gates without broad re-review. Use focused re-review only for unresolved semantics or defects in the fix blast radius.
+7. Run checkpoint or full-suite checks after dependent groups, then final validation against the complete delivery.
+8. Inspect the final diff and evidence before parent acceptance.
 
-Skip review ceremony for trivial wording, renames, or local-only probes when direct parent inspection is enough.
+Parent-only inspection is enough for trivial or fully machine-decided changes when the user did not request review.
 
 ## Review shape
 
 | Situation | Shape |
 | --- | --- |
-| One coherent diff or one risk | one reviewer |
-| Independent risks, such as correctness, tests, security, or UI | parallel reviewers with distinct contracts |
+| Ordinary coherent behavioral change | one fresh high-quality reviewer |
+| Distinct elevated risks, such as security, concurrency, architecture, or high blast radius | two reviewers only, with distinct risk contracts |
+| Trivial or fully machine-decided change, with no user review request | parent-only inspection |
+| Explicit user fanout or round cap | honor the requested fanout or cap |
 | Possible over-scope or needless complexity | same-writer challenge before fresh review |
 | Material design tradeoff | council mode |
 
-Reviewers are fresh-context by default. Forked reviewers are for parent-history, drift, or prior-decision evidence.
+Reviewer count is a budget, not a quality score. Map it before implementation and revise only for new risk. Default to one broad round; necessary focused finding re-review is outside that budget. An explicit cap counts every review invocation; if it prevents required re-review, report blocked. Reviewers are fresh-context by default. Forked reviewers are for parent-history, drift, or prior-decision evidence.
 
 ## Finding disposition
 
 The parent classifies each finding against current HEAD:
 
-- **Valid blocker:** concrete failure, repro, security issue, contract mismatch, or source-proven regression. Fix now.
-- **Valid non-blocker:** real but outside the delivery slice. Record or defer.
+- **Valid P0/P1:** concrete failure, repro, security issue, contract mismatch, or source-proven regression. Preserve severity; fix, escalate, or report blocked. Never defer it as optional.
+- **Valid P2:** real but non-blocking. Preserve severity; fix or defer with a reason.
 - **Stale:** fixed or absent at the reviewed head. Cite current evidence.
 - **Invalid:** contradicted by source, tests, docs, or user-approved scope. Cite the contradiction.
 - **Out of policy/scope:** needs unapproved product, architecture, authority, release, or public-repo action. Escalate.
 - **Speculative:** no contract, repro, or reachable failure. Do not block.
 
-A clean reviewer result is evidence, not publication authority.
+A clean reviewer result is evidence, not publication authority. Never silently skip a known P0 or P1 finding: fix it, escalate the unresolved decision, or report the delivery as blocked.
 
 ## Gate-failure triage
 

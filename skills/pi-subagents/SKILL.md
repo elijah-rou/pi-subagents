@@ -32,7 +32,7 @@ remain unloaded until the mapped program reaches them.
 | `basic-async` | Launch or control direct, scripted, async, stateful, forked, oracle, or intercom execution | `references/execution-controls.md` |
 | `independent-lanes` | Coordinate independent worktree, repository, or writer lanes | `references/multi-lane-orchestration.md` |
 | `management` | List, inspect, create, edit, disable, eject, or expose agents or RPC | `references/management-authoring-rpc.md` |
-| `commissioning` | Commission a child or hand evidence between roles | `references/commissioning.md` |
+| `commissioning` | Prepare detailed scout synthesis, review-to-fix, resume, or other role handoffs | `references/commissioning.md` |
 | `roles-and-recipes` | Choose roles, models, slash commands, or specialized prompt recipes | `references/prompting-and-roles.md` |
 | `constraints` | Diagnose safety constraints, error handling, or a packaged recipe | `references/constraints-and-recipes.md` |
 
@@ -42,6 +42,14 @@ it does not load orchestration or execution recipes. Basic async launch starts a
 `basic-async`. Human/model agent administration starts at `management`.
 
 ## Always-on controls
+
+Every child task includes packet fields: `Objective/deliverable`,
+`Repo/cwd/ref`, `Authority/edit boundary`, `Parent-decided seams/constraints`,
+`Observable acceptance`, `Targeted validation`, `Output/artifact`, and
+`Stop/escalation`. Use `none` for empty fields. The authority field explicitly
+states whether the child may edit, commit, push, comment, merge, publish,
+release, or launch children. Load `references/commissioning.md` only for
+detailed scout or role handoffs.
 
 - Keep planning, product/API/security decisions, finding disposition,
   acceptance, publication, and merge/release authority with the parent. Escalate
