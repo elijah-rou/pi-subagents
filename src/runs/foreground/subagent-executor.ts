@@ -292,6 +292,8 @@ export interface SubagentParamsLike {
 	type?: string;
 	agent?: string;
 	task?: string;
+	delegationReason?: import("../shared/delegation-provenance.ts").DelegationReason;
+	delegationBasis?: import("../shared/delegation-provenance.ts").DelegationBasis;
 	extensionBindings?: ExtensionBindings;
 	/** Retained async child run id. Valid only on workflow runs.run items. */
 	resume?: string;
@@ -3956,6 +3958,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		}
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
 		if (requestParams.workflowScript !== undefined && normalizedAction === undefined) {
+			const launchInspection = inspectWorkflowScript(requestParams.workflowScript, { cwd: requestParams.cwd, worktree: requestParams.worktree });
+			const singletonAdvisory = launchInspection.advisories.find((advisory) => advisory.code === "single-child-workflow");
+			if (singletonAdvisory) return buildRequestedModeError(requestParams, singletonAdvisory.message);
 			if (delegatedWorkflowPermit) {
 				const permitError = validateWorkflowChildPermitRoot(delegatedWorkflowPermit, _id);
 				if (permitError) return buildRequestedModeError(requestParams, permitError);

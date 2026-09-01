@@ -35,16 +35,16 @@ function budget(limit: number) {
 }
 
 describe("run fan-out budget", () => {
-	it("resolves environment over config and falls back to 64", () => {
+	it("resolves environment over config and falls back to 16", () => {
 		delete process.env.PI_SUBAGENT_MAX_SPAWNS_PER_RUN;
-		assert.equal(resolveMaxSubagentSpawnsPerRun(undefined), 64);
+		assert.equal(resolveMaxSubagentSpawnsPerRun(undefined), 16);
 		assert.equal(resolveMaxSubagentSpawnsPerRun(12), 12);
-		for (const invalid of [0, -1, 1.5, "bad"]) assert.equal(resolveMaxSubagentSpawnsPerRun(invalid as number), 64);
+		for (const invalid of [0, -1, 1.5, "bad"]) assert.equal(resolveMaxSubagentSpawnsPerRun(invalid as number), 16);
 		process.env.PI_SUBAGENT_MAX_SPAWNS_PER_RUN = "7";
 		assert.equal(resolveMaxSubagentSpawnsPerRun(12), 7);
 		for (const invalid of ["0", "-1", "1.5", "bad"]) {
 			process.env.PI_SUBAGENT_MAX_SPAWNS_PER_RUN = invalid;
-			assert.equal(resolveMaxSubagentSpawnsPerRun(undefined), 64);
+			assert.equal(resolveMaxSubagentSpawnsPerRun(undefined), 16);
 		}
 	});
 

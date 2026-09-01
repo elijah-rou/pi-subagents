@@ -49,13 +49,14 @@ describe("public subagent execution normalization", () => {
 	});
 
 	it("accepts structured single-child, workflow, and retained management", () => {
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1" }), { ok: true, params: { workflowScript: "return 1" } });
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
-		assert.deepEqual(normalizePublicSubagentExecution({ workflowScriptPath: "workflows/review.js" }), { ok: true, params: { workflowScriptPath: "workflows/review.js" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", workflowScript: "return 1" }), { ok: true, params: { delegationReason: "semantic_review", workflowScript: "return 1" } });
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", workflowScript: "return 1", preflight: { version: 1, lanes: [] } }), { ok: true, params: { delegationReason: "semantic_review", workflowScript: "return 1", preflight: { version: 1, lanes: [] } } });
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", workflowScriptPath: "workflows/review.js" }), { ok: true, params: { delegationReason: "semantic_review", workflowScriptPath: "workflows/review.js" } });
 		const task = "Use `quotes`\nand newlines";
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: " worker ", task, context: "fresh", async: false }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", agent: " worker ", task, context: "fresh", async: false }), {
 			ok: true,
 			params: {
+				delegationReason: "semantic_review",
 				agent: "worker",
 				task,
 				context: "fresh",
@@ -63,31 +64,35 @@ describe("public subagent execution normalization", () => {
 				output: true,
 			},
 		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker" }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", agent: "worker" }), {
 			ok: true,
 			params: {
+				delegationReason: "semantic_review",
 				agent: "worker",
 				output: true,
 			},
 		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", async: true }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", agent: "worker", async: true }), {
 			ok: true,
 			params: {
+				delegationReason: "semantic_review",
 				agent: "worker",
 				async: true,
 				output: true,
 			},
 		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", output: false }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", agent: "worker", output: false }), {
 			ok: true,
 			params: {
+				delegationReason: "semantic_review",
 				agent: "worker",
 				output: false,
 			},
 		});
-		assert.deepEqual(normalizePublicSubagentExecution({ agent: "worker", isolation: "none" }), {
+		assert.deepEqual(normalizePublicSubagentExecution({ delegationReason: "semantic_review", agent: "worker", isolation: "none" }), {
 			ok: true,
 			params: {
+				delegationReason: "semantic_review",
 				agent: "worker",
 				worktree: false,
 				output: true,
@@ -135,6 +140,24 @@ describe("public subagent execution normalization", () => {
 		const unknownTrusted = normalizeTrustedHostSubagentExecution({ action: "not-a-real-action" });
 		assert.equal(unknownTrusted.ok, false);
 		if (!unknownTrusted.ok) assert.match(unknownTrusted.error, /Unknown trusted host action/);
+	});
+
+	it("requires finite typed provenance and reason-specific basis before launch", () => {
+		for (const params of [
+			{ agent: "worker" },
+			{ agent: "worker", delegationReason: "unknown" },
+			{ agent: "worker", delegationReason: "independent_parallel_lane" },
+			{ workflowScript: "return 1", delegationReason: "unresolved_ownership", delegationBasis: { inspected: [], unresolved: "owner" } },
+		] as const) {
+			const result = normalizePublicSubagentExecution(params);
+			assert.equal(result.ok, false);
+		}
+		assert.equal(normalizePublicSubagentExecution({
+			agent: "worker",
+			delegationReason: "independent_parallel_lane",
+			delegationBasis: { ownership: ["src/a.ts"], deliverable: "implementation" },
+		}).ok, true);
+		assert.equal(normalizePublicSubagentExecution({ action: "status", id: "run" }).ok, true);
 	});
 
 	it("rejects workflowScript with workflowScriptPath", () => {

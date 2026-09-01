@@ -329,6 +329,8 @@ const ControlOverrides = Type.Object({
 const SubagentParamProperties = {
 	agent: Type.Optional(Type.String({ description: "Agent for one-child execution, or target for agent management actions." })),
 	task: Type.Optional(Type.String({ description: "Optional one-child task. Requires agent; cannot combine with action, workflowScript, or workflowScriptPath." })),
+	delegationReason: Type.Optional(Type.String({ enum: ["user_async", "independent_parallel_lane", "manager_continuity", "unresolved_ownership", "semantic_review", "elevated_risk_review"], description: "Required typed provenance for every new execution launch; management calls are exempt." })),
+	delegationBasis: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: false, description: "Required reason-specific basis for independent_parallel_lane or unresolved_ownership." })),
 	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Namespaced, bounded plain-JSON metadata delivered only to the child runtime. Namespace keys use package.name/1 syntax." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,

@@ -2771,14 +2771,16 @@ export function normalizeMaxSubagentSpawnsPerSession(value: unknown): number | u
 	return normalizeNonNegativeInteger(value);
 }
 
-export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): number | undefined {
-	const envMaxSpawns = normalizeMaxSubagentSpawnsPerSession(process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION);
-	if (envMaxSpawns !== undefined) return envMaxSpawns === 0 ? undefined : envMaxSpawns;
-	const configuredMaxSpawns = normalizeMaxSubagentSpawnsPerSession(configMaxSpawns);
-	return configuredMaxSpawns === 0 ? undefined : configuredMaxSpawns;
+export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION = 32;
+
+export function resolveMaxSubagentSpawnsPerSession(configMaxSpawns?: number): number {
+	const fromEnvironment = normalizeMaxSubagentSpawnsPerSession(process.env.PI_SUBAGENT_MAX_SPAWNS_PER_SESSION);
+	if (fromEnvironment !== undefined && fromEnvironment > 0) return fromEnvironment;
+	const configured = normalizeMaxSubagentSpawnsPerSession(configMaxSpawns);
+	return configured !== undefined && configured > 0 ? configured : DEFAULT_MAX_SUBAGENT_SPAWNS_PER_SESSION;
 }
 
-export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 64;
+export const DEFAULT_MAX_SUBAGENT_SPAWNS_PER_RUN = 16;
 
 export function normalizeMaxSubagentSpawnsPerRun(value: unknown): number | undefined {
 	const normalized = normalizeNonNegativeInteger(value);

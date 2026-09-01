@@ -1,4 +1,5 @@
 import { SUBAGENT_ACTIONS, SUBAGENT_INTERNAL_ACTIONS } from "../shared/types.ts";
+import { validateDelegationProvenance } from "../runs/shared/delegation-provenance.ts";
 
 export interface PublicSubagentExecutionParams {
 	action?: unknown;
@@ -6,6 +7,8 @@ export interface PublicSubagentExecutionParams {
 	repo?: unknown;
 	agent?: unknown;
 	task?: unknown;
+	delegationReason?: unknown;
+	delegationBasis?: unknown;
 	handoffPath?: unknown;
 	laneId?: unknown;
 	step?: unknown;
@@ -176,6 +179,8 @@ function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(par
 		return { ok: false, error: "Structured single-child execution cannot be combined with workflowScript or workflowScriptPath.", mode: "workflow" };
 	}
 	if (params.agent !== undefined || params.task !== undefined) {
+		const provenanceError = validateDelegationProvenance(params.delegationReason, params.delegationBasis);
+		if (provenanceError) return { ok: false, error: provenanceError, mode: "workflow" };
 		if (typeof params.agent !== "string" || !params.agent.trim()) {
 			return { ok: false, error: "Structured single-child execution requires agent to be a non-empty string.", mode: "workflow" };
 		}
@@ -194,5 +199,7 @@ function normalizeSubagentExecution<T extends PublicSubagentExecutionParams>(par
 	if (!hasValidWorkflowInput) {
 		return { ok: false, error: "Execution requires either { agent, task? } for one child or a non-empty workflowScript or workflowScriptPath for orchestration.", mode: "workflow" };
 	}
+	const provenanceError = validateDelegationProvenance(params.delegationReason, params.delegationBasis);
+	if (provenanceError) return { ok: false, error: provenanceError, mode: "workflow" };
 	return { ok: true, params };
 }

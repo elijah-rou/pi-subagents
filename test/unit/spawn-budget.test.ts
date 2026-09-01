@@ -22,21 +22,15 @@ function makeState(sessionId = "session-a"): SubagentState {
 const capped: ExtensionConfig = { maxSubagentSpawnsPerSession: 4 };
 
 describe("spawn budget", () => {
-	it("keeps unset and zero caps unlimited without cumulative accounting", () => {
+	it("applies the finite session ceiling when unset or zero", () => {
 		for (const config of [{}, { maxSubagentSpawnsPerSession: 0 }]) {
 			const state = makeState();
-			const reserved = reserveSpawnBudget(state, config, "session-a", 50);
+			const reserved = reserveSpawnBudget(state, config, "session-a", 32);
 			assert.equal(reserved.error, undefined);
-			assert.deepEqual(reserved.snapshot, {
-				used: 0,
-				configuredLimit: null,
-				granted: 0,
-				limit: null,
-				remaining: null,
-				grantRemaining: null,
-				grantHistory: [],
-			});
-			assert.equal(formatSpawnBudget(reserved.snapshot), "Spawn budget: unlimited");
+			assert.equal(reserved.snapshot.configuredLimit, 32);
+			assert.equal(reserved.snapshot.limit, 32);
+			assert.equal(reserved.snapshot.remaining, 0);
+			assert.match(formatSpawnBudget(reserved.snapshot), /32\/32 used/);
 		}
 	});
 
@@ -102,7 +96,7 @@ describe("spawn budget", () => {
 
 	it("rejects meaningless or invalid grants", () => {
 		const state = makeState();
-		assert.match(grantSpawnBudget(state, {}, "session-a", 1).error ?? "", /no configured spawn cap/);
+		assert.equal(grantSpawnBudget(state, {}, "session-a", 1).error, undefined);
 		assert.match(grantSpawnBudget(state, capped, "session-a", 0).error ?? "", /positive integer/);
 		assert.match(grantSpawnBudget(state, capped, "session-a", 1.5).error ?? "", /positive integer/);
 	});

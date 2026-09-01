@@ -145,7 +145,7 @@ export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
 	return flat;
 }
 
-export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 20;
+export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 6;
 
 /**
  * A promise-based semaphore for limiting concurrent access across multiple
