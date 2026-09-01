@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 2,
+  "controls": {
+    "runtimeRevision": "pi-subagents@0.59.0-fork.1/workstream-9",
+    "modelPolicy": "deterministic-mock-policy-v2",
+    "taskSeed": "delegation-efficiency-workstream-9-seed-1",
+    "fixtureHash": "c2507d3d8f04d617612d3fbde3d2e47801510146d8860805c2bf477995083486",
+    "timeoutMs": 180000,
+    "maxConcurrency": 2,
+    "measurementCutoff": "final-parent-acceptance"
+  },
+  "workload": {
+    "name": "repository-neutral-two-slice-change",
+    "version": 2,
+    "hash": "c2507d3d8f04d617612d3fbde3d2e47801510146d8860805c2bf477995083486"
+  },
+  "baseline": {
+    "name": "baseline",
+    "strategy": {
+      "id": "serialized-singletons",
+      "guidancePacket": "Run every workload operation as a separately wrapped singleton invocation. Repeat the full program map, owner decision, artifact contract, evidence requirements, finding lifecycle, validation gates, and acceptance contract in each handoff. Block for completion, then poll status before constructing and sending the next singleton handoff."
+    },
+    "controls": {
+      "runtimeRevision": "pi-subagents@0.59.0-fork.1/workstream-9",
+      "modelPolicy": "deterministic-mock-policy-v2",
+      "taskSeed": "delegation-efficiency-workstream-9-seed-1",
+      "fixtureHash": "c2507d3d8f04d617612d3fbde3d2e47801510146d8860805c2bf477995083486",
+      "timeoutMs": 180000,
+      "maxConcurrency": 2,
+      "measurementCutoff": "final-parent-acceptance"
+    },
+    "topology": {
+      "topLevelExecutionCalls": 13,
+      "singletonWorkflowWrappers": 13,
+      "blockingWaits": 6,
+      "statusPolls": 6,
+      "childLaunches": 4,
+      "childResumes": 2,
+      "reviewRounds": 2
+    },
+    "timing": {
+      "wallMs": 143,
+      "ownerExcludedWallMs": 133,
+      "partitionMs": {
+        "owner": 10,
+        "parent": 38,
+        "child": 71,
+        "tool": 12,
+        "wait": 12,
+        "idle": 0
+      }
+    },
+    "usage": {
+      "parent": {
+        "attempts": 3,
+        "contextBytes": 17114,
+        "processedTokens": 7740,
+        "reportedCostUsd": 0.03096
+      },
+      "child": {
+        "attempts": 6,
+        "contextBytes": 53828,
+        "processedTokens": 20620,
+        "reportedCostUsd": 0.08248
+      },
+      "combinedKnown": {
+        "attempts": 9,
+        "contextBytes": 70942,
+        "processedTokens": 28360,
+        "reportedCostUsd": 0.11344
+      },
+      "accountingIdentity": "unique-model-attempt-id",
+      "externalUsage": "unknown"
+    },
+    "quality": {
+      "validationCalls": {
+        "targeted": 2,
+        "checkpoint": 1,
+        "final": 1
+      },
+      "validationOutcomes": {
+        "targeted-a": "passed",
+        "targeted-b": "passed",
+        "checkpoint": "passed",
+        "final-parent-acceptance": "passed"
+      },
+      "findings": {
+        "detected": 1,
+        "accepted": 1,
+        "fixed": 1,
+        "verified": 1
+      },
+      "unresolvedAccepted": 0,
+      "finalAcceptance": "accepted"
+    },
+    "programMapBeforeMutation": true,
+    "readOnlyStartsBeforeWriterCriticalPathBlocks": false
+  },
+  "proposed": {
+    "name": "proposed",
+    "strategy": {
+      "id": "mapped-coordinated-waves",
+      "guidancePacket": "Map once, launch independent preparation with slice A, checkpoint only at dependencies, and resume the serial writer."
+    },
+    "controls": {
+      "runtimeRevision": "pi-subagents@0.59.0-fork.1/workstream-9",
+      "modelPolicy": "deterministic-mock-policy-v2",
+      "taskSeed": "delegation-efficiency-workstream-9-seed-1",
+      "fixtureHash": "c2507d3d8f04d617612d3fbde3d2e47801510146d8860805c2bf477995083486",
+      "timeoutMs": 180000,
+      "maxConcurrency": 2,
+      "measurementCutoff": "final-parent-acceptance"
+    },
+    "topology": {
+      "topLevelExecutionCalls": 4,
+      "singletonWorkflowWrappers": 0,
+      "blockingWaits": 1,
+      "statusPolls": 0,
+      "childLaunches": 4,
+      "childResumes": 2,
+      "reviewRounds": 2
+    },
+    "timing": {
+      "wallMs": 101,
+      "ownerExcludedWallMs": 91,
+      "partitionMs": {
+        "owner": 10,
+        "parent": 16,
+        "child": 61,
+        "tool": 12,
+        "wait": 2,
+        "idle": 0
+      }
+    },
+    "usage": {
+      "parent": {
+        "attempts": 3,
+        "contextBytes": 16451,
+        "processedTokens": 5040,
+        "reportedCostUsd": 0.02016
+      },
+      "child": {
+        "attempts": 6,
+        "contextBytes": 52502,
+        "processedTokens": 15220,
+        "reportedCostUsd": 0.06088
+      },
+      "combinedKnown": {
+        "attempts": 9,
+        "contextBytes": 68953,
+        "processedTokens": 20260,
+        "reportedCostUsd": 0.08104
+      },
+      "accountingIdentity": "unique-model-attempt-id",
+      "externalUsage": "unknown"
+    },
+    "quality": {
+      "validationCalls": {
+        "targeted": 2,
+        "checkpoint": 1,
+        "final": 1
+      },
+      "validationOutcomes": {
+        "targeted-a": "passed",
+        "targeted-b": "passed",
+        "checkpoint": "passed",
+        "final-parent-acceptance": "passed"
+      },
+      "findings": {
+        "detected": 1,
+        "accepted": 1,
+        "fixed": 1,
+        "verified": 1
+      },
+      "unresolvedAccepted": 0,
+      "finalAcceptance": "accepted"
+    },
+    "programMapBeforeMutation": true,
+    "readOnlyStartsBeforeWriterCriticalPathBlocks": true
+  },
+  "delta": {
+    "ownerExcludedWallMs": -42,
+    "topLevelExecutionCalls": -9,
+    "singletonWorkflowWrappers": -13,
+    "blockingWaits": -5,
+    "statusPolls": -6,
+    "combinedContextBytes": -1989,
+    "combinedProcessedTokens": -8100,
+    "combinedReportedCostUsd": -0.0324
+  },
+  "residualUncertainty": [
+    "One deterministic mock workload cannot establish causal or live-model generality.",
+    "Virtual operation durations and policy-calculated usage are synthetic executor observations, not provider measurements.",
+    "External usage is unknown and excluded from combined known usage."
+  ]
+}

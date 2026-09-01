@@ -393,6 +393,41 @@ Prompt and workflow changes can appear more efficient while merely moving cost b
 - Every accepted material finding is fixed, escalated, or reported as blocked.
 - Results state residual uncertainty and do not claim causation from one workload.
 
+### Workstream 9 implementation record
+
+A stdlib-only deterministic mock executor runs one hashed, repository-neutral,
+stateful two-slice workload under serialized-singleton and mapped
+coordinated-wave guidance. Runtime revision, mock model policy, seed, full
+workload hash, timeout, concurrency limit, and successful final-parent-acceptance
+cutoff match. Only strategy and guidance differ. Raw trace JSONL remains ignored
+at `tmp/orchestration-benchmark/raw-evidence.jsonl`.
+
+The workload records the program map and owner-selected default before allowing
+mutation. One serial writer applies both slices and the repair while independent
+read-only preparation can overlap slice A. Targeted validations inspect artifact
+and evidence state. Ordinary review detects the seeded P1 from the access value,
+then accepted disposition, linked repair, focused re-review, checkpoint, and
+fail-closed final acceptance resolve it. Negative tests cover every gate and
+reject incomplete or contradictory traces.
+
+The generated deterministic run measured owner-excluded virtual wall time of
+133 ms baseline and 91 ms proposed. Calls changed 13 to 4, singleton wrappers
+13 to 0, blocking waits 6 to 1, and polls 6 to 0. Combined context changed
+70,942 to 68,953 bytes, processed tokens 28,360 to 20,260, and calculated mock
+cost $0.11344 to $0.08104. Both traces contain two targeted, one checkpoint, and
+one final validation; one detected, accepted, fixed, and verified P1; two review
+rounds; zero unresolved accepted findings; and a successful final acceptance
+cutoff. Baseline wall time partitions into 10 ms owner, 38 ms parent, 71 ms
+child, 12 ms tool, 12 ms wait, and 0 ms idle, totaling 143 ms. Proposed wall
+time partitions into 10 ms owner, 16 ms parent, 61 ms child, 12 ms tool, 2 ms
+wait, and 0 ms idle, totaling 101 ms. Same-category intervals are unioned;
+cross-category overlap is rejected, and the partition must equal successful-cutoff
+wall time exactly. Review derivation requires exactly one linked ordinary finding
+review, repair, and focused verified re-review, their corresponding operations,
+and the detected, accepted, fixed, and verified finding links. These values derive
+from executor events. Synthetic durations and usage from one mock workload do not
+establish causal or live-model generality.
+
 ## Validation
 
 For each workstream:

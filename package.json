@@ -38,6 +38,7 @@
     "index.ts",
     "src/**/*.ts",
     "*.mjs",
+    "scripts/orchestration-benchmark.mjs",
     "agents/",
     "skills/**/*",
     "prompts/**/*",
@@ -52,7 +53,8 @@
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
     "test:e2e": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/e2e/*.test.ts",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
-    "audit:baseline": "node --experimental-strip-types --import ./test/support/register-loader.mjs ./scripts/deep-simplification-baseline.mjs"
+    "audit:baseline": "node --experimental-strip-types --import ./test/support/register-loader.mjs ./scripts/deep-simplification-baseline.mjs",
+    "benchmark:orchestration": "node ./scripts/orchestration-benchmark.mjs"
   },
   "pi": {
     "extensions": [
