@@ -10,7 +10,7 @@ Use the smallest loop that proves the change:
 2. Keep one writer for each cwd or worktree.
 3. Run focused validation that can fail for the changed behavior.
 4. Use fresh-context read-only review for substantial, risky, public, or hard-to-see changes.
-5. Apply only accepted findings inside the same writer boundary.
+5. Re-route to [`commissioning.md`](commissioning.md) and give the fix writer only accepted finding IDs, evidence obligations, and affected seams.
 6. Re-run affected validation and review only the changed blast radius.
 7. Inspect the final diff and evidence before parent acceptance.
 

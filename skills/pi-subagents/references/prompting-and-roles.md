@@ -52,7 +52,7 @@ The prompt templates in `prompts/` encode workflows the parent agent can run on 
 
 ### Commission-risk and cold-start packets
 
-Delegate only when the child materially improves evidence, independent review, or isolated execution; do not manufacture parallelism. Every child packet must be cold-start complete: state the goal, exact target/cwd/ref, authority and edit boundary, relevant context/evidence, success criteria, validation, output, and stop/escalation rules. For an orchestration audit by the critic tier, make the child read-only and request at most three omissions, each cited to a file, line, or decision; high thinking is an explicit escalation, not a default.
+Delegate only when the child materially improves evidence, independent review, or isolated execution; do not manufacture parallelism. Load [`commissioning.md`](commissioning.md) and use its canonical packet for every launch and role handoff. For an orchestration audit by the critic tier, make the child read-only and request at most three omissions, each cited to a file, line, or decision; high thinking is an explicit escalation, not a default.
 
 ### Candidate panel technique
 
@@ -98,7 +98,7 @@ subagent({
 
 ### Review-loop technique
 
-Use this when the user wants implementation or current diff review to continue until reviewers stop finding fixes worth doing now. Keep the loop in the parent session: one async `worker` implements or fixes, fresh-context `reviewer` agents inspect the actual repo and diff, the parent synthesizes accepted fixes, and one async forked `worker` applies them. The parent can express the sequence up front as an async/background `workflowScript` when the workflow is known, or continue with explicit follow-up workflowScript runs after each async completion. For an initial workflow, pass `async: true` so the main chat is unblocked. Treat an async implementation worker handoff as an intermediate state, not final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Stop when reviewers find no P0 blockers or P1 fixes worth doing now, remaining P2 feedback is optional or deferred, an unapproved product/scope/architecture decision appears, or the max review-round cap is reached. Default to 3 review rounds unless the user sets a different cap. Do not loop for optional polish, and do not let children launch subagents or decide the loop outcome.
+Use this when the user wants implementation or current diff review to continue until reviewers stop finding fixes worth doing now. Keep the loop in the parent session: one async `worker` implements, fresh-context `reviewer` agents inspect the actual repo and diff, the parent synthesizes accepted findings, and one fresh async `worker` receives the canonical fix packet. The parent can express the sequence up front as an async/background `workflowScript` when the workflow is known, or continue with explicit follow-up workflowScript runs after each async completion. For an initial workflow, pass `async: true` so the main chat is unblocked. Treat an async implementation worker handoff as an intermediate state, not final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation. Stop when reviewers find no P0 blockers or P1 fixes worth doing now, remaining P2 feedback is optional or deferred, an unapproved product/scope/architecture decision appears, or the max review-round cap is reached. Default to 3 review rounds unless the user sets a different cap. Do not loop for optional polish, and do not let children launch subagents or decide the loop outcome.
 
 As a conservative orchestration policy, do not pass a hard `toolBudget` to an implementation worker, fix worker, reviewer with edit authority, or other mutation-capable child. The default tool budget blocks read/search tools rather than mutation tools, but count limits still do not measure delivery safety. Use a narrow task plus an outer elapsed deadline with enough margin, then request a checkpoint after the current tool returns. The checkpoint should report changed files, build/test state, remaining work, and commit or PR state. An elapsed timeout is not a mutation-safe boundary and must not be used as the checkpoint trigger.
 
@@ -118,58 +118,20 @@ Use this after implementation when the user wants cleanup review or when a final
 
 ### Staged fix orchestration technique
 
-Use this when a broad diff has known reviewer findings across several items and the user wants the parent to “orchestrate subagents like a boss.” Keep the active worktree safe with a three-stage `workflowScript`:
+For a broad diff with known findings, keep read-only discovery, parent finding
+disposition, one-writer fixes, and fresh validation as bounded waves. The
+planning/review wave ends at the parent gate. The parent resolves conflicts and
+commissions the writer with the canonical packet from
+[`commissioning.md`](commissioning.md), containing only accepted finding IDs,
+evidence obligations, and affected seams. Do not interpolate planning
+aggregates, transcripts, or full review reports into a worker task.
 
-When staged seams are available, a low-tier writer should not receive the
-end-to-end issue. Use `runs.lanes` inside `workflowScript` to keep stages narrow:
-a scout/red test, helper-only change, one render seam, validation, minimality
-challenge, or fresh review. Give the writer only its assigned implementation
-stage; keep sequencing and synthesis with the parent.
-
-1. A parallel read-only planning fanout, one reviewer per issue cluster. Each child inspects the real diff and returns exact files, line refs, proposed fixes, and focused validation. They must not edit.
-2. One writer worker. It receives the reviewer summaries as the awaited planning results (or their durable output paths) interpolated into its task, plus the parent’s accepted scope, stop rules, and verification contract. It is the only child allowed to edit the active worktree.
-3. A parallel read-only validation fanout. Validators inspect the worker diff from fresh context with distinct angles, report pass/fail, remaining blockers, and missing verification.
-
-Prefer `async: true`, `context: "fresh"` for reviewers/validators, `outputMode: "file-only"` for large summaries, and per-stage output names that will not collide. Use stable `runs` keys plus `phase` and `label` on each launch item to make async status readable, and hold each awaited result in an ordinary JavaScript variable when a later step needs that specific result — interpolate it (or the durable output path you declared for that child) into the later task text instead of passing a whole aggregate blob. Use this pattern instead of launching several writer workers into a dirty worktree. Include non-blocking suggestions in the writer prompt only when they are small, safe, and do not expand product scope; otherwise record them as deferred.
-
-When one child returns a structured target list, use ordinary JavaScript to validate/filter it and map bounded entries into `runs.all`; do not use the removed chain fanout DSL.
-
-Example shape:
-
-```typescript
-subagent({
-  async: true,
-  context: "fresh",
-  workflowScript: `
-    // Stage 1: parallel read-only planning fanout (stable keys, one per issue cluster)
-    const plans = await runs.all([
-      { key: "deploy-plan", agent: "reviewer", phase: "Planning", label: "Deploy docs", task: "Plan fixes for deploy docs/workflow. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/deploy.md", outputMode: "file-only" },
-      { key: "scheduler-plan", agent: "reviewer", phase: "Planning", label: "Scheduler contract", task: "Plan fixes for scheduler contract. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/scheduler.md", outputMode: "file-only" },
-      { key: "sandbox-plan", agent: "reviewer", phase: "Planning", label: "Sandbox/security", task: "Plan fixes for sandbox/security. Inspect the current diff. Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "plans/sandbox.md", outputMode: "file-only" }
-    ]);
-
-    // Stage 2: single writer — the only child allowed to edit the active worktree.
-    // Under outputMode "file-only" the awaited .output is the saved-output
-    // reference, so pass those managed artifact references to the writer.
-    const worker = await runs.run("apply-fixes", {
-      agent: "worker",
-      phase: "Implementation",
-      label: "Apply accepted fixes",
-      task: "Apply only the accepted fixes from these planning summaries. You are the sole writer for the active worktree. Run focused validation and report changed files, commands, failures, and remaining issues.\\n\\nDeploy plan: " + plans[0].output + "\\n\\nScheduler plan: " + plans[1].output + "\\n\\nSandbox plan: " + plans[2].output,
-      output: "worker/fixes.md",
-      outputMode: "file-only"
-    });
-
-    // Stage 3: parallel read-only validation fanout
-    const validations = await runs.all([
-      { key: "validate-deploy-scheduler", agent: "reviewer", phase: "Validation", label: "Deploy/scheduler validation", task: "Validate the post-worker diff for deploy and scheduler fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/deploy-scheduler.md", outputMode: "file-only" },
-      { key: "validate-sandbox", agent: "reviewer", phase: "Validation", label: "Sandbox validation", task: "Validate the post-worker diff for sandbox/security fixes. Start from the worker result: " + worker.output + ". Do not modify project/source files; returning findings via the configured output artifact is allowed.", output: "validation/sandbox.md", outputMode: "file-only" }
-    ]);
-
-    return { worker: worker.output, validations: validations.map(v => v.output) };
-  `
-})
-```
+After the writer settles, launch fresh read-only validation against the changed
+ref and accepted IDs. Use stable workflow keys and managed artifact paths when a
+wave needs durable evidence. Keep one writer per checkout; a new role,
+adversarial review, or unrelated phase gets a fresh child rather than a resumed
+session. Resume only a same-role continuation that needs the same bounded
+working state.
 
 ## Builtin Agents
 
@@ -178,7 +140,7 @@ and user/project agents override builtins with the same name.
 
 | Agent | Purpose | Recommended tier | Typical output / role |
 |-------|---------|-------|------------------------|
-| `scout` | Fast codebase recon | fast worker/scout tier | Writes `context.md` handoff material |
+| `scout` | Fast codebase recon | fast worker/scout tier | Returns bounded seam-keyed evidence |
 | `worker` | Implementation and approved oracle handoffs | capable worker tier | Single-writer implementation with decision escalation |
 | `reviewer` | Review specialist | strong reviewer tier; high thinking for serious reviews | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
 | `researcher` | Web research brief generator | inherits configured default | Writes `research.md` |
@@ -234,24 +196,7 @@ Model ids do not have to be exact. Separator variations (`fast.worker-v1` vs `fa
 
 ## Prompting role subagents
 
-Builtin role agents inherit the current Pi default model unless you override them. When launching them, write the task prompt as a compact contract, not a long procedural script. Define the destination and let the role choose the efficient path.
-
-A strong subagent prompt usually includes:
-- **Goal**: the concrete outcome the child should produce.
-- **Target**: repository, explicit `cwd`, branch/ref/head, and source seam when the target is not the parent cwd.
-- **Authority boundary**: whether the child may read, edit, commit, push, comment, close, merge, publish, or release. Omit or forbid actions that are not approved.
-- **Context/evidence**: relevant plan paths, files, diffs, decisions, or user constraints already approved.
-- **Success criteria**: what must be true before the child can finish.
-- **Hard constraints**: true invariants only, such as no edits for review-only tasks, one writer thread, child must not run subagents unless it is explicitly authorized through `tools: subagent` or `allowNestedSubagents: true`, or escalation for unapproved decisions.
-- **Validation**: targeted checks to run, or the next-best check when validation is impossible.
-- **Output**: the expected summary shape, artifact path, or finding format. Use managed artifact paths for scratch reports; reserve repo-qualified absolute paths for durable handoffs that the user approved.
-- **Stop rules**: when to ask via `intercom` or `contact_supervisor`, when to stop after enough evidence, and when not to keep searching.
-
-Give each role useful discovery anchors. Name source roots, filenames, symbols, types, methods, and paths for scouts. Give workers context files, plans, task paths, and named source seams before asking them to search. Give reviewers changed files, contracts, and any exhaustive-verification target. Tell oracle whether current source behavior, product/policy documents, plans, or inherited decisions are the evidence that matters.
-
-Avoid carrying over old prompt habits that over-specify every step. Use `must`, `always`, and `never` for real invariants; for judgment calls, give decision rules. For example, tell a reviewer to inspect the staged diff directly and report only evidence-backed findings, rather than prescribing every file or command. Tell a researcher the retrieval budget: start with broad targeted searches, fetch only the strongest sources, search again only when a required fact is missing, then stop.
-
-For implementation handoffs, name the approved scope and success criteria more clearly than the process. Good prompts say what to change, what not to change, where the evidence lives, how to validate, and when to escalate. They should not ask the child to create another subagent plan or continue the parent conversation.
+Builtin role agents inherit the current Pi default model unless you override them. Use the single canonical packet in [`commissioning.md`](commissioning.md) for launch and handoff fields; do not recreate that contract here. Keep prompts compact, name useful source anchors, and give judgment rules rather than procedural scripts. Workers receive parent-synthesized decisions, not discovery transcripts. Review-to-fix workers receive accepted finding IDs, evidence obligations, and affected seams only.
 
 Settings locations:
 - User scope: `~/.pi/agent/settings.json`

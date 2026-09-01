@@ -112,6 +112,66 @@ describe("model-facing docs and skill contract", () => {
 		}
 	});
 
+	it("uses one compact commissioning and handoff contract", () => {
+		const skillPath = "skills/pi-subagents/SKILL.md";
+		const contractPath = "skills/pi-subagents/references/commissioning.md";
+		const skill = read(skillPath);
+		const contract = read(contractPath);
+		const routes = skillRoutes(skill);
+		assert.deepEqual(routes.get("commissioning"), ["references/commissioning.md"]);
+		assert.ok(loadedBytes([skillPath, contractPath]) < 36_877);
+
+		const packetMatch = contract.match(/```text\nObjective\/deliverable:[\s\S]*?\n```/);
+		assert.ok(packetMatch);
+		assert.deepEqual(
+			[...packetMatch[0].matchAll(/^([^\n:]+):/gm)].map((match) => match[1]),
+			[
+				"Objective/deliverable",
+				"Repo/cwd/ref",
+				"Authority/edit boundary",
+				"Parent-decided seams/constraints",
+				"Observable acceptance",
+				"Targeted validation",
+				"Output/artifact",
+				"Stop/escalation",
+			],
+		);
+		assert.match(contract, /evidence keyed to the decisions or code seams/i);
+		assert.match(contract, /parent verifies citations, resolves conflicts, owns decisions, and writes a\s+new canonical worker packet/i);
+		assert.match(contract, /Do not paste scout transcripts, full research\s+reports, or broad parent history/i);
+		assert.match(contract, /only:\n\n```text\nAccepted findings:\n- <ID>:[\s\S]*evidence obligation:[\s\S]*affected seams:/);
+		assert.match(contract, /Resume only when[\s\S]*same child's bounded\s+working state/i);
+		assert.match(contract, /Launch a fresh child[\s\S]*new role, adversarial or\s+independent review[\s\S]*unrelated\s+phase/i);
+
+		for (const promptPath of [
+			"prompts/gather-context-and-clarify.md",
+			"prompts/parallel-research.md",
+			"prompts/parallel-review.md",
+			"prompts/review-loop.md",
+		]) assert.match(read(promptPath), /skills\/pi-subagents\/references\/commissioning\.md/);
+		for (const referencePath of [
+			"skills/pi-subagents/references/program-orchestration.md",
+			"skills/pi-subagents/references/prompting-and-roles.md",
+			"skills/pi-subagents/references/review-and-validation.md",
+		]) assert.match(read(referencePath), /\[`commissioning\.md`\]\(commissioning\.md\)/);
+
+		const gather = read("prompts/gather-context-and-clarify.md");
+		assert.match(gather, /bounded evidence keyed to named\s+decisions or seams/i);
+		assert.match(gather, /parent synthesis, never copied child output or parent history/i);
+		const reviewLoop = read("prompts/review-loop.md");
+		assert.match(reviewLoop, /accepted finding IDs, required outcomes, evidence obligations, affected seams/i);
+		assert.match(reviewLoop, /not reviewer transcripts or full reports/i);
+		assert.match(reviewLoop, /Resume an existing worker only for the same role, seam, repo\/cwd\/ref, authority boundary, and bounded working state/i);
+		assert.match(reviewLoop, /fresh child for a new role, adversarial review, or unrelated phase/i);
+
+		const measurements = read("docs/delegation-efficiency-plan.md");
+		for (const row of [
+			`| commissioning initial context | 36877 | ${loadedBytes([skillPath, contractPath])} |`,
+			`| scout synthesis prompt | 756 | ${Buffer.byteLength(gather)} |`,
+			`| review-to-fix prompt | 5275 | ${Buffer.byteLength(reviewLoop)} |`,
+		]) assert.ok(measurements.includes(row), `missing measurement: ${row}`);
+	});
+
 	it("documents the exact action and field inventories", () => {
 		assert.deepEqual(SUBAGENT_ACTIONS, expectedActions);
 		const reference = read("docs/tool-reference.md");

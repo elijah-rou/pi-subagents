@@ -32,7 +32,8 @@ remain unloaded until the mapped program reaches them.
 | `basic-async` | Launch or control direct, scripted, async, stateful, forked, oracle, or intercom execution | `references/execution-controls.md` |
 | `independent-lanes` | Coordinate independent worktree, repository, or writer lanes | `references/multi-lane-orchestration.md` |
 | `management` | List, inspect, create, edit, disable, eject, or expose agents or RPC | `references/management-authoring-rpc.md` |
-| `commissioning` | Choose roles, prompts, models, slash commands, or child handoffs | `references/prompting-and-roles.md` |
+| `commissioning` | Commission a child or hand evidence between roles | `references/commissioning.md` |
+| `roles-and-recipes` | Choose roles, models, slash commands, or specialized prompt recipes | `references/prompting-and-roles.md` |
 | `constraints` | Diagnose safety constraints, error handling, or a packaged recipe | `references/constraints-and-recipes.md` |
 
 A task with several named phases starts at `broad-intake`, even when later phases

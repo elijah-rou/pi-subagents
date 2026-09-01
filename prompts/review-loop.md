@@ -4,21 +4,21 @@ description: Review/fix loop until clean
 
 Run a parent-orchestrated review loop for the requested work.
 
-Use the `subagent` tool. Keep the parent session as the loop controller and final decision-maker. Child subagents must receive concrete role-specific tasks; they must not run subagents or manage the loop themselves unless the parent intentionally selected an explicit fanout agent whose builtin `tools` includes `subagent` for that assigned fanout.
+Use the `subagent` tool. Keep the parent session as loop controller and final decision-maker. Commission every child with the canonical packet in `skills/pi-subagents/references/commissioning.md`. Children receive bounded role-specific tasks and must not manage the loop or launch children unless that authority is explicit.
 
 Default to a maximum of 3 review rounds unless I specify a different cap. Count a review round each time fresh-context reviewers inspect the current diff after a worker pass. Stop early when reviewers find no P0 findings, no P1 fixes worth doing now, and no approved P2 notes that should be handled in this loop.
 
-If the invocation includes an implementation request, first launch one async `worker` to implement the approved scope. If the current diff is already the target, start with review. The sequence can be launched up front with `workflowScript` when it is already clear, or continued as follow-up single-agent runs after each async completion. For an initial workflowScript, pass `async: true` so the main chat is unblocked; do not set `clarify: true` unless I explicitly want the foreground clarify UI. Use only one writer against the active worktree at a time unless I explicitly ask for isolated worktrees.
+For an implementation request, launch one async `worker` for the approved scope; for an existing target diff, start with review. Use an async `workflowScript` for a known sequence or follow-up runs after completion. Do not set `clarify: true` unless requested. Keep one active-worktree writer unless isolated worktrees are requested.
 
 As a conservative orchestration policy, do not set a hard `toolBudget` or tight `usageBudget` on implementation or fix workers. A default tool budget blocks read/search tools rather than mutation tools, and reported usage has no reservation model, so count or usage limits still do not measure delivery safety. Give each writer a narrow delivery slice and an outer elapsed deadline with enough margin. Before that deadline, request a checkpoint after the current tool returns with changed files, build/test state, remaining work, and commit or PR state. An elapsed timeout is not a mutation-safe boundary and must not be the checkpoint trigger.
 
-For each review round, launch fresh-context `reviewer` agents in parallel. Reviewers must inspect the repository, relevant instructions, and current diff directly from files and commands. They must not rely on the main conversation history and must not edit files.
+Each round uses parallel fresh-context `reviewer` agents. They inspect the repository, instructions, and current diff directly, without main-chat history or edits.
 
 Tell reviewers to filter on evidence, not severity. They should report only concrete current issues caused or made reachable by the target diff, with source proof, a test or repro, or a contract contradiction. Ask them to label findings P0/P1/P2 and end with `Merge verdict: BLOCK`, `Merge verdict: OK`, or `Merge verdict: OK with notes`. P0 blocks merge. P1 should be fixed before release. P2 is report-only. Use `blockers only` only for final pre-merge re-checks after P1/P2 findings are already captured, or for explicit emergency hotfix lanes.
 
-Choose review angles from the actual change. Common angles are correctness/regressions, tests/validation, and simplicity/maintainability. Add security, performance, docs/API contracts, or user-flow validation when the work calls for it. Prefer three strong reviewers over many vague reviewers.
+Choose angles from the change: correctness/regressions, tests/validation, simplicity/maintainability, or relevant security, performance, docs/API, and user-flow risks. Prefer three strong reviewers over many vague reviewers.
 
-After reviewers return, synthesize their feedback into:
+After reviewers return, assign stable finding IDs and synthesize their feedback into:
 - P0 blockers or scope/product/architecture decisions that need user approval;
 - P1 fixes worth doing now;
 - P2 report-only notes or optional improvements;
@@ -28,7 +28,7 @@ Do not blindly apply every reviewer suggestion. If reviewers surface an unapprov
 
 When an async implementation worker completes, treat its handoff as the transition into review, not as final completion, unless I explicitly asked for worker-only work, review-only output, or to stop after implementation.
 
-When there are fixes worth doing now and the workflow is implementation-authorized, launch one async forked `worker` without hard tool-call caps to apply only those synthesized fixes. Ask it to preserve the approved scope, run focused validation, and report changed files, commands run with exit codes, validation evidence, surprises, and anything left undone.
+When fixes are implementation-authorized, launch one fresh async `worker` without hard tool-call caps. Its canonical packet contains only accepted finding IDs, required outcomes, evidence obligations, affected seams, and targeted checks, not reviewer transcripts or full reports. Resume an existing worker only for the same role, seam, repo/cwd/ref, authority boundary, and bounded working state. Use a fresh child for a new role, adversarial review, or unrelated phase. Require changed files, exact command results, validation evidence, surprises, and anything left undone.
 
 After a fix worker returns, run another review round only when it made material changes or addressed non-trivial findings. Do not keep looping for optional polish, speculative improvements, or findings already deferred by the parent.
 

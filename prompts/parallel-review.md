@@ -4,7 +4,7 @@ description: Parallel subagents review
 
 Launch parallel reviewers for an adversarial review of the current work.
 
-Use fresh context, not forked context, unless I explicitly ask for forked context. Reviewers should inspect the repository, relevant instructions, and current diff directly from files and commands. Do not rely on the main conversation history.
+Use fresh context, not forked context, unless I explicitly ask for forked context. Commission each reviewer with the canonical packet in `skills/pi-subagents/references/commissioning.md`. Reviewers inspect the repository, instructions, and current diff directly; do not rely on main-conversation history.
 
 Give each reviewer a distinct angle. Generate the angles dynamically from the user's intent, the plan, the implemented code, and the current diff. If I specify angles, use mine. Otherwise, choose the highest-value review angles for this specific work.
 
@@ -34,10 +34,12 @@ Do not default first-pass reviews to `blockers only`. That phrase is valid only 
 
 For a targeted follow-up review, ask only whether the named finding was resolved, whether the fix introduced a new defect in the fix blast radius, and whether prior P1/P2 notes still stand. For bot or PR-comment triage, classify each comment as VALID, STALE, INVALID, or OUT-OF-POLICY against current HEAD, then assign P0/P1/P2 only to VALID comments.
 
-While reviewers run, do your own narrow inspection if useful. After they return, synthesize the feedback into:
-- fixes worth doing now
+While reviewers run, do your own narrow inspection if useful. After they return, assign stable finding IDs and synthesize the feedback into:
+- fixes worth doing now, with evidence obligations and affected seams
 - optional improvements
 - feedback to ignore or defer, with a short reason
+
+A later fix worker receives only the accepted finding packet inside the canonical contract, never reviewer transcripts or full reports.
 
 Do not blindly apply every reviewer suggestion.
 

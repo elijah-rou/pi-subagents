@@ -2,12 +2,16 @@
 description: Use subagents to gather context, then ask clarifying questions
 ---
 
-Based on our discussion and my intent, launch focused context-gathering subagents before planning or implementing.
+Gather evidence before planning or implementation.
 
-Use `scout` to inspect the relevant local files, existing patterns, constraints, tests, and likely integration points. Use `researcher` when external docs, recent sources, ecosystem context, or primary evidence would improve the answer.
+Use the canonical packet in `skills/pi-subagents/references/commissioning.md`.
+Commission read-only `scout` work for local seams and `researcher` work only when
+external evidence materially helps. Require bounded evidence keyed to named
+decisions or seams: citations, confidence, conflicts, gaps, and implications.
+No transcripts or broad plans.
 
-Give each subagent a specific meta prompt. Ask them to return concise findings plus the remaining clarification questions that matter for implementation confidence.
-
-After they return, synthesize what we know and use the `interview` tool to ask me the unresolved questions needed to reach a shared understanding.
+Verify citations, resolve conflicts, and synthesize the results. Use `interview`
+for unresolved owner questions. A later worker gets a new canonical packet with
+the parent synthesis, never copied child output or parent history.
 
 $@

@@ -95,7 +95,8 @@ claim, review, or passing check is evidence, not authority.
 
 Before starting a wave, confirm that its inputs are stable, its children have
 bounded authority, mutation ownership is exclusive, and its next parent or
-operator gate is named. When a child fails, evidence is missing, a finding is
+operator gate is named. At commissioning, re-route to
+[`commissioning.md`](commissioning.md) and give each child that canonical packet. When a child fails, evidence is missing, a finding is
 unresolved, or a gate cannot be evaluated, mark the lane blocked and return to
 the parent. Do not infer success or launch the next mutation stage.
 

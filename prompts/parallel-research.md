@@ -4,7 +4,7 @@ description: Parallel subagents research
 
 Launch parallel research subagents to build a grounded answer to the current question or decision.
 
-Use fresh context, not forked context, unless I explicitly ask for forked context. Researchers and scouts should inspect sources directly instead of relying on the main conversation history.
+Use fresh context, not forked context, unless I explicitly ask for forked context. Commission every child with the canonical packet in `skills/pi-subagents/references/commissioning.md`. Researchers and scouts inspect sources directly instead of relying on the main conversation history.
 
 Use a combination of `researcher` and `scout` subagents:
 - Use `researcher` for web, docs, standards, ecosystem, recent changes, benchmarks, and primary-source evidence.
@@ -30,11 +30,11 @@ Adapt the angles when the question calls for it:
 
 Prefer two or three strong subagents over many vague ones. The parent agent should frame the question and assign angles; the child agents should research or scout, not invent broad plans.
 
-Ask each subagent to return concise findings with evidence:
+Require bounded evidence keyed to the named decisions or code seams:
 - file paths and line ranges for local findings
 - source links for external findings
-- confidence level and gaps
-- recommended next step or decision implication
+- confidence, conflicts, and gaps
+- decision implications, not implementation decisions
 
 Do not ask subagents to edit files. This is a research pass only unless I explicitly ask for implementation.
 
@@ -45,6 +45,6 @@ After the subagents return, synthesize the answer into:
 - gaps or assumptions
 - the recommended next move
 
-If findings disagree, call out the disagreement instead of smoothing it over.
+The parent verifies citations, resolves disagreements, and synthesizes the result. Do not pass transcripts or full child reports to a later worker; commission it with a new canonical packet containing only settled decisions and relevant evidence IDs.
 
 $@
