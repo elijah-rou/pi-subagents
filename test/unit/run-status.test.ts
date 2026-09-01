@@ -1512,4 +1512,63 @@ describe("async run status inspection", () => {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("exposes authoritative partial accounting from status.json", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-accounting-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const asyncDir = path.join(asyncRoot, "run-accounting-status");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "run-accounting-status", mode: "single", state: "complete", startedAt: 100, lastUpdate: 200, steps: [],
+				childUsageAccounting: {
+					version: 1,
+					records: [
+						{ id: "run:known/session", ownerRunId: "known", kind: "session", complete: true, usage: { input: 9, output: 4, cacheRead: 2, cacheWrite: 1, cost: 0.09, turns: 3 } },
+						{ id: "run:unknown/session", ownerRunId: "unknown", kind: "nested-session", complete: false },
+					],
+					total: {}, complete: true, unknownRecordIds: [],
+				},
+			}), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "run-accounting-status" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(result.isError, undefined);
+			assert.deepEqual(result.details.totalChildUsage, { input: 9, output: 4, cacheRead: 2, cacheWrite: 1, cost: 0.09, turns: 3 });
+			assert.deepEqual(result.details.totalCost, { inputTokens: 9, outputTokens: 4, costUsd: 0.09 });
+			assert.equal(result.details.childUsageAccounting?.complete, false);
+			assert.match(textContent(result), /Child usage: input 9, output 4, cache read 2, cache write 1, cost \$0\.0900, turns 3 \(partial; 1 unknown record\)/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("exposes authoritative accounting from result.json and tolerates absent or malformed historical accounting", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-result-accounting-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const base = { success: true, state: "complete", results: [] };
+			fs.writeFileSync(path.join(resultsDir, "with-accounting.json"), JSON.stringify({
+				...base, id: "with-accounting",
+				childUsageAccounting: { version: 1, records: [{ id: "run:child/session", ownerRunId: "child", kind: "session", complete: true, usage: { input: 5, output: 2, cacheRead: 1, cacheWrite: 0, cost: 0.05, turns: 1 } }], total: {}, complete: false, unknownRecordIds: [] },
+			}), "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "historical.json"), JSON.stringify({ ...base, id: "historical" }), "utf-8");
+			fs.writeFileSync(path.join(resultsDir, "malformed.json"), JSON.stringify({ ...base, id: "malformed", childUsageAccounting: { version: 1, records: "invalid" } }), "utf-8");
+
+			const accounted = inspectSubagentStatus({ id: "with-accounting" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.deepEqual(accounted.details.totalChildUsage, { input: 5, output: 2, cacheRead: 1, cacheWrite: 0, cost: 0.05, turns: 1 });
+			assert.deepEqual(accounted.details.totalCost, { inputTokens: 5, outputTokens: 2, costUsd: 0.05 });
+			assert.match(textContent(accounted), /Child usage: input 5, output 2/);
+			for (const id of ["historical", "malformed"]) {
+				const result = inspectSubagentStatus({ id }, { asyncDirRoot: asyncRoot, resultsDir });
+				assert.equal(result.isError, undefined);
+				assert.equal(result.details.childUsageAccounting, undefined);
+				assert.doesNotMatch(textContent(result), /Child usage:/);
+			}
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
 });

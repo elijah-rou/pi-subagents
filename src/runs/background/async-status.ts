@@ -130,6 +130,7 @@ export interface AsyncRunSummary {
 	outputFile?: string;
 	totalTokens?: TokenUsage;
 	totalCost?: CostSummary;
+	childUsageAccounting?: import("../../shared/usage-accounting.ts").ChildUsageAccounting;
 	usageBudget?: UsageBudgetState;
 	sessionFile?: string;
 	nestedChildren?: NestedRunSummary[];
@@ -413,6 +414,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.outputFile ? { outputFile: status.outputFile } : {}),
 		...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
 		...(status.totalCost ? { totalCost: status.totalCost } : {}),
+		...(status.childUsageAccounting ? { childUsageAccounting: status.childUsageAccounting } : {}),
 		...(status.usageBudget ? { usageBudget: status.usageBudget } : {}),
 		...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
 	};

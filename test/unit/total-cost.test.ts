@@ -3,11 +3,11 @@ import { describe, it } from "node:test";
 import { sumResultsCost, sumResultsUsage } from "../../src/shared/utils.ts";
 import type { SingleResult, Usage } from "../../src/shared/types.ts";
 
-function resultWithUsage(usage: Usage): SingleResult {
+function resultWithUsage(usage: Usage, index = 0): SingleResult {
 	return {
 		agent: "agent",
 		task: "task",
-		index: 0,
+		index,
 		exitCode: 0,
 		messages: [],
 		usage,
@@ -17,8 +17,8 @@ function resultWithUsage(usage: Usage): SingleResult {
 describe("sumResultsUsage", () => {
 	it("aggregates full child usage", () => {
 		const total = sumResultsUsage([
-			resultWithUsage({ input: 10, output: 5, cacheRead: 1, cacheWrite: 2, cost: 0.01, turns: 1 }),
-			resultWithUsage({ input: 20, output: 7, cacheRead: 3, cacheWrite: 4, cost: 0.03, turns: 2 }),
+			resultWithUsage({ input: 10, output: 5, cacheRead: 1, cacheWrite: 2, cost: 0.01, turns: 1 }, 0),
+			resultWithUsage({ input: 20, output: 7, cacheRead: 3, cacheWrite: 4, cost: 0.03, turns: 2 }, 1),
 		]);
 
 		assert.deepEqual(total, { input: 30, output: 12, cacheRead: 4, cacheWrite: 6, cost: 0.04, turns: 3 });
@@ -28,8 +28,8 @@ describe("sumResultsUsage", () => {
 describe("sumResultsCost", () => {
 	it("aggregates input tokens, output tokens, and cost", () => {
 		const total = sumResultsCost([
-			resultWithUsage({ input: 10, output: 5, cacheRead: 1, cacheWrite: 2, cost: 0.01, turns: 1 }),
-			resultWithUsage({ input: 20, output: 7, cacheRead: 3, cacheWrite: 4, cost: 0.03, turns: 2 }),
+			resultWithUsage({ input: 10, output: 5, cacheRead: 1, cacheWrite: 2, cost: 0.01, turns: 1 }, 0),
+			resultWithUsage({ input: 20, output: 7, cacheRead: 3, cacheWrite: 4, cost: 0.03, turns: 2 }, 1),
 		]);
 
 		assert.deepEqual(total, { inputTokens: 30, outputTokens: 12, costUsd: 0.04 });

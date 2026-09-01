@@ -10,6 +10,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AuthorityPolicyConfig, ExtensionBindings, McpRuntimeSnapshotHost, ModelScopeRule, PermissionConfig, ResolvedSubagentCapabilityCeiling, SingleOutputSnapshot, SubagentCapabilityAudit, TaskMutationArbiter, UnknownAgentDiagnosticContext } from "./core-contracts.ts";
 import type { ThinkingLevel } from "./model-info.ts";
 import type { WorkflowChildPermitContext } from "./workflow-child-permit-contract.ts";
+import type { ChildUsageAccounting } from "./usage-accounting.ts";
 
 // ============================================================================
 // Basic Types
@@ -1206,6 +1207,8 @@ export interface SingleResult {
 	 * result row's array position.
 	 */
 	index: number;
+	/** Stable logical child run id used as the usage-accounting ownership key when available. */
+	runId?: string;
 	agent: string;
 	task: string;
 	/** Human-readable display name for the child's own session (agent + task
@@ -1233,6 +1236,10 @@ export interface SingleResult {
 	toolBudgetBlocked?: boolean;
 	messages?: Message[];
 	usage: Usage;
+	/** Distinguishes an adapter-reported zero from absent external usage. */
+	usageKnown?: boolean;
+	/** Canonical accounting imported from an awaited async child. */
+	childUsageAccounting?: ChildUsageAccounting;
 	model?: string;
 	/** Effective thinking level used by this foreground child, when known. */
 	thinking?: string;
@@ -1331,6 +1338,8 @@ export interface WaitCompletionChild {
  */
 export interface WaitCompletion {
 	runId: string;
+	/** Authoritative child-only usage projection for this completed run. */
+	childUsageAccounting?: ChildUsageAccounting;
 	agent?: string;
 	mode?: string;
 	state?: string;
@@ -1395,7 +1404,9 @@ export interface Details {
 	preflight?: WorkflowPreflightV1;
 	preflightWarnings?: string[];
 	outputs?: ChainOutputMap;
-	// Aggregated child usage across all agents in the run
+	/** Authoritative child-only records. Record ids own deduplication across rereads and deliveries. */
+	childUsageAccounting?: ChildUsageAccounting;
+	// Aggregated child usage across all agents in the run. Derived from childUsageAccounting for new results.
 	totalChildUsage?: Usage;
 	// Aggregated cost across all agents in the run
 	totalCost?: CostSummary;
@@ -1774,6 +1785,8 @@ export interface AsyncStatus {
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
 	usageBudget?: UsageBudgetState;
+	/** Authoritative child-only accounting. Optional so historical status remains readable. */
+	childUsageAccounting?: ChildUsageAccounting;
 	pid?: number;
 	cwd?: string;
 	/** Parent-resolved child session root retained for trusted restored transcript lookup. */
@@ -1959,6 +1972,7 @@ export interface AsyncJobState {
 	totalTokens?: TokenUsage;
 	totalCost?: CostSummary;
 	usageBudget?: UsageBudgetState;
+	childUsageAccounting?: ChildUsageAccounting;
 	sessionFile?: string;
 	controlEventCursor?: number;
 	nestedRoute?: NestedRouteInfo;

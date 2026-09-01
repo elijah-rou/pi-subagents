@@ -5,6 +5,7 @@ import { readCompletionReplay, writeCompletionReplay } from "./completion-replay
 import { fallbackResultPayloadPathForSessionRun, resultFilePath, resultPayloadPathForSessionRun } from "./result-files.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { projectTimeoutRecovery } from "../shared/mutation-evidence.ts";
+import { parseChildUsageAccounting } from "../../shared/usage-accounting.ts";
 
 function asNonEmptyString(value: unknown): string | undefined {
 	return typeof value === "string" && value ? value : undefined;
@@ -86,9 +87,11 @@ export function toWaitCompletion(data: Record<string, unknown>, runId: string): 
 	const mode = asNonEmptyString(data.mode);
 	const state = asNonEmptyString(data.state);
 	const workflowChildren = parseWorkflowChildSummary(data.workflowChildren);
+	const childUsageAccounting = parseChildUsageAccounting(data.childUsageAccounting);
 	if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match its completion run id.");
 	return {
 		runId,
+		...(childUsageAccounting ? { childUsageAccounting } : {}),
 		...(agent ? { agent } : {}),
 		...(mode ? { mode } : {}),
 		...(state ? { state } : {}),

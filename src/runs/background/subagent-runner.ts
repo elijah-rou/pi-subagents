@@ -46,6 +46,7 @@ import {
 	type SteeringTargetState,
 	type SteeringTargetStatus,
 	type SubagentChildStatusEvent,
+	type SingleResult,
 	type WorkflowLaneMetadata,
 	DEFAULT_MAX_OUTPUT,
 	type MaxOutputConfig,
@@ -53,6 +54,7 @@ import {
 	truncateOutput,
 	getSubagentDepthEnv,
 } from "../../shared/types.ts";
+import { accountChildUsage } from "../../shared/usage-accounting.ts";
 import {
 	DEFAULT_CONTROL_CONFIG,
 	buildControlEvent,
@@ -1450,7 +1452,7 @@ async function runSingleStepInner(
 				artifactPaths,
 				artifactConfig: ctx.artifactConfig,
 				output: formatOutputArtifactContent(omitUndefinedProperties({ output: resolvedOutput.fullOutput, error: external.error, metadataPath: ctx.artifactConfig?.includeMetadata === false ? undefined : artifactPaths.metadataPath })),
-				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode: external.exitCode, error: external.error, timestamp: Date.now() },
+				metadata: { runId: ctx.id, agent: step.agent, task: PROMPT_REDACTED, runner, externalJob: external.externalJob, exitCode: external.exitCode, error: external.error, usage: external.usage, timestamp: Date.now() },
 			})
 			: {};
 		return omitUndefinedProperties({
@@ -1467,6 +1469,7 @@ async function runSingleStepInner(
 			outputSaveError: [resolvedOutput.saveError, artifactErrors.outputSaveError].filter(Boolean).join("\n") || undefined,
 			metadataSaveError: artifactErrors.metadataSaveError,
 			runner,
+			...(external.usage ? { usage: external.usage } : {}),
 			externalJob: external.externalJob,
 		});
 	}
@@ -3966,12 +3969,22 @@ async function runSubagentInner(
 
 	const resultMode = config.resultMode;
 	const singleRuntimeAcknowledgedExtensions = results.length === 1 ? results[0]?.runtimeAcknowledgedExtensions : undefined;
-	const totalCost = results.reduce<CostSummary>((sum, result) => ({
-		inputTokens: sum.inputTokens + (result.totalCost?.inputTokens ?? 0),
-		outputTokens: sum.outputTokens + (result.totalCost?.outputTokens ?? 0),
-		costUsd: sum.costUsd + (result.totalCost?.costUsd ?? 0),
-	}), { inputTokens: 0, outputTokens: 0, costUsd: 0 });
-	const finalTotalCost = totalCost.inputTokens > 0 || totalCost.outputTokens > 0 || totalCost.costUsd > 0 ? totalCost : undefined;
+	const accountingResults: SingleResult[] = results.map((result, index) => ({
+		index,
+		agent: result.agent,
+		task: "[prompt redacted]",
+		exitCode: result.exitCode ?? 1,
+		usage: result.usage ?? emptyUsage(),
+		...(result.runner ? { usageKnown: result.usage !== undefined } : {}),
+		...(statusPayload.steps[index]?.runId ? { runId: statusPayload.steps[index].runId } : {}),
+		...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
+		...(result.modelAttempts ? { modelAttempts: result.modelAttempts } : {}),
+		...(result.runner ? { runner: result.runner } : {}),
+		...(statusPayload.steps[index]?.children ? { children: statusPayload.steps[index].children } : {}),
+	}));
+	const childUsageAccounting = accountChildUsage(id, accountingResults);
+	const accountedCost = { inputTokens: childUsageAccounting.total.input, outputTokens: childUsageAccounting.total.output, costUsd: childUsageAccounting.total.cost };
+	const finalTotalCost = accountedCost.inputTokens > 0 || accountedCost.outputTokens > 0 || accountedCost.costUsd > 0 ? accountedCost : undefined;
 	const finalFlatAgents = statusPayload.steps.map((step) => step.agent);
 	const agentName = finalFlatAgents[0]!;
 	let sessionFile: string | undefined;
@@ -4069,7 +4082,10 @@ async function runSubagentInner(
 	setOptionalProperty(statusPayload, "sessionFile", effectiveSessionFile);
 	if (singleRuntimeAcknowledgedExtensions) statusPayload.runtimeAcknowledgedExtensions = singleRuntimeAcknowledgedExtensions;
 	setOptionalProperty(statusPayload, "totalCost", finalTotalCost);
-	setOptionalProperty(statusPayload, "usageBudget", usageBudgetState(config.usageBudget, currentUsageTotals()));
+	statusPayload.childUsageAccounting = childUsageAccounting;
+	// Terminal enforcement uses authoritative nested-inclusive accounting. The live
+	// currentUsageTotals projection remains bounded separately while work is in flight.
+	setOptionalProperty(statusPayload, "usageBudget", usageBudgetState(config.usageBudget, accountedCost));
 	setOptionalProperty(statusPayload, "shareUrl", shareUrl);
 	setOptionalProperty(statusPayload, "gistUrl", gistUrl);
 	setOptionalProperty(statusPayload, "shareError", shareError);
@@ -4159,6 +4175,7 @@ async function runSubagentInner(
 			durationMs: runEndedAt - overallStartTime,
 			totalTokens: statusPayload.totalTokens,
 			totalCost: finalTotalCost,
+			childUsageAccounting,
 			usageBudget: statusPayload.usageBudget,
 			truncated,
 			artifactsDir,

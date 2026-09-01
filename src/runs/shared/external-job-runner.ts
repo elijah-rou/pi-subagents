@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ExternalJobProviderError, type ExternalJobHandle, type ExternalJobResult, type ExternalJobState } from "../../api/external-job-provider.ts";
-import type { ExternalJobStatus } from "../../shared/types.ts";
+import type { ExternalJobStatus, Usage } from "../../shared/types.ts";
 import { requestExternalJobOperation } from "./external-job-bridge.ts";
 
 const STATUS_POLL_INTERVAL_MS = 1_000;
@@ -14,6 +14,7 @@ export interface ExternalJobRunResult {
 	timedOut?: boolean;
 	stopped?: boolean;
 	externalJob: ExternalJobStatus;
+	usage?: Usage;
 }
 
 export function externalJobPromptDigest(prompt: string): string {
@@ -64,6 +65,14 @@ function isNotFound(error: unknown): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function reportedUsage(value: unknown): Usage | undefined {
+	if (!isRecord(value)) return undefined;
+	const fields = [value.input, value.output, value.cacheRead, value.cacheWrite, value.cost, value.turns];
+	if (!fields.every((field) => typeof field === "number" && Number.isFinite(field) && field >= 0)) return undefined;
+	if (!Number.isSafeInteger(value.turns)) return undefined;
+	return { input: value.input as number, output: value.output as number, cacheRead: value.cacheRead as number, cacheWrite: value.cacheWrite as number, cost: value.cost as number, turns: value.turns as number };
 }
 
 function malformedStatus(statusPath: string): ExternalJobProviderError {
@@ -373,7 +382,8 @@ export async function runExternalJob(input: {
 		publish(finalStatus);
 		const output = resultOutput(result, artifactPath);
 		const error = result.state === "completed" ? undefined : result.failureMessage ?? `External job ${result.state}.`;
-		return { output, exitCode: result.state === "completed" ? 0 : 1, ...(error ? { error } : {}), externalJob: finalStatus };
+		const usage = reportedUsage(result.usage);
+		return { output, exitCode: result.state === "completed" ? 0 : 1, ...(error ? { error } : {}), externalJob: finalStatus, ...(usage ? { usage } : {}) };
 	} catch (error) {
 		const providerError = error instanceof ExternalJobProviderError
 			? error

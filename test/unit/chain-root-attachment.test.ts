@@ -68,6 +68,33 @@ describe("async chain root attachment", () => {
 		});
 	});
 
+	it("preserves identical canonical accounting from completed async status and result", async () => {
+		const importedRoot = root("accounted-root");
+		const childUsageAccounting = {
+			version: 1,
+			records: [
+				{ id: "run:external/external", ownerRunId: "external", kind: "external-run", complete: false },
+				{ id: "run:nested/session", ownerRunId: "nested", kind: "nested-session", complete: false, usage: { input: 7, output: 3, cacheRead: 2, cacheWrite: 1, cost: 0.07, turns: 0 } },
+			],
+			total: { input: 7, output: 3, cacheRead: 2, cacheWrite: 1, cost: 0.07, turns: 0 },
+			complete: false,
+			unknownRecordIds: ["run:external/external", "run:nested/session"],
+		} as const;
+		writeJson(path.join(importedRoot.asyncDir, "status.json"), {
+			runId: importedRoot.runId, mode: "single", state: "complete", startedAt: 1,
+			steps: [{ agent: "external", status: "complete" }], childUsageAccounting,
+		});
+		writeJson(importedRoot.resultPath, {
+			state: "complete", success: true, childUsageAccounting,
+			results: [{ agent: "external", output: "done", success: true }],
+		});
+
+		const result = await waitForImportedAsyncRoot(importedRoot, { pollIntervalMs: 1 });
+
+		assert.deepEqual(result.childUsageAccounting, childUsageAccounting);
+		assert.equal(result.childUsageAccounting?.records.length, 2, "status/result reread must deduplicate canonical records");
+	});
+
 	it("imports a session-indexed pending result before terminal status fallback", async () => {
 		const importedRoot = { ...root(), resultPath: path.join(tempDir, "root-run", "workflow-result.json") };
 		writeJson(path.join(importedRoot.asyncDir, "status.json"), {

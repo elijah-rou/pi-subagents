@@ -46,6 +46,7 @@ import { getActiveAsyncCapacitySnapshot, inspectActiveAsyncCapacityOwner } from 
 import { ACTIVE_RUN_INDEX_DIR } from "../../src/runs/background/active-run-index.ts";
 import { persistForegroundRunHistory, restoreForegroundRunHistory } from "../../src/runs/foreground/foreground-history.ts";
 import { listAsyncRuns } from "../../src/runs/background/async-status.ts";
+import { waitForSubagents } from "../../src/runs/background/subagent-wait.ts";
 import { WAIT_TOOL_ENABLED_ENV } from "../../src/runs/background/wait-config.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV } from "../../src/runs/shared/tool-budget.ts";
 import { createRunFanoutBudget, encodeRunFanoutBudgetDescriptor, RUN_FANOUT_BUDGET_ENV } from "../../src/runs/shared/run-fanout-budget.ts";
@@ -70,6 +71,7 @@ import { createResultWatcher } from "../../src/runs/background/result-watcher.ts
 import { clearExclusions } from "../../src/runs/shared/model-exclusions.ts";
 import { createWorkflowChildPermit, workflowChildPermitConsumed } from "../../src/shared/workflow-child-permit.ts";
 import { toSubagentDelegationExecutionParams } from "../../src/slash/delegation-adapters.ts";
+import { buildSubagentCostReport } from "../../src/slash/slash-commands.ts";
 import { registerSubagentChildProfileResolver } from "../../src/api/child-profile-resolver.ts";
 
 interface ModelAttempt {
@@ -445,6 +447,14 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			);
 			assert.equal(result.isError, undefined, JSON.stringify(result.content));
 			assert.equal(observedParallel, true);
+			assert.equal(result.details.mode, "workflow");
+			assert.ok(result.details.childUsageAccounting);
+			assert.deepEqual(result.details.totalChildUsage, result.details.childUsageAccounting.total);
+			assert.deepEqual(result.details.totalCost, {
+				inputTokens: result.details.childUsageAccounting.total.input,
+				outputTokens: result.details.childUsageAccounting.total.output,
+				costUsd: result.details.childUsageAccounting.total.cost,
+			});
 			assert.deepEqual(result.details.results[0]?.childProfile, { profile: "standard", source: "profile-router", confidence: 90 });
 			const args = readCallArgs();
 			assert.ok(args.includes("test/routed:high"), `expected routed model in ${JSON.stringify(args)}`);
@@ -1757,6 +1767,124 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("deduplicates one completed run's unknown external and known nested usage across status, wait, and cost", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const runId = `canonical-accounting-fixture-${Date.now()}`;
+		const asyncDir = path.join(DIRS.async, runId);
+		const resultPath = path.join(DIRS.results, `${runId}.json`);
+		const childUsageAccounting = {
+			version: 1,
+			records: [
+				{ id: `run:${runId}/external`, ownerRunId: `${runId}-external`, kind: "external-run", complete: false },
+				{ id: `run:${runId}/nested`, ownerRunId: `${runId}-nested`, kind: "nested-session", complete: true, usage: { input: 17, output: 6, cacheRead: 4, cacheWrite: 2, cost: 0.23, turns: 3 } },
+			],
+			total: { input: 17, output: 6, cacheRead: 4, cacheWrite: 2, cost: 0.23, turns: 3 },
+			complete: false,
+			unknownRecordIds: [`run:${runId}/external`],
+		} as const;
+		const sessionId = `canonical-accounting-session-${Date.now()}`;
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.mkdirSync(DIRS.results, { recursive: true });
+		const writeCompletedFixture = () => {
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId, sessionId, mode: "single", state: "complete", startedAt: 100, lastUpdate: 200,
+				steps: [{ agent: "external", status: "complete" }], childUsageAccounting,
+			}), "utf-8");
+			fs.writeFileSync(resultPath, JSON.stringify({
+				id: runId, runId, sessionId, mode: "single", state: "complete", success: true, summary: "fixture complete", results: [], childUsageAccounting,
+			}), "utf-8");
+		};
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId, sessionId, mode: "single", state: "running", startedAt: 100, lastUpdate: Date.now(), pid: process.pid,
+			steps: [{ agent: "external", status: "running" }],
+		}), "utf-8");
+		const state = {
+			baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null,
+			cleanupTimers: new Map(), lastUiContext: null, poller: null, completionSeen: new Map(), watcher: null, watcherRestartTimer: null,
+			resultFileCoalescer: { schedule: () => false, clear: () => {} }, artifactDirPreference: "session",
+		} as unknown as SubagentState;
+		try {
+			const executor = makeExecutor([]);
+			const ctx = makeMinimalCtx(tempDir);
+			ctx.sessionManager.getSessionId = () => sessionId;
+			const waited = await waitForSubagents({ id: runId }, undefined, { state, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, kill: () => true, pollIntervalMs: 1, sleep: async () => { writeCompletedFixture(); } });
+			const statusAction = await executor.execute(`canonical-accounting-status-${Date.now()}`, { action: "status", id: runId }, new AbortController().signal, undefined, ctx);
+			assert.deepEqual(statusAction.details.childUsageAccounting, childUsageAccounting);
+			assert.deepEqual(statusAction.details.totalChildUsage, childUsageAccounting.total);
+			assert.deepEqual(waited.details.completions?.[0]?.childUsageAccounting, childUsageAccounting);
+			assert.deepEqual(waited.usage, { input: 17, output: 6, cacheRead: 4, cacheWrite: 2, totalTokens: 29, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.23 } });
+
+			const costReport = buildSubagentCostReport({
+				cwd: tempDir,
+				sessionManager: {
+					getBranch: () => [
+						{ type: "message", message: { role: "toolResult", toolName: "subagent", details: statusAction.details } },
+						{ type: "message", message: { role: "toolResult", toolName: "subagent_wait", details: waited.details } },
+					],
+					getSessionFile: () => null,
+				},
+			} as never, state);
+			assert.equal((costReport.match(/Child \d+ \(nested-session\):/g) ?? []).length, 1);
+			assert.match(costReport, /Children: ↑17 ↓6 \$0\.2300 \(cache read 4, cache write 2, 3 turns\)/);
+			assert.match(costReport, /Child usage is partial: 1 record\(s\) contain unknown usage\./);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(resultPath, { force: true });
+		}
+	});
+
+	it("preserves canonical unknown external accounting across an async workflow await and status action", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([
+			makeAgent("external", {
+				runner: { type: "external-cli", command: process.execPath, args: ["-e", `process.stdout.write("canonical external result")`] },
+			}),
+		]);
+		const started = await executor.execute(
+			`external-canonical-${Date.now()}`,
+			{ async: true, workflowScript: `return await runs.run("external", { agent: "external", task: "Run external" });` },
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+		assert.ok(started.details.asyncId);
+		const initialStatus = JSON.parse(fs.readFileSync(path.join(started.details.asyncDir!, "status.json"), "utf-8")) as { sessionId?: string };
+		const waitState = {
+			baseCwd: tempDir, currentSessionId: initialStatus.sessionId ?? null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null,
+			cleanupTimers: new Map(), lastUiContext: null, poller: null, completionSeen: new Map(), watcher: null, watcherRestartTimer: null,
+			resultFileCoalescer: { schedule: () => false, clear: () => {} },
+		} as unknown as SubagentState;
+		const waitPromise = waitForSubagents({ id: started.details.asyncId }, undefined, { state: waitState, asyncDirRoot: DIRS.async, resultsDir: DIRS.results, kill: () => true, pollIntervalMs: 1 });
+		const outerResultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
+		for (let attempt = 0; attempt < 300 && !fs.existsSync(outerResultPath); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+		const outerStatus = JSON.parse(fs.readFileSync(path.join(started.details.asyncDir!, "status.json"), "utf-8")) as { childUsageAccounting?: unknown; sessionId?: string };
+		const outerResult = JSON.parse(fs.readFileSync(outerResultPath, "utf-8")) as { childUsageAccounting?: { complete?: boolean; records?: Array<{ kind?: string; usage?: unknown }>; unknownRecordIds?: string[] }; results?: Array<{ runId?: string }> };
+		assert.deepEqual(outerStatus.childUsageAccounting, outerResult.childUsageAccounting);
+		assert.equal(outerResult.childUsageAccounting?.complete, false);
+		assert.equal(outerResult.childUsageAccounting?.records?.[0]?.kind, "external-run");
+		assert.equal(outerResult.childUsageAccounting?.records?.[0]?.usage, undefined);
+		const childRunId = outerResult.results?.[0]?.runId;
+		assert.ok(childRunId);
+		const childStatus = JSON.parse(fs.readFileSync(path.join(DIRS.async, childRunId, "status.json"), "utf-8")) as { childUsageAccounting?: unknown };
+		const childResultPath = path.join(DIRS.async, childRunId, "workflow-result.json");
+		assert.deepEqual(childStatus.childUsageAccounting, outerResult.childUsageAccounting);
+		assert.equal(fs.existsSync(childResultPath), false, "consumed private workflow result must be removed");
+		const statusAction = await executor.execute(`external-canonical-status-${Date.now()}`, { action: "status", id: started.details.asyncId }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.deepEqual(statusAction.details.childUsageAccounting, outerResult.childUsageAccounting);
+		const waited = await waitPromise;
+		assert.deepEqual(waited.details.completions?.[0]?.childUsageAccounting, outerResult.childUsageAccounting);
+		const costReport = buildSubagentCostReport({
+			cwd: tempDir,
+			sessionManager: {
+				getBranch: () => [{ type: "message", message: { role: "toolResult", toolName: "subagent", details: waited.details } }],
+				getSessionFile: () => null,
+			},
+		} as never, { ...waitState, artifactDirPreference: "session" } as SubagentState);
+		assert.match(costReport, /Children: ↑0 ↓0 \$0\.0000/);
+		assert.match(costReport, /Child usage is partial: 1 record\(s\) contain unknown usage\./);
+		fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
+		fs.rmSync(path.join(DIRS.async, childRunId), { recursive: true, force: true });
+		fs.rmSync(outerResultPath, { force: true });
+	});
+
 	it("starts omitted external CLI single-child calls in async mode", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		const markerPath = path.join(tempDir, "external-single-omitted-async-started");
 		const executor = makeExecutor([
@@ -2170,6 +2298,42 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(asyncJobs.has(runId), false);
 		assert.equal(fs.existsSync(path.join(DIRS.async, runId)), false);
 		assert.equal(fs.existsSync(path.join(DIRS.results, `${runId}.json`)), false);
+	});
+
+	it("persists authoritative hard-limit usage budgets for successful and failed async workflows", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "success usage" });
+		mockPi.onCall({ output: "failure usage" });
+		const executor = makeExecutor([makeAgent("echo")]);
+		const run = async (label: string, hard: number, script: string) => {
+			const started = await executor.execute(
+				`async-workflow-budget-${label}-${Date.now()}`,
+				{ async: true, workflowScript: script, usageBudget: { tokens: { hard } } },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.ok(started.details.asyncId);
+			const statusPath = path.join(started.details.asyncDir!, "status.json");
+			const resultPath = path.join(DIRS.results, `${started.details.asyncId}.json`);
+			for (let attempt = 0; attempt < 200 && !fs.existsSync(resultPath); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+			assert.equal(fs.existsSync(resultPath), true, `missing ${label} result`);
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { state?: string; childUsageAccounting?: { total: { input: number; output: number; cost: number } }; usageBudget?: { exhausted?: boolean; tokens?: { used?: number } } };
+			const persisted = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as typeof status;
+			assert.ok(status.childUsageAccounting);
+			assert.deepEqual(persisted.childUsageAccounting, status.childUsageAccounting);
+			assert.deepEqual(persisted.usageBudget, status.usageBudget);
+			assert.equal(status.usageBudget?.tokens?.used, status.childUsageAccounting.total.input + status.childUsageAccounting.total.output);
+			fs.rmSync(started.details.asyncDir!, { recursive: true, force: true });
+			fs.rmSync(resultPath, { force: true });
+			return status;
+		};
+
+		const success = await run("success", 1_000_000, `return await runs.run("only", { agent: "echo", task: "Successful child" });`);
+		assert.equal(success.state, "complete");
+		assert.equal(success.usageBudget?.exhausted, false);
+		const failure = await run("failure", 10, `await runs.run("first", { agent: "echo", task: "Budget-consuming child" }); return runs.run("blocked", { agent: "echo", task: "Must not launch" });`);
+		assert.equal(failure.state, "failed");
+		assert.equal(failure.usageBudget?.exhausted, true);
 	});
 
 	it("rejects async child launches from budgeted async workflows", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
@@ -4678,6 +4842,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		assert.equal(result.isError, undefined);
 		assert.deepEqual(result.details?.totalCost, { inputTokens: 100, outputTokens: 50, costUsd: 0.001 });
+		assert.deepEqual(result.details?.childUsageAccounting?.total, { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.001, turns: 1 });
+		assert.equal(result.details?.childUsageAccounting?.complete, true);
 		assert.deepEqual(result.usage, { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 } });
 	});
 

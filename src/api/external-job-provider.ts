@@ -1,3 +1,5 @@
+import type { Usage } from "../shared/types.ts";
+
 export const EXTERNAL_JOB_PROVIDER_PROTOCOL_VERSION = 1;
 export const EXTERNAL_JOB_PROVIDER_REGISTRY_KEY = "pi-subagents.external-job-providers.v1";
 
@@ -45,6 +47,8 @@ export interface ExternalJobHandle {
 export interface ExternalJobResult extends ExternalJobHandle {
 	output?: string;
 	artifactPath?: string;
+	/** Optional provider-reported model usage. Omission is represented as unknown, never zero. */
+	usage?: Usage;
 }
 
 export interface ExternalJobProvider {
@@ -141,14 +145,24 @@ export function validateExternalJobHandle(provider: string, value: unknown, fiel
 }
 
 export function validateExternalJobResult(provider: string, value: unknown, field = "External-job result"): ExternalJobResult {
-	const result = validateHandle(provider, value, field, ["output", "artifactPath"]) as ExternalJobResult;
+	const result = validateHandle(provider, value, field, ["output", "artifactPath", "usage"]) as ExternalJobResult;
 	const record = value as Record<string, unknown>;
 	const output = validateOptionalString(record.output, `${field}.output`, 1024 * 1024);
 	const artifactPath = validateOptionalString(record.artifactPath, `${field}.artifactPath`, MAX_URL_LENGTH);
+	let usage: Usage | undefined;
+	if (record.usage !== undefined) {
+		if (!record.usage || typeof record.usage !== "object" || Array.isArray(record.usage)) throw new Error(`${field}.usage must be an object.`);
+		const candidate = record.usage as Record<string, unknown>;
+		const keys = ["input", "output", "cacheRead", "cacheWrite", "cost", "turns"] as const;
+		if (Object.keys(candidate).some((key) => !keys.includes(key as typeof keys[number]))) throw new Error(`${field}.usage has unknown fields.`);
+		if (!keys.every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]) && (candidate[key] as number) >= 0) || !Number.isSafeInteger(candidate.turns)) throw new Error(`${field}.usage fields must be non-negative finite numbers and turns must be a safe integer.`);
+		usage = candidate as unknown as Usage;
+	}
 	return {
 		...result,
 		...(output !== undefined ? { output } : {}),
 		...(artifactPath !== undefined ? { artifactPath } : {}),
+		...(usage ? { usage } : {}),
 	};
 }
 

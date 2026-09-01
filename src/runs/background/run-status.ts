@@ -30,6 +30,30 @@ import { getExternalJobProvider } from "../../api/external-job-provider.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
 import { redactSecretValues } from "../shared/permissions.ts";
 import { projectLifecycleState } from "../shared/async-status-projection.ts";
+import { parseChildUsageAccounting, type ChildUsageAccounting } from "../../shared/usage-accounting.ts";
+
+interface UsageAccountingProjection {
+	childUsageAccounting: ChildUsageAccounting;
+	totalChildUsage: ChildUsageAccounting["total"];
+	totalCost: NonNullable<Details["totalCost"]>;
+}
+
+function usageAccountingProjection(value: unknown): UsageAccountingProjection | undefined {
+	const childUsageAccounting = parseChildUsageAccounting(value);
+	if (!childUsageAccounting) return undefined;
+	const totalChildUsage = childUsageAccounting.total;
+	return {
+		childUsageAccounting,
+		totalChildUsage,
+		totalCost: { inputTokens: totalChildUsage.input, outputTokens: totalChildUsage.output, costUsd: totalChildUsage.cost },
+	};
+}
+
+function formatChildUsageAccounting(accounting: ChildUsageAccounting): string {
+	const usage = accounting.total;
+	const partial = accounting.complete ? "" : ` (partial; ${accounting.unknownRecordIds.length} unknown record${accounting.unknownRecordIds.length === 1 ? "" : "s"})`;
+	return `Child usage: input ${usage.input}, output ${usage.output}, cache read ${usage.cacheRead}, cache write ${usage.cacheWrite}, cost $${usage.cost.toFixed(4)}, turns ${usage.turns}${partial}`;
+}
 
 interface RunStatusParams {
 	action?: string;
@@ -512,6 +536,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 
 			const workflowReturnPreview = status.workflow?.value !== undefined ? formatWorkflowJsonPreview(status.workflow.value, 240) : undefined;
 			const workflowEmitPreview = status.workflow?.emits.length ? formatWorkflowJsonPreview(status.workflow.emits.at(-1), 240) : undefined;
+			const accounting = usageAccountingProjection(status.childUsageAccounting);
 			const lines = [
 				`Run: ${status.runId}`,
 				status.toolCallId ? `Tool call: ${status.toolCallId}` : undefined,
@@ -524,6 +549,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				statusActivityText ? `Activity: ${statusActivityText}` : undefined,
 				steeringText ? `Steering: ${steeringText}` : undefined,
 				`Mode: ${status.mode}`,
+				accounting ? formatChildUsageAccounting(accounting.childUsageAccounting) : undefined,
 				...(status.preflight ? [formatWorkflowPreflightPlanSummary(status.preflight)] : []),
 				...(status.workflow?.preflightWarnings?.length ? [formatWorkflowPreflightWarningSummary(status.workflow.preflightWarnings)] : []),
 				runFanoutBudget ? formatRunFanoutBudget(runFanoutBudget) : undefined,
@@ -636,7 +662,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 
 			const workflowChildren = parseWorkflowChildSummary(status.workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== status.runId) throw new Error("workflowChildren.workflowRunId does not match async status runId.");
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(accounting ?? {}), ...(status.preflight ? { preflight: status.preflight } : {}), ...(status.workflow?.preflightWarnings?.length ? { preflightWarnings: status.workflow.preflightWarnings } : {}), ...(workflowChildren ? { workflowChildren } : {}), ...(runFanoutBudget ? { runFanoutBudget } : {}), ...(processTerminal ? { lifecycleStatus: { processTerminal } } : {}) } };
 		}
 	}
 
@@ -650,7 +676,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; timeoutRecovery?: unknown; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null; timeoutRecovery?: unknown }> };
+			const data = JSON.parse(raw) as { id?: string; runId?: string; toolCallId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; processSignal?: string | null; sessionFile?: string; timeoutRecovery?: unknown; parallelHandoff?: { path?: string }; childUsageAccounting?: unknown; results?: Array<{ agent?: string; sessionName?: string; runId?: string; workflowKey?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null; stopped?: boolean; timedOut?: boolean; turnBudgetExceeded?: boolean; interrupted?: boolean; processSignal?: string | null; timeoutRecovery?: unknown }> };
 			if (params.view === "transcript") {
 				try {
 					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
@@ -675,7 +701,8 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				? "stopped"
 				: data.success ? "complete" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 			const runId = data.runId ?? data.id ?? resolvedId;
-			const lines = [`Run: ${runId}`, data.toolCallId ? `Tool call: ${data.toolCallId}` : undefined, `State: ${status}`, `Result: ${resultPath}`].filter((line): line is string => Boolean(line));
+			const accounting = usageAccountingProjection(data.childUsageAccounting);
+			const lines = [`Run: ${runId}`, data.toolCallId ? `Tool call: ${data.toolCallId}` : undefined, `State: ${status}`, accounting ? formatChildUsageAccounting(accounting.childUsageAccounting) : undefined, `Result: ${resultPath}`].filter((line): line is string => Boolean(line));
 			if (data.parallelHandoff?.path) lines.push(`Parallel handoff: ${data.parallelHandoff.path}`);
 			const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
 			lines.push(...formatTimeoutRecoveryLines(data.timeoutRecovery, "  "));
@@ -684,7 +711,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			if (data.summary) lines.push("", data.summary);
 			const workflowChildren = parseWorkflowChildSummary((data as unknown as Record<string, unknown>).workflowChildren);
 			if (workflowChildren && workflowChildren.workflowRunId !== runId) throw new Error("workflowChildren.workflowRunId does not match the result run id.");
-			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(workflowChildren ? { workflowChildren } : {}) } };
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [], ...(accounting ?? {}), ...(workflowChildren ? { workflowChildren } : {}) } };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return {

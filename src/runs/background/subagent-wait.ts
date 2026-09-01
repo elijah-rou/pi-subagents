@@ -63,6 +63,7 @@ import {
 } from "../../shared/types.ts";
 import { formatDuration, shortenPath } from "../../shared/formatters.ts";
 import { toAgentToolUsage } from "../../shared/utils.ts";
+import { mergeChildUsageAccountings } from "../../shared/usage-accounting.ts";
 import { collectWaitCompletions } from "./wait-completions.ts";
 import { formatResumeFirstFailedRunsNote } from "./resume-guidance.ts";
 import { formatTimeoutRecoveryLines } from "../shared/mutation-evidence.ts";
@@ -320,8 +321,15 @@ function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 
 function completionUsage(completions: WaitCompletion[] | undefined): Usage | undefined {
 	if (!completions?.length) return undefined;
 	const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+	const accountings = completions.flatMap((completion) => completion.childUsageAccounting ? [completion.childUsageAccounting] : []);
+	const merged = accountings.length > 0 ? mergeChildUsageAccountings(accountings) : undefined;
 	let projected = false;
+	if (merged) {
+		Object.assign(usage, merged.total);
+		projected = merged.records.some((record) => record.usage !== undefined);
+	}
 	for (const completion of completions) {
+		if (completion.childUsageAccounting) continue;
 		for (const child of completion.results ?? []) {
 			if (!child.usage || (child.usage.input === 0 && child.usage.output === 0 && child.usage.cacheRead === 0 && child.usage.cacheWrite === 0 && child.usage.cost === 0 && child.usage.turns === 0)) continue;
 			projected = true;
@@ -338,8 +346,10 @@ function completionUsage(completions: WaitCompletion[] | undefined): Usage | und
 
 function result(text: string, isError = false, completions?: WaitCompletion[]): AgentToolResult<Details> {
 	const usage = completionUsage(completions);
+	const knownUsageIsPartial = completions?.some((completion) => completion.childUsageAccounting?.complete === false) === true;
+	const renderedText = knownUsageIsPartial ? `${text}\nKnown child usage is partial because one or more accounting records are unknown.` : text;
 	return {
-		content: [{ type: "text", text }],
+		content: [{ type: "text", text: renderedText }],
 		...(isError ? { isError: true } : {}),
 		...(usage ? { usage: toAgentToolUsage(usage) } : {}),
 		details: {

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { resultPayloadPathForSessionRun } from "./result-files.ts";
 import type { AcceptanceInput, AcceptanceLedger, ArtifactPaths, AsyncStatus, CostSummary, EffectsProjection, ExecutionProjection, ModelAttempt, PersistedResolvedAcceptanceInput, Usage } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
+import { mergeChildUsageAccountings, parseChildUsageAccounting, type ChildUsageAccounting } from "../../shared/usage-accounting.ts";
 import { parseChildProfileProvenance } from "../shared/child-profile-provenance.ts";
 
 export interface ImportedAsyncRoot {
@@ -29,6 +30,7 @@ export interface ImportedAsyncRootResult {
 	contextOverflow?: boolean;
 	totalCost?: CostSummary;
 	usage?: Usage;
+	childUsageAccounting?: ChildUsageAccounting;
 	structuredOutput?: unknown;
 	structuredOutputPath?: string;
 	structuredOutputSchemaPath?: string;
@@ -46,6 +48,7 @@ export interface ImportedAsyncRootResult {
 
 interface AsyncResultFile {
 	state?: string;
+	childUsageAccounting?: unknown;
 	success?: boolean;
 	summary?: string;
 	error?: string;
@@ -124,6 +127,16 @@ function selectedStatusStep(status: AsyncStatus | null, index: number): NonNulla
 	return status?.steps?.[index];
 }
 
+function importedChildUsageAccounting(status: AsyncStatus | null, result?: AsyncResultFile): ChildUsageAccounting | undefined {
+	const values = [status?.childUsageAccounting, result?.childUsageAccounting].filter((value) => value !== undefined);
+	const accountings = values.map((value) => {
+		const accounting = parseChildUsageAccounting(value);
+		if (!accounting) throw new Error("Imported async childUsageAccounting is malformed.");
+		return accounting;
+	});
+	return accountings.length > 0 ? mergeChildUsageAccountings(accountings) : undefined;
+}
+
 function isTerminalStatus(status: AsyncStatus | null, index: number): boolean {
 	if (!status) return false;
 	const step = selectedStatusStep(status, index);
@@ -152,6 +165,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		? { status: "partial" as const, success: false, exitCode: 1, error: message }
 		: undefined);
 	const usage = usageFromAttempts(step?.modelAttempts);
+	const childUsageAccounting = importedChildUsageAccounting(status);
 	return {
 		agent,
 		output: message,
@@ -169,6 +183,7 @@ function outputFromTerminalStatus(root: ImportedAsyncRoot, status: AsyncStatus, 
 		...(step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(step?.totalCost ? { totalCost: step.totalCost } : {}),
 		...(usage ? { usage } : {}),
+		...(childUsageAccounting ? { childUsageAccounting } : {}),
 		...(step?.structuredOutput !== undefined ? { structuredOutput: step.structuredOutput } : {}),
 		...(step?.structuredOutputPath ? { structuredOutputPath: step.structuredOutputPath } : {}),
 		...(step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: step.structuredOutputSchemaPath } : {}),
@@ -218,6 +233,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 	const childProfile = child?.childProfile !== undefined
 		? parseChildProfileProvenance(child.childProfile, `imported async result '${root.resultPath}' childProfile`)
 		: step?.childProfile;
+	const childUsageAccounting = importedChildUsageAccounting(status, result);
 	return {
 		agent,
 		output: success ? output : (output || error || ""),
@@ -236,6 +252,7 @@ function buildImportedResult(root: ImportedAsyncRoot, status: AsyncStatus | null
 		...(child?.contextOverflow || step?.contextOverflow ? { contextOverflow: true } : {}),
 		...(child?.totalCost ?? step?.totalCost ? { totalCost: child?.totalCost ?? step?.totalCost } : {}),
 		...(usage ? { usage } : {}),
+		...(childUsageAccounting ? { childUsageAccounting } : {}),
 		...(child?.structuredOutput !== undefined ? { structuredOutput: child.structuredOutput } : step?.structuredOutput !== undefined ? { structuredOutput: step.structuredOutput } : {}),
 		...(child?.structuredOutputPath ?? step?.structuredOutputPath ? { structuredOutputPath: child?.structuredOutputPath ?? step?.structuredOutputPath } : {}),
 		...(child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath ? { structuredOutputSchemaPath: child?.structuredOutputSchemaPath ?? step?.structuredOutputSchemaPath } : {}),

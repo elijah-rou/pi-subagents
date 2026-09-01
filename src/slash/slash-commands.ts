@@ -45,6 +45,7 @@ import {
 	type SubagentState,
 	type Usage,
 } from "../shared/types.ts";
+import { mergeChildUsageAccountings, parseChildUsageAccounting, type ChildUsageAccounting } from "../shared/usage-accounting.ts";
 
 interface InlineConfig {
 	output?: string | false;
@@ -401,14 +402,17 @@ function formatCostUsage(label: string, usage: Usage): string {
 	return `${label}: ↑${formatTokens(usage.input)} ↓${formatTokens(usage.output)} $${usage.cost.toFixed(4)}${extras.length ? ` (${extras.join(", ")})` : ""}`;
 }
 
-function buildSubagentCostReport(ctx: ExtensionContext, state: SubagentState): string {
+export function buildSubagentCostReport(ctx: ExtensionContext, state: SubagentState): string {
 	const parent = emptyUsage();
 	const childTotal = emptyUsage();
 	const total = emptyUsage();
 	const children: Array<{ label: string; usage: Usage; sessionFile?: string }> = [];
 	const seenChildren = new Set<string>();
 	const workflowRunIds = new Set<string>();
+	const referencedAsyncRuns = new Map<string, string | undefined>();
+	let mergedAccounting: ChildUsageAccounting | undefined;
 	let unresolvedAsyncChildren = 0;
+	let unknownUsageRecords = 0;
 
 	const addChild = (input: { agent?: string; runId?: string; usage?: Usage; sessionFile?: string }): boolean => {
 		if (!input.usage || !usageHasValue(input.usage)) return false;
@@ -424,6 +428,23 @@ function buildSubagentCostReport(ctx: ExtensionContext, state: SubagentState): s
 		addUsage(childTotal, usage);
 		return true;
 	};
+	const addAccounting = (value: unknown): boolean => {
+		const accounting = parseChildUsageAccounting(value);
+		if (!accounting) return false;
+		// Merge before deduplication so a duplicate id with a conflicting claim fails loud.
+		mergedAccounting = mergeChildUsageAccountings(mergedAccounting ? [mergedAccounting, accounting] : [accounting]);
+		for (const record of accounting.records) {
+			const identity = `accounting:${record.id}`;
+			if (seenChildren.has(identity)) continue;
+			seenChildren.add(identity);
+			seenChildren.add(`run:${record.ownerRunId}`);
+			if (!record.complete) unknownUsageRecords += 1;
+			if (!record.usage) continue;
+			children.push({ label: `Child ${children.length + 1} (${record.kind})`, usage: { ...record.usage } });
+			addUsage(childTotal, record.usage);
+		}
+		return true;
+	};
 
 	for (const entry of ctx.sessionManager.getBranch()) {
 		const message = entry.type === "message" ? (entry as { message?: unknown }).message : undefined;
@@ -432,12 +453,16 @@ function buildSubagentCostReport(ctx: ExtensionContext, state: SubagentState): s
 		const details = detailsFromSessionEntry(entry);
 		if (!details) continue;
 		if (details.mode === "workflow" && details.runId) workflowRunIds.add(details.runId);
-		for (const result of details.results) {
-			const resultRunId = (result as SingleResult & { runId?: unknown }).runId;
-			addChild({ agent: result.agent, runId: typeof resultRunId === "string" ? resultRunId : undefined, usage: usageFromValue(result.usage), sessionFile: result.sessionFile });
+		if (details.runId && details.asyncDir) referencedAsyncRuns.set(details.runId, details.asyncDir);
+		if (!addAccounting(details.childUsageAccounting)) {
+			for (const result of details.results) {
+				const resultRunId = (result as SingleResult & { runId?: unknown }).runId;
+				addChild({ agent: result.agent, runId: typeof resultRunId === "string" ? resultRunId : undefined, usage: usageFromValue(result.usage), sessionFile: result.sessionFile });
+			}
 		}
 		for (const completion of details.completions ?? []) {
 			if (completion.mode === "workflow") workflowRunIds.add(completion.runId);
+			if (addAccounting(completion.childUsageAccounting)) continue;
 			for (const result of completion.results ?? []) {
 				addChild({ agent: result.agent, runId: result.runId, usage: usageFromValue(result.usage), sessionFile: result.sessionFile });
 			}
@@ -456,6 +481,16 @@ function buildSubagentCostReport(ctx: ExtensionContext, state: SubagentState): s
 	};
 	addArtifactsDir(ctx.cwd);
 	addArtifactsDir(state.baseCwd);
+
+	for (const [runId, asyncDir] of referencedAsyncRuns) {
+		try {
+			const status = readStatus(asyncDir ?? path.join(DIRS.async, runId));
+			if (status?.childUsageAccounting) addAccounting(status.childUsageAccounting);
+			else if (status?.state === "complete" || status?.state === "failed" || status?.state === "stopped") unresolvedAsyncChildren += 1;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`Failed to resolve async subagent usage for '${runId}':`, error);
+		}
+	}
 
 	for (const workflowRunId of workflowRunIds) {
 		try {
@@ -504,8 +539,9 @@ function buildSubagentCostReport(ctx: ExtensionContext, state: SubagentState): s
 			if (child.sessionFile) lines.push(`  Session: ${child.sessionFile}`);
 		}
 	}
-	if (unresolvedAsyncChildren > 0) lines.push(`Async child usage unavailable: ${unresolvedAsyncChildren}.`);
-	lines.push("────────────────────────────", formatCostUsage("Children", childTotal), formatCostUsage("Total", total));
+	if (unresolvedAsyncChildren > 0) lines.push(`Async child usage unknown: ${unresolvedAsyncChildren}.`);
+	if (unknownUsageRecords > 0) lines.push(`Child usage is partial: ${unknownUsageRecords} record(s) contain unknown usage.`);
+	lines.push("────────────────────────────", formatCostUsage("Children", childTotal), formatCostUsage("Combined total", total));
 	return lines.join("\n");
 }
 

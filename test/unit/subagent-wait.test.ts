@@ -370,6 +370,37 @@ describe("subagent_wait tool", () => {
 		}
 	});
 
+	it("reports partial known usage from authoritative completion accounting", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-partial-usage-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const state = makeState("sess-1");
+			writeStatus(asyncRoot, "run-partial", "running", { sessionId: "sess-1", pid: 999999 });
+			const waited = await waitForSubagents({ all: true }, undefined, baseDeps(root, state, {
+				sleep: async () => {
+					writeStatus(asyncRoot, "run-partial", "complete", { sessionId: "sess-1" });
+					fs.writeFileSync(path.join(resultsDir, "run-partial.json"), JSON.stringify({
+						id: "run-partial", runId: "run-partial", mode: "single", state: "complete", success: true, results: [],
+						childUsageAccounting: {
+							version: 1,
+							records: [
+								{ id: "run:known/session", ownerRunId: "known", kind: "session", complete: true, usage: { input: 9, output: 4, cacheRead: 1, cacheWrite: 0, cost: 0.09, turns: 1 } },
+								{ id: "run:unknown/session", ownerRunId: "unknown", kind: "nested-session", complete: false },
+							],
+							total: { input: 9, output: 4, cacheRead: 1, cacheWrite: 0, cost: 0.09, turns: 1 }, complete: false, unknownRecordIds: ["run:unknown/session"],
+						},
+					}), "utf-8");
+				},
+			}));
+			assert.match(textOf(waited), /Known child usage is partial because one or more accounting records are unknown\./);
+			assert.deepEqual(waited.usage, { input: 9, output: 4, cacheRead: 1, cacheWrite: 0, totalTokens: 14, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.09 } });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("surfaces bounded recovery guidance for a failed completion", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-wait-recovery-completion-"));
 		try {

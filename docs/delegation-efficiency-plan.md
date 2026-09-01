@@ -197,7 +197,7 @@ The baseline is commit `94b27239`.
 | Scenario | Before | After |
 | --- | ---: | ---: |
 | one-child-review | 10753 | 9658 |
-| basic-async | 11064 | 8940 |
+| basic-async | 11064 | 9520 |
 | management | 9173 | 7049 |
 | broad-intake | 14126 | 12948 |
 | top-level skill | 7316 | 5192 |
@@ -344,6 +344,14 @@ Usage appears in child results, workflow totals, async status, persisted session
 - Re-reading persisted status or receiving duplicate completion events does not increase totals.
 - Missing external usage is reported as unknown, not zero.
 - Foreground, async, workflow, status, and `/subagent-cost` views agree for the same completed run.
+
+### Workstream 8 implementation record
+
+`ChildUsageAccounting` is the authoritative child-only surface. Direct logical results use their child run id when persisted and otherwise use stable root-run id plus child index; session paths and array order are not ownership keys. Complete model-attempt arrays own their attempt records. Historical arrays missing per-attempt usage fall back to the non-overlapping top-level result aggregate. A nested reported aggregate owns its subtree and stops descent. A nested run without an aggregate contributes an incomplete unknown record while reported descendants remain visible. Record ids are the canonical merge and conflict boundary across persisted rereads and completion delivery. External runs without adapter-reported usage contribute an incomplete record rather than a false zero.
+
+Foreground results and workflows publish the accounting surface and derive child totals from it. Async terminal status and result payloads persist the same parsed surface, and terminal usage-budget state uses its nested-inclusive total while in-flight projection remains separate. Wait completion details preserve canonical accounting, reject conflicting duplicate claims, and state when known usage is partial. `/subagent-cost` canonical-merges these records, discovers referenced plain async status as well as workflow receipts, and retains historical decoding fallback. Parent assistant and compaction usage remains separate; the report labels their arithmetic sum with children as `Combined total`. Package notification delivery itself incurs no model usage. Any parent model turn triggered by a notification belongs to parent-session usage, and usage incurred by an external notifier is not attributed to `pi-subagents`.
+
+Focused accounting tests cover subtree ownership, partial nested cost dimensions, unknown nested and external records, fallback attempts, historical missing-attempt decoding, stable root-and-index fallback identity under reorder, persisted JSON reread, exact duplicate completion, and conflicting duplicate claims. One deterministic completed-run fixture duplicates the same canonical records through `status.json` and the persisted completion, then traverses the production status parser/action, wait parser, and `/subagent-cost`; it combines unknown external usage with known nested usage and proves identical records, totals, and one-time aggregation. A separate live external workflow integration proves real accounting transfer through child status, outer persisted result, status action, and wait while confirming that consumed private `workflow-result.json` is removed. Focused boundary tests additionally cover malformed and historically absent accounting, workflow receipt fallback, authoritative plain-async status discovery, and foreground/workflow projections. No live Pi end-to-end accounting run is claimed.
 
 ## 9. Run a matched orchestration benchmark
 

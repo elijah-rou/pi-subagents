@@ -335,8 +335,45 @@ describe("slash command custom message delivery", { skip: !available ? "slash-co
 				assert.match(report, /Child 2 \(reviewer\): ↑20 ↓4 \$0\.5000 \(cache read 80, 2 turns\)/);
 				assert.equal((report.match(/Child \d+ \(reviewer\):/g) ?? []).length, 2);
 				assert.match(report, /Children: ↑28 ↓7 \$0\.7500 \(cache read 85, 3 turns\)/);
-				assert.match(report, /Total: ↑43 ↓10 \$1\.0000 \(cache read 115, 4 turns\)/);
+				assert.match(report, /Combined total: ↑43 ↓10 \$1\.0000 \(cache read 115, 4 turns\)/);
 				assert.doesNotMatch(report, /No subagent child usage/);
+			} finally {
+				fs.rmSync(asyncDir, { recursive: true, force: true });
+			}
+		});
+	});
+
+	it("/subagent-cost reads authoritative accounting from a referenced plain async status", async () => {
+		await withTempProject("pi-subagent-cost-plain-async-", async (root) => {
+			const runId = `plain-cost-${process.pid}-${Date.now()}`;
+			const asyncDir = path.join(DIRS.async, runId);
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId,
+				state: "complete",
+				mode: "single",
+				startedAt: Date.now() - 10,
+				lastUpdate: Date.now(),
+				steps: [],
+				childUsageAccounting: {
+					version: 1,
+					records: [{ id: `run:${runId}/session`, ownerRunId: runId, kind: "session", complete: true, usage: { input: 13, output: 5, cacheRead: 2, cacheWrite: 0, cost: 0.4, turns: 2 } }],
+					total: { input: 13, output: 5, cacheRead: 2, cacheWrite: 0, cost: 0.4, turns: 2 },
+					complete: true,
+					unknownRecordIds: [],
+				},
+			}), "utf-8");
+			const sent: unknown[] = [];
+			const commands = new Map<string, RegisteredSlashCommand>();
+			const pi = { events: createEventBus(), registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); }, registerShortcut() {}, sendMessage(message: unknown) { sent.push(message); } };
+			try {
+				registerSlashCommands!(pi as never, createState(root));
+				await commands.get("subagent-cost")!.handler("", createCommandContext({
+					cwd: root,
+					sessionManager: { getBranch: () => [{ type: "message", message: { role: "toolResult", toolName: "subagent", details: { mode: "single", runId, asyncDir, results: [] } } }], getSessionFile: () => null, getSessionId: () => "session-parent" },
+				}));
+				const report = String((sent[0] as { content?: unknown }).content ?? "");
+				assert.match(report, /Children: ↑13 ↓5 \$0\.4000 \(cache read 2, 2 turns\)/);
 			} finally {
 				fs.rmSync(asyncDir, { recursive: true, force: true });
 			}

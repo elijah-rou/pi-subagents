@@ -54,7 +54,7 @@ describe("external-job runner bridge", () => {
 			},
 			status: () => ({ providerJobId: "job-1", state: "completed" }),
 			reattach: () => ({ providerJobId: "job-1", state: "completed" }),
-			result: () => ({ providerJobId: "job-1", state: "completed", output: "advisor result" }),
+			result: () => ({ providerJobId: "job-1", state: "completed", output: "advisor result", usage: { input: 9, output: 3, cacheRead: 2, cacheWrite: 0, cost: 0.12, turns: 1 } }),
 		});
 
 		const result = await serviceUntil(dir, runExternalJob({
@@ -73,6 +73,7 @@ describe("external-job runner bridge", () => {
 		assert.equal(result.externalJob.providerJobId, "job-1");
 		assert.equal(result.externalJob.conversationUrl, "https://surf.example/jobs/job-1");
 		assert.equal(result.externalJob.resultArtifactPath, path.join(dir, "external-job-0.result.md"));
+		assert.deepEqual(result.usage, { input: 9, output: 3, cacheRead: 2, cacheWrite: 0, cost: 0.12, turns: 1 });
 		assert.equal(fs.readFileSync(result.externalJob.resultArtifactPath!, "utf-8"), "advisor result");
 		assert.deepEqual(startInput, { promptDigest: externalJobPromptDigest("prompt text"), options: { tier: "pro" } });
 	});

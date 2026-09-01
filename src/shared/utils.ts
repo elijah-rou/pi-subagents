@@ -3,8 +3,9 @@ import * as path from "node:path";
 import type { Message, Usage as PiUsage } from "@earendil-works/pi-ai";
 import { previewDisplayText, sanitizeDisplayText, truncateDisplayText } from "./display-text.ts";
 import { formatToolCall } from "./formatters.ts";
-import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
+import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 import { validateAsyncStatusLaneMetadata } from "../runs/shared/lane-metadata.ts";
+import { accountChildUsage, parseChildUsageAccounting } from "./usage-accounting.ts";
 
 export const PROMPT_REDACTED = "[prompt redacted]";
 
@@ -106,6 +107,11 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 	}
 	try {
 		validateAsyncStatusLaneMetadata(status, `Invalid async status '${statusPath}'`);
+		if (status.childUsageAccounting !== undefined) {
+			const accounting = parseChildUsageAccounting(status.childUsageAccounting);
+			if (!accounting) throw new Error("childUsageAccounting is malformed");
+			status.childUsageAccounting = accounting;
+		}
 	} catch (error) {
 		throw new Error(`Failed to validate async status file '${statusPath}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
@@ -247,16 +253,7 @@ function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSumm
 }
 
 export function sumResultsUsage(results: SingleResult[]): Usage {
-	const usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
-	for (const result of results) {
-		usage.input += result.usage.input;
-		usage.output += result.usage.output;
-		usage.cacheRead += result.usage.cacheRead;
-		usage.cacheWrite += result.usage.cacheWrite;
-		usage.cost += result.usage.cost;
-		usage.turns += result.usage.turns;
-	}
-	return usage;
+	return accountChildUsage("aggregate", results).total;
 }
 
 export function toAgentToolUsage(usage: Usage): PiUsage {
@@ -270,29 +267,10 @@ export function toAgentToolUsage(usage: Usage): PiUsage {
 	};
 }
 
-function addNestedCost(total: NonNullable<Details["totalCost"]>, children: NestedRunSummary[] | undefined): void {
-	for (const child of children ?? []) {
-		if (child.totalCost) {
-			total.inputTokens += child.totalCost.inputTokens;
-			total.outputTokens += child.totalCost.outputTokens;
-			total.costUsd += child.totalCost.costUsd;
-			continue;
-		}
-		addNestedCost(total, child.children);
-		for (const step of child.steps ?? []) addNestedCost(total, step.children);
-	}
-}
-
-/** Sum input tokens, output tokens, and cost across a set of SingleResults. */
+/** Sum known input tokens, output tokens, and cost from authoritative child records. */
 export function sumResultsCost(results: SingleResult[]): NonNullable<Details["totalCost"]> {
-	const total = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-	for (const result of results) {
-		total.inputTokens += result.usage.input;
-		total.outputTokens += result.usage.output;
-		total.costUsd += result.usage.cost;
-		addNestedCost(total, result.children);
-	}
-	return total;
+	const usage = accountChildUsage("aggregate", results).total;
+	return { inputTokens: usage.input, outputTokens: usage.output, costUsd: usage.cost };
 }
 
 export function compactForegroundResult(result: SingleResult): SingleResult {
