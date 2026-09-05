@@ -203,9 +203,9 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.match(String(workflowScript?.description ?? ""), /runs\.lanes\(\[\{key,stages:/);
 		assert.match(String(workflowScript?.description ?? ""), /first stages run together.*later stages sequence per lane/i);
 		assert.match(String(workflowScript?.description ?? ""), /Each workflow key identifies one result lane.*new stable workflow key.*retained resume pass/i);
-		assert.match(String(workflowScript?.description ?? ""), /await runs\.all\(\[\{key, agent, task\}, \.\.\.\]\)/);
-		assert.match(String(workflowScript?.description ?? ""), /do not read \.output from unawaited runs\.run launches/i);
-		assert.match(String(workflowScript?.description ?? ""), /advanced rolling fanout/);
+		assert.match(String(workflowScript?.description ?? ""), /runs\.all returns an ordered array, not a key map/i);
+		assert.match(String(workflowScript?.description ?? ""), /Await launches before reading results/);
+		assert.match(String(workflowScript?.description ?? ""), /observe every stored launch with await, Promise\.race, or Promise\.all/);
 		assert.match(String(workflowScript?.description ?? ""), /sequential and parallel phases dynamically/i);
 		assert.match(String(workflowScript?.description ?? ""), /worktree:true/i);
 		assert.match(String(workflowScript?.description ?? ""), /no filesystem, shell, Pi tools, or host globals/i);
