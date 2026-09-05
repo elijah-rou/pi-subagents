@@ -43,7 +43,7 @@ describe("model-facing docs and skill contract", () => {
 		const programPath = path.join(root, "skills/pi-subagents", programReference);
 		assert.equal(fs.existsSync(programPath), true);
 		const program = fs.readFileSync(programPath, "utf-8");
-		const intakeOffset = program.indexOf("## Map intake before reconnaissance");
+		const intakeOffset = program.indexOf("## Inspect before mapping");
 		const executionOffset = program.indexOf("## Synthesize the execution map before mutation");
 		assert.ok(intakeOffset >= 0);
 		assert.ok(executionOffset > intakeOffset);

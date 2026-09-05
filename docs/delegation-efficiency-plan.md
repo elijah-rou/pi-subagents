@@ -196,10 +196,10 @@ The baseline is commit `94b27239`.
 
 | Scenario | Before | After |
 | --- | ---: | ---: |
-| one-child-review | 10753 | 9658 |
-| basic-async | 11064 | 10352 |
-| management | 9173 | 7049 |
-| broad-intake | 14126 | 12948 |
+| one-child-review | 10753 | 9924 |
+| basic-async | 11064 | 10496 |
+| management | 9173 | 7193 |
+| broad-intake | 14126 | 13140 |
 | top-level skill | 7316 | 5192 |
 | full skill tree | 69926 | 70057 |
 
@@ -252,7 +252,7 @@ stop/escalation remain required through the canonical packet.
 
 | Representative surface | Before | After |
 | --- | ---: | ---: |
-| commissioning initial context | 36877 | 5192 |
+| commissioning initial context | 36877 | 5336 |
 | scout synthesis prompt | 756 | 716 |
 | review-to-fix prompt | 5275 | 4437 |
 

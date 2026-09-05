@@ -12,9 +12,10 @@ inputs and authority are already settled. One program may need several waves
 because findings, owner decisions, or changing evidence must return to the
 parent between them. Do not hide those gates inside an autonomous child chain.
 
-## Map intake before reconnaissance
+## Inspect before mapping
 
-Before reconnaissance, record an intake map covering:
+Inspect the relevant code and constraints first. Reuse an approved plan rather
+than recreating it. If orchestration still needs a map, record:
 
 - **Phases:** every user-specified phase and its observable completion condition;
 - **Ordering:** known dependencies and ordering constraints;
@@ -47,7 +48,7 @@ program. Record:
 | Read-only overlap | Research, preparation, review, and validation that can run in parallel or ahead once inputs are stable |
 | Authority gates | Owner decisions and parent finding-disposition or acceptance points that stop autonomous progress |
 | Validation | Targeted slice checks near each change, checkpoint or full-suite checks after dependent groups, and final validation against the complete delivery |
-| Review | Before implementation, allocate one fresh high-quality reviewer for an ordinary coherent behavioral change; two only for distinct elevated risks such as security, concurrency, architecture, or high blast radius; parent-only inspection for trivial or fully machine-decided changes when review was not requested |
+| Review | Follow user/project policy: parent-only for fully machine-decided low-risk changes; one fresh reviewer for material unresolved semantics; two distinct evidence questions for elevated boundaries, with an alternate model when required |
 | Triggers | Completion evidence, failure or blocked conditions, and the event that revisits each deferred phase or lane |
 
 Every named phase must appear. Identify mutation ownership before commissioning
@@ -110,7 +111,7 @@ artifacts, and completion delivery.
 
 ```text
 intake map
-→ parallel reconnaissance
+→ only the unresolved reconnaissance justified by the delegation policy
 → parent design and owner decisions
 → serial writer critical path with overlapping read-only preparation
 → targeted validation and risk-bounded review

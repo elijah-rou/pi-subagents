@@ -40,7 +40,7 @@ async lanes are running, record the revisit trigger and yield.
 
 An ordinary coordinated workflow uses workflow-owned state, artifacts, async status/events/results, child summaries, and receipts for recovery. Package 2a creates no mission. Treat a receipt as evidence, not as authority or acceptance.
 
-After a writer produces a candidate, run the required fresh-context, read-only reviewer. The reviewer inspects the exact worktree and returns evidence-backed findings. The parent decides which findings are in scope and whether the lane is ready. Use `review-and-validation.md` for finding disposition, validation, and gate-failure triage. Send accepted fixes to that lane's sole writer, then rerun only the affected gate.
+After a writer produces a candidate, apply the user/project review policy. Low-risk machine-decided changes need no child reviewer; use fresh read-only review for material unresolved semantics or elevated boundaries. The reviewer inspects the exact worktree and returns evidence-backed findings. The parent decides which findings are in scope and whether the lane is ready. Use `review-and-validation.md` for finding disposition, validation, and gate-failure triage. Send accepted fixes to that lane's sole writer, then rerun only the affected gate.
 
 ## Handoff, cleanup, and recovery
 
@@ -48,4 +48,4 @@ Use stable lane-qualified artifact paths for reports and review output. A handof
 
 Keep a worktree until its handoff is durable, no run owns it, and no later gate needs it. Clean up only inside the recorded authority boundary. If a run stops or needs attention, preserve its worktree and artifacts, record the last known state and recovery owner, then resume that run or create one replacement lane from the handoff. Do not start another writer while worktree ownership is uncertain.
 
-Before completion, inspect the board. Every lane must be terminal or blocked with a named next action. Confirm one writer per repo/cwd or worktree, required validation, required fresh read-only review, and a durable handoff. The parent reports outcomes, evidence, residual risks, and the next decision.
+Before completion, inspect the board. Every lane must be terminal or blocked with a named next action. Confirm one writer per repo/cwd or worktree, required validation, any review selected by policy, and a durable handoff. The parent reports outcomes, evidence, residual risks, and the next decision.

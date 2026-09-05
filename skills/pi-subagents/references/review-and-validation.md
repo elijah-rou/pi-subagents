@@ -21,14 +21,14 @@ Parent-only inspection is enough for trivial or fully machine-decided changes wh
 
 | Situation | Shape |
 | --- | --- |
-| Ordinary coherent behavioral change | one fresh high-quality reviewer |
+| Material semantic judgment remains after affected checks | one fresh read-only reviewer |
 | Distinct elevated risks, such as security, concurrency, architecture, or high blast radius | two reviewers only, with distinct risk contracts |
-| Trivial or fully machine-decided change, with no user review request | parent-only inspection |
+| Low-risk, fully machine-decided change, with no user review request | parent-only inspection |
 | Explicit user fanout or round cap | honor the requested fanout or cap |
 | Possible over-scope or needless complexity | same-writer challenge before fresh review |
 | Material design tradeoff | council mode |
 
-Reviewer count is a budget, not a quality score. Map it before implementation and revise only for new risk. Default to one broad round; necessary focused finding re-review is outside that budget. An explicit cap counts every review invocation; if it prevents required re-review, report blocked. Reviewers are fresh-context by default. Forked reviewers are for parent-history, drift, or prior-decision evidence.
+User and repository policy own review selection. This table is the fallback when they do not specify it. Reviewer count is a budget, not a quality score. Map it before implementation and revise only for new risk. Default to one broad round; necessary focused finding re-review is outside that budget. An explicit cap counts every review invocation; if it prevents required re-review, report blocked. Reviewers are fresh-context by default. Forked reviewers are for parent-history, drift, or prior-decision evidence.
 
 ## Finding disposition
 

@@ -13,10 +13,12 @@ and their resolved tools allow `subagent`.
 
 ## Whole-program design gate
 
-For broad, predeclared, or multi-phase work, map the whole program before
-reconnaissance, then synthesize one execution map before any implementation
-mutation or mutation-capable child. Execute the map in bounded waves and return
-to the parent at authority gates. Small one-child tasks skip this machinery.
+Inspect relevant repository evidence before designing broad delegated work.
+Reuse the user's approved plan; add a compact dependency and ownership map only
+when orchestration needs it. Continue through authorized stages and return to
+the parent for unresolved decisions, not automatic phase stops. Small one-child
+tasks skip this machinery. User and repository policy decide when to delegate;
+this package supplies the execution mechanics.
 
 ## Route before acting
 
@@ -36,8 +38,8 @@ remain unloaded until the mapped program reaches them.
 | `roles-and-recipes` | Choose roles, models, slash commands, or specialized prompt recipes | `references/prompting-and-roles.md` |
 | `constraints` | Diagnose safety constraints, error handling, or a packaged recipe | `references/constraints-and-recipes.md` |
 
-A task with several named phases starts at `broad-intake`, even when later phases
-include implementation or review. A bounded review starts at `one-child-review`;
+Use `broad-intake` when delegated dependencies or ownership remain unresolved,
+not merely because the task has several phases. A bounded review starts at `one-child-review`;
 it does not load orchestration or execution recipes. Basic async launch starts at
 `basic-async`. Human/model agent administration starts at `management`.
 
