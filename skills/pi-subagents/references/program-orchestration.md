@@ -1,9 +1,9 @@
 # Whole-Program Orchestration
 
-Use this reference for broad, predeclared, or multi-phase work: requests with
-several named phases, more than one implementation or validation stage, owner
-decision gates, or work that could otherwise become a sequence of improvised
-child launches. Do not load it for one bounded child task, one review, a basic
+Use this reference when delegated dependencies, ownership, or authority remain
+unresolved, including broad, predeclared, or multi-phase work that needs an
+execution map. Several phases alone do not require a new map; an adequate
+existing approved plan satisfies the requirement. Do not load it for one bounded child task, one review, a basic
 async launch, status or control work, or agent management.
 
 The parent designs and owns the complete program. A program is the full path
@@ -37,9 +37,10 @@ compatibility, security, publication, merge, or release authority.
 
 ## Synthesize the execution map before mutation
 
-After reconnaissance and before any implementation mutation or
-mutation-capable child, the parent produces one execution map for the whole
-program. Record:
+Before any implementation mutation or mutation-capable child, confirm that the
+existing plan covers the whole program's dependencies, ownership, authority,
+and evidence. Fill only its missing decisions; create a compact execution map
+when no adequate plan exists. The resulting plan or map covers:
 
 | Concern | Required decision |
 | --- | --- |

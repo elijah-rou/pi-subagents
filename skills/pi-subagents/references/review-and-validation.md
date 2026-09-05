@@ -64,7 +64,7 @@ Before reporting delegated work as done, verify the relevant subset:
 
 - final diff contains only intended files
 - focused validation covers changed behavior
-- substantial or risky changes have fresh-review evidence
+- review selected by user/project policy is complete
 - accepted findings are fixed and revalidated
 - publication authority exists before push, comment, close, merge, deploy, or release
 - external checks are exact-head when used as evidence

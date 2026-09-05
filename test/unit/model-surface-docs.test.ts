@@ -38,7 +38,7 @@ describe("model-facing docs and skill contract", () => {
 		const routeRows = [...skill.matchAll(/^\| `([^`]+)` \| ([^|]+) \| `([^`]+)` \|$/gm)]
 			.filter((match) => match[3] === programReference);
 		assert.equal(routeRows.length, 1);
-		assert.match(routeRows[0]?.[2] ?? "", /broad.*predeclared.*multi-phase/i);
+		assert.match(routeRows[0]?.[2] ?? "", /dependencies, ownership, or authority not settled by an adequate existing plan/i);
 
 		const programPath = path.join(root, "skills/pi-subagents", programReference);
 		assert.equal(fs.existsSync(programPath), true);

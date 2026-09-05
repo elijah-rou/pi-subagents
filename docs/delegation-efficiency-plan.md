@@ -8,13 +8,13 @@ Reduce avoidable context, review, waiting, and accounting overhead without weake
 
 The package already supports sequence, fanout, branching, and staged lanes through `workflowScript`, `runs.run`, `runs.all`, and `runs.lanes`. Expressiveness is not the main gap. Broad work can still become a series of detached one-child workflows followed by blocking waits because the parent never commits to a whole-program topology.
 
-This plan makes workflow design a separate parent responsibility. The parent maps the complete program before commissioning mutation work, then executes the map as bounded waves. Runtime changes should reinforce that behavior by composing existing primitives, not by restoring the legacy `chain` and `parallel` APIs or adding a project-management layer.
+This plan makes workflow design a separate parent responsibility. The parent confirms that an adequate approved plan covers the program before commissioning mutation work, filling unresolved dependencies, ownership, or authority only where needed. The resulting plan or map is executed as bounded waves. Runtime changes should reinforce that behavior by composing existing primitives, not by restoring the legacy `chain` and `parallel` APIs or adding a project-management layer.
 
 This plan covers only `pi-subagents`. Operator model selection, compaction settings, private workload data, and repository-specific policy are out of scope.
 
 ## Design rules
 
-- **Design the program before mutation.** Before initial reconnaissance, record the known phases, owner gates, and unresolved dependencies. After reconnaissance and before the first mutation-capable child, produce one parent-synthesized execution map.
+- **Resolve the program before mutation.** Inspect relevant evidence and reuse an adequate approved plan. Before the first mutation-capable child, fill unresolved dependencies, ownership, authority, or evidence; create a compact map only when the existing plan is inadequate.
 - **Separate the program from its waves.** A whole-program map may require several workflows because product decisions, finding disposition, or operator approval must return to the parent. Do not force the entire program into one script.
 - **Use the smallest execution shape.** Launch one bounded child directly. Use one `workflowScript` for one coordinated wave. Use `runs.all` for independent fanout and `runs.lanes` for predeclared stages that do not require parent decisions between them.
 - **Treat async as scheduling.** Async execution keeps the parent responsive; it does not define dependencies or useful concurrency. An async singleton followed immediately by a blocking wait is not orchestration.
@@ -36,7 +36,7 @@ This plan covers only `pi-subagents`. Operator model selection, compaction setti
 
 Implement each workstream as a separate reviewable change. Reproduce runtime behavior on current `main` before changing production code; an older installed revision may not reflect the current implementation.
 
-1. Require whole-program design for broad work.
+1. Resolve missing whole-program design before mutation.
 2. Preview statically declared workflow topology.
 3. Make worker acceptance reports reliable.
 4. Load only the skill references needed for the active task.
@@ -46,26 +46,26 @@ Implement each workstream as a separate reviewable change. Reproduce runtime beh
 8. Define one authoritative parent-plus-child usage surface.
 9. Run a matched orchestration benchmark.
 
-## 1. Require whole-program design for broad work
+## 1. Resolve missing whole-program design before mutation
 
 ### Problem
 
 `workflowScript` is expressive enough to represent coordinated programs, but it also permits a parent to launch one async child, wait for it, inspect the result, and improvise the next launch. Repeating that pattern serializes independent work, multiplies parent turns, and prevents later read-only stages from starting while the current writer runs.
 
-The top-level skill recommends `runs.lanes` for broad plans, but it does not make the design gate unavoidable or define the minimum program map a parent should produce before commissioning mutation work.
+The top-level skill must distinguish a plan with settled dependencies and ownership from work that still needs design. A gate based only on phase count repeats planning without resolving new uncertainty.
 
 ### Required work
 
 - Add a short, high-salience design rule to `skills/pi-subagents/SKILL.md`.
 - Add a focused `references/program-orchestration.md` instead of restoring a large always-loaded recipe.
-- Route broad, predeclared, or multi-phase requests to that reference before execution details.
-- Before reconnaissance, require an intake map containing:
+- Route requests with unresolved dependencies, ownership, or authority to that reference; several phases alone do not trigger it.
+- After inspecting relevant evidence, fill missing intake information in the existing plan or create a compact map containing:
   - user-specified phases and completion conditions;
   - known ordering constraints;
   - unresolved facts and owner decisions;
   - mutation boundaries and likely worktree needs;
   - the first safe reconnaissance wave.
-- After reconnaissance and before mutation, require one parent-synthesized execution map containing:
+- Before mutation, confirm the existing plan or parent-synthesized map covers:
   - phase and lane dependencies;
   - the serial writer critical path;
   - read-only work that can run in parallel or ahead of the writer;
@@ -96,7 +96,7 @@ async singleton → blocking wait → status inspection → improvised singleton
 
 ### Acceptance
 
-- Given a request with several named phases, packaged guidance requires a program map before the first mutation-capable child.
+- An adequate approved plan satisfies the design requirement. When dependencies, ownership, or authority remain unresolved, packaged guidance requires resolving them before the first mutation-capable child.
 - The map covers every named phase, dependency, authority gate, mutation owner, review allocation, and validation checkpoint.
 - Guidance distinguishes the whole program from its individual execution waves.
 - A one-child task still uses direct execution without unnecessary planning machinery.
@@ -196,10 +196,10 @@ The baseline is commit `94b27239`.
 
 | Scenario | Before | After |
 | --- | ---: | ---: |
-| one-child-review | 10753 | 9924 |
-| basic-async | 11064 | 10496 |
-| management | 9173 | 7193 |
-| broad-intake | 14126 | 13245 |
+| one-child-review | 10753 | 9935 |
+| basic-async | 11064 | 10512 |
+| management | 9173 | 7209 |
+| broad-intake | 14126 | 13433 |
 | top-level skill | 7316 | 5192 |
 | full skill tree | 69926 | 70057 |
 
@@ -252,7 +252,7 @@ stop/escalation remain required through the canonical packet.
 
 | Representative surface | Before | After |
 | --- | ---: | ---: |
-| commissioning initial context | 36877 | 5336 |
+| commissioning initial context | 36877 | 5352 |
 | scout synthesis prompt | 756 | 716 |
 | review-to-fix prompt | 5275 | 4324 |
 

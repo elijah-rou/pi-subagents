@@ -29,7 +29,7 @@ remain unloaded until the mapped program reaches them.
 
 | Branch key | Current task | Read now |
 | --- | --- | --- |
-| `broad-intake` | Design broad, predeclared, or multi-phase work before reconnaissance or mutation | `references/program-orchestration.md` |
+| `broad-intake` | Resolve delegated dependencies, ownership, or authority not settled by an adequate existing plan | `references/program-orchestration.md` |
 | `one-child-review` | Review one child or diff, validate, triage a gate, or prepare delivery | `references/review-and-validation.md` |
 | `basic-async` | Launch or control direct, scripted, async, stateful, forked, oracle, or intercom execution | `references/execution-controls.md` |
 | `independent-lanes` | Coordinate independent worktree, repository, or writer lanes | `references/multi-lane-orchestration.md` |

@@ -18,7 +18,7 @@ Before launch, read:
 
 Run `subagent({ action: "list" })`, then choose 2-3 executable advisor names that start with `council-`. The prefix is convention only. Never use more than four advisors.
 
-If fewer than two council profiles are available, use the executable read-only `reviewer` with distinct supported model overrides from `subagent({ action: "models" })`. Use fresh context and identify each advisor by profile plus model. Never enable or assume an absent/disabled `oracle`. If fewer than two read-only model/profile combinations are available, return a clearly labelled single-advisor consultation or report the missing capability; do not claim a council ran.
+If fewer than two council profiles are available, first consider discovered executable read-only advisors, including a configured `oracle`. Preserve their model and applicable context contract; inherited context is useful for checking prior decisions, while independent analysis should use fresh context when the profile permits it. Fill remaining seats with executable read-only `reviewer` calls using distinct supported model overrides from `subagent({ action: "models" })`. Identify each advisor by profile plus model. Never enable or assume an absent/disabled `oracle`. If fewer than two read-only model/profile combinations are available, return a clearly labelled single-advisor consultation or report the missing capability; do not claim a council ran.
 
 `council-*` profiles live in user or project agent directories, not this package. A profile defines model, tools, context, output defaults, and persistent stance. Keep advisors read-only, disable inherited skills unless needed, and put stance in the profile body instead of inventing per-run role labels.
 
