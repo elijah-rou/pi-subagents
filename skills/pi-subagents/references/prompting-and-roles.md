@@ -1,6 +1,6 @@
 # Pi Subagents: Prompting And Roles
 
-This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
+This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`. User/project delegation policy decides whether to launch a child; these recipes do not override it. Review selection follows [`review-and-validation.md`](review-and-validation.md).
 
 ## Capability ceilings
 
@@ -62,7 +62,7 @@ Use Council Mode instead when the tradeoffs need cross-examination, multiple pas
 
 ### Council Mode technique
 
-Use Council Mode when the user asks to convene advisors, debate a material decision, cross-examine recommendations, or critique and improve a plan with several model perspectives. This includes requests such as “run a council on this architecture,” “have the configured advisors critique this plan,” or “get multiple oracles to debate the tradeoffs.” Read `../council-mode/SKILL.md` and follow its bounded parent-supervised protocol instead of launching ad hoc parallel oracle calls.
+Use Council Mode when the user asks to convene advisors, debate a material decision, cross-examine recommendations, or critique and improve a plan with several model perspectives. This includes requests such as “run a council on this architecture,” “have the configured advisors critique this plan,” or “get multiple oracles to debate the tradeoffs.” Read `../../council-mode/SKILL.md` and follow its bounded parent-supervised protocol instead of launching ad hoc parallel oracle calls.
 
 Council advisors are read-only. User or project `council-*` profiles choose allowed models and define any persistent stance in the profile body. A top-reasoning advisor remains bounded and read-only; it does not become the root. Package advisors such as Surf's `gpt-pro` can join the roster only when the `surf-cli` Pi extension is installed and its `surf-oracle` provider is registered; treat them as external runners, omit child `async` for attached results, and do not pass `outputSchema` to them. The council question and scope provide the decision frame; do not invent per-advisor role labels. The parent collects independent reports, optionally sends curated cross-exam packets, and writes the final memo. Do not treat the council as agent-to-agent chat, implementation authority, or a writer swarm.
 
@@ -85,7 +85,12 @@ Example shape:
 
 ```typescript
 subagent({
-  delegationReason: "user_async",
+  delegationReason: "independent_parallel_lane",
+  delegationBasis: {
+    ownership: ["read-only prose findings", "read-only accessibility findings"],
+    deliverable: "Independent source-cited review reports for the parent to reconcile"
+  },
+  async: true,
   workflowScript: `
     const results = await runs.all([
       { key: "deslop", agent: "reviewer", task: "Apply the available 'deslop' skill to review the current diff for concrete cleanup findings only. Do not modify files.", skill: "deslop" },
@@ -101,7 +106,7 @@ subagent({
 
 Use this when the user wants implementation or current diff review to continue until reviewers stop finding fixes worth doing now. Keep the loop in the parent session: one async `worker` implements, fresh-context review inspects the actual repo and diff, the parent synthesizes accepted findings, and one fresh async `worker` receives the canonical fix packet. The parent can express the sequence up front as an async/background `workflowScript` when the workflow is known, or continue with explicit follow-up workflowScript runs after each async completion. For an initial workflow, pass `async: true` so the main chat is unblocked. Treat an async implementation worker handoff as an intermediate state, not final completion, unless the user explicitly asked for worker-only work, review-only output, or to stop after implementation.
 
-Use one broad review round and one fresh high-quality reviewer by default for an ordinary coherent behavioral change. Use two reviewers only for distinct elevated risks such as security, concurrency, architecture, or high blast radius. Parent-only inspection is enough for trivial or fully machine-decided work when review was not requested. Necessary focused re-review is outside the default broad-round budget. Honor explicit fanout. A cap counts every review invocation; if it blocks required re-review or leaves known P0/P1, report blocked. After deterministic fixes, rerun affected deterministic gates without broad re-review; use focused re-review only for unresolved semantics or the fix blast radius. Stop when reviewers find no P0/P1, remaining P2 feedback is optional or deferred, or an unapproved decision appears. Never silently skip a known P0 or P1: fix it, escalate it, or report blocked. Do not loop for optional polish, and do not let children launch subagents or decide the loop outcome.
+Select review according to user/project policy and the review-and-validation reference. Use one broad review round by default when review is warranted. Necessary focused re-review is outside the default broad-round budget. Honor explicit fanout. A cap counts every review invocation; if it blocks required re-review or leaves known P0/P1, report blocked. After deterministic fixes, rerun affected deterministic gates without broad re-review; use focused re-review only for unresolved semantics or the fix blast radius. Stop when reviewers find no P0/P1, remaining P2 feedback is optional or deferred, or an unapproved decision appears. Never silently skip a known P0 or P1: fix it, escalate it, or report blocked. Do not loop for optional polish, and do not let children launch subagents or decide the loop outcome.
 
 As a conservative orchestration policy, do not pass a hard `toolBudget` to an implementation worker, fix worker, reviewer with edit authority, or other mutation-capable child. The default tool budget blocks read/search tools rather than mutation tools, but count limits still do not measure delivery safety. Use a narrow task plus an outer elapsed deadline with enough margin, then request a checkpoint after the current tool returns. The checkpoint should report changed files, build/test state, remaining work, and commit or PR state. An elapsed timeout is not a mutation-safe boundary and must not be used as the checkpoint trigger.
 
@@ -113,11 +118,11 @@ Use this when the question needs both external evidence and local implications. 
 
 ### Gather-context-and-clarify technique
 
-Use this at the start of non-trivial work. Launch `scout` for local context and `researcher` only when external docs, recent sources, ecosystem context, or primary evidence would materially improve understanding. Ask children for concise findings plus remaining clarification questions. Then synthesize what is known and use `interview` to ask the unresolved questions needed for shared understanding before planning or implementing.
+Use this when requested or when the delegation policy permits independently useful local and external evidence lanes. Inspect the principal local sources before deciding whether `scout` or `researcher` adds needed evidence. Ask children for concise findings plus remaining clarification questions. Then synthesize what is known and use `interview` to ask the unresolved questions needed for shared understanding before planning or implementing.
 
 ### Parallel cleanup technique
 
-Use this after implementation when the user explicitly wants cleanup review or when a final pass would reduce AI-slop. This recipe explicitly commissions its two specialized reviewers and does not set a default for other review. Launch two fresh-context `reviewer` tasks with `output: false` and `progress: false`: one deslop pass and one verbosity pass. If the `deslop` or `verbosity-cleaner` skills are available, pass the relevant skill to that reviewer; otherwise inline the criteria. Both reviewers are review-only and should flag concrete issues with severity, file/line references, and smallest safe fixes. Phrase the constraint as “Do not modify project/source files; returning findings through the configured output artifact is allowed” when you use `output` or `outputMode: "file-only"`. The parent decides what to apply and asks before making changes unless cleanup was already authorized.
+Use this when the user explicitly wants parallel cleanup review. This recipe explicitly commissions its two specialized reviewers and does not set a default for other review. Launch two fresh-context `reviewer` tasks with `output: false` and `progress: false`: one deslop pass and one verbosity pass. If the `deslop` or `verbosity-cleaner` skills are available, pass the relevant skill to that reviewer; otherwise inline the criteria. Both reviewers are review-only and should flag concrete issues with severity, file/line references, and smallest safe fixes. Phrase the constraint as “Do not modify project/source files; returning findings through the configured output artifact is allowed” when you use `output` or `outputMode: "file-only"`. The parent decides what to apply and asks before making changes unless cleanup was already authorized.
 
 ### Staged fix orchestration technique
 
@@ -145,7 +150,7 @@ and user/project agents override builtins with the same name.
 |-------|---------|-------|------------------------|
 | `scout` | Fast codebase recon | fast worker/scout tier | Returns bounded seam-keyed evidence |
 | `worker` | Implementation and approved oracle handoffs | capable worker tier | Single-writer implementation with decision escalation |
-| `reviewer` | Review specialist | strong reviewer tier; high thinking for serious reviews | Default recipes are review-only; tools include edit/write when a fix pass is explicit |
+| `reviewer` | Review specialist | strong reviewer tier; high thinking for serious reviews | Read-only findings; the parent supplies readable diff evidence when shell tools are unavailable |
 | `researcher` | Web research brief generator | inherits configured default | Writes `research.md` |
 | `delegate` | Lightweight generic delegate | inherits configured default | No fixed output; generic delegated work |
 | `oracle` | Decision-consistency advisory review | top-reasoning critic tier, bounded read-only; high thinking escalation only | Advisory review, intercom coordination |

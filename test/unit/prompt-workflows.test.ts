@@ -113,11 +113,14 @@ Orchestrate from the parent.
 		const reviewReference = readPackageFile("skills/pi-subagents/references/review-and-validation.md");
 		const programReference = readPackageFile("skills/pi-subagents/references/program-orchestration.md");
 		const rolesReference = readPackageFile("skills/pi-subagents/references/prompting-and-roles.md");
-		const boundedDefaults = [reviewLoop, reviewReference, programReference, rolesReference];
+		const boundedDefaults = [reviewReference];
+		for (const consumer of [reviewLoop, programReference, rolesReference]) {
+			assert.match(consumer, /review-and-validation\.md/);
+		}
 
 		assert.ok(Buffer.byteLength(reviewLoop) < 5_275, "review-to-fix prompt must remain below its Workstream 5 baseline");
 		for (const contract of boundedDefaults) {
-			assert.match(contract, /one fresh (?:high-quality |high quality )?`?reviewer/i);
+			assert.match(contract, /one fresh (?:high-quality |high quality |read-only )?`?reviewer/i);
 			assert.match(contract, /two (?:reviewers )?only/i);
 			assert.match(contract, /distinct elevated[- ]risks?/i);
 			assert.match(contract, /security, concurrency, architecture, or high blast radius/i);

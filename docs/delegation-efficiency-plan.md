@@ -199,7 +199,7 @@ The baseline is commit `94b27239`.
 | one-child-review | 10753 | 9924 |
 | basic-async | 11064 | 10496 |
 | management | 9173 | 7193 |
-| broad-intake | 14126 | 13140 |
+| broad-intake | 14126 | 13245 |
 | top-level skill | 7316 | 5192 |
 | full skill tree | 69926 | 70057 |
 
@@ -254,7 +254,7 @@ stop/escalation remain required through the canonical packet.
 | --- | ---: | ---: |
 | commissioning initial context | 36877 | 5336 |
 | scout synthesis prompt | 756 | 716 |
-| review-to-fix prompt | 5275 | 4437 |
+| review-to-fix prompt | 5275 | 4324 |
 
 ## 6. Bound packaged review and validation recipes
 

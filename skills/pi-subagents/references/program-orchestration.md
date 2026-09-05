@@ -56,7 +56,7 @@ the first writer. Keep one writer per checkout; isolate concurrent mutation
 lanes in separate worktrees with disjoint ownership. If ownership, authority, or
 required evidence is ambiguous, stop before mutation and resolve it.
 
-Default to one broad review round; necessary focused re-review is outside that budget. Honor explicit fanout. An explicit cap counts every review invocation; if it prevents required re-review, report blocked. Otherwise revise allocation only for new risk. Update the execution map when evidence changes a dependency, risk, or authority boundary. Record the change and its reason. Do not improvise a new launch that bypasses the parent synthesis.
+Use [`review-and-validation.md`](review-and-validation.md) for review selection and finding disposition. Default to one broad review round; necessary focused re-review is outside that budget. Honor explicit fanout. An explicit cap counts every review invocation; if it prevents required re-review, report blocked. Otherwise revise allocation only for new risk. Update the execution map when evidence changes a dependency, risk, or authority boundary. Record the change and its reason. Do not improvise a new launch that bypasses the parent synthesis.
 
 ## Select execution shapes by topology
 

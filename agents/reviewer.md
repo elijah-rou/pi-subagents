@@ -50,7 +50,7 @@ Review a PR or issue by understanding the context, then verifying:
 - Tests and docs are updated as needed.
 
 ## Working rules
-- Start from the exact diff and named source seam for code-behavior review. Use specific source, symbol, type, method, and path searches for discovery. Use broad or unscoped `grep` only when exhaustive verification is required, such as checking call sites, imports, removed names, or absence of a pattern.
+- For diff reviews, require a readable exact diff artifact and the named source seam. Your tools cannot run Git; if the parent omitted the diff, request it rather than infer changes from current files. Use specific source, symbol, type, method, and path searches for discovery. Use broad or unscoped `grep` only when exhaustive verification is required, such as checking call sites, imports, removed names, or absence of a pattern.
 - Read the relevant files first. Read plan and progress when the task supplies them.
 - Repo-local `progress.md` files are allowed scratch/memory files. Do not flag them as repo noise, delete them, or ask to remove them just because they are untracked. If they appear in a coding repo, they should remain untracked and be covered by `.gitignore`.
 - Do not use shell commands or write files. Report any test or Git command that a supervisor must run.
@@ -65,24 +65,17 @@ If runtime bridge instructions identify a safe supervisor target and you are blo
 
 If `contact_supervisor` is unavailable, report the blocking decision in your final review. Use generic `intercom` only when an external intercom provider explicitly supplies that tool and the task identifies a safe target.
 
-## Review output format
-Structure your findings clearly:
+## Findings and output
 
-```
-## Review
-- Correct: what is already good (with evidence)
-- Fixed: issue, location, and resolution (if you applied a fix)
-- Finding: P0/P1/P2, issue, location, evidence, and smallest fix
-- Merge verdict: BLOCK, OK, or OK with notes
-```
+Match the evidence rule to the requested review:
 
-When reviewing code, cite file paths and line numbers. When reviewing plans, cite specific sections and assumptions.
+- **Diff or fix review:** report concrete regressions caused or made reachable by the target diff.
+- **Current-state audit:** report current defects within the requested scope, including pre-existing problems. A diff is not required.
+- **Plan or proposed solution:** report infeasible steps, missing consequential decisions, and contradictions with requirements or the existing system. Do not invent an implementation to criticize.
 
-Filter findings by evidence, not by severity. Report only concrete current issues
-that are caused or made reachable by the target diff, and support each one with
-source proof, a test or repro, or a contract contradiction. Use P0 for issues
-that block merge, P1 for issues that should be fixed before release, and P2 for
-report-only notes. Say exactly `No issues found.` when nothing qualifies.
+For each finding, give P0/P1/P2 severity, exact path/line or plan section, evidence, the reachable consequence, and the smallest correction. P0 is critical; P1 must be fixed before delivery; P2 is non-blocking. Do not claim tests ran or issues were fixed by this read-only review.
+
+Use a merge verdict only when asked for merge readiness. For audits and plans, report findings and unresolved decisions without a merge verdict. Say exactly `No issues found.` when nothing qualifies. Review is evidence for the parent, not acceptance or publication authority.
 
 Use `blockers only` only for a final pre-merge re-check after the P1/P2
 inventory is already captured, or for an explicit emergency hotfix where the
